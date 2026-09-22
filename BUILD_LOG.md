@@ -13,7 +13,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - 1.1 backdrop, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
 - **In flight (uncommitted in the working tree):**
   - 1.2 dragon rig (also told: the weak spot must move to the throat during a breath windup; see Open issue 6).
-  - Review of 1.3.
+  - Crowd review fixes (1.3): the crowd agent is fixing them. **High:** squad-size changes teleport the whole army (~minute 9); marching archers and back-rank recruits are invisible until they reach their slot. **Medium:** memory 60 MB → ≤ 32 MB typical; hero contact within ~80 ms of the click; swipe/breath reactions synced to the real rig via new optional `DragonView.tailPoint`/`breathReachX` (the dragon agent is adding them). **Low:** stale arrows, per-frame strings, hero canvas cap for M2 zoom-in, squad labels. **Feel:** plume like a parasol, flung knights clump, muddy at 19 px.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
   1. Run `git status`. Uncommitted files belong to the in-flight WP: `src/render/dragon/` = 1.2.
   2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
@@ -198,7 +198,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 |---|---|---|---|---|
 | 1.1 Meadow backdrop, palette, eye in the hills | builder-high | `src/render/backdrop/**`, MEADOW values | ✅ accepted after review (1 high + 6 fixed) | aeeee92, b7f2b17 |
 | 1.2 Dragon rig v1 + newt, weak spot, hit test | builder-max | `src/render/dragon/**` | ⏳ **in flight** (uncommitted) | — |
-| 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ✅ committed; **review in flight** | 7376082 |
+| 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ✅ committed; review done, **fixes in flight** | 7376082 |
 | 1.4 Juice: presets, numbers, hit-stop, shake, coins, post FX | builder-high | `src/render/fx/**`, `post.ts` | ✅ accepted after review (1 high + 9 fixed) | fd76ef0, 82496a7 |
 | 1.5 Economy core | builder-high | `src/core/**` | ✅ committed; review done, 5 fixes handed to 1.9 | 255c39e |
 | 1.6 HUD, Army/Upgrades panels, title, progressive disclosure | builder-medium | `src/ui/**` | ✅ committed (no formal review) | 825e78f |
