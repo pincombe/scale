@@ -344,7 +344,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       }
       case M_FLUNG: {
         if (!grounded(cur)) return;
-        const f = Math.sqrt(Math.max(1, dragonSize() / 1.5));
+        const f = Math.min(2.2, Math.sqrt(Math.max(1, dragonSize() / 1.5)));
         // Wide spread so each ragdoll reads on its own: some skim low, some sail.
         const r1 = rand();
         vx[k] = -(0.6 + 6.4 * r1) * f;
@@ -359,7 +359,8 @@ export function createCrowd(scene: Scene): CrowdRender {
         break;
       }
       case M_MOVE:
-        aux[k] = RUN * 1.15;
+        // Hurry back to the slot: never more than ~1.3 s away, however far the knight was thrown.
+        aux[k] = Math.max(RUN * 1.15, Math.abs(slotX(k) - kx[k]!) / 1.3);
         break;
       default:
         break;
@@ -468,13 +469,14 @@ export function createCrowd(scene: Scene): CrowdRender {
     const dv = live();
     scene.dragon.headPoint(tmp);
     const reachX = dv.breathReachX ? dv.breathReachX() : tmp.x - Math.max(2.1, 1.5 * dragonSize());
-    const s = Math.sqrt(Math.max(1, dragonSize() / 1.5));
     for (let k = 0; k < MAXK; k++) {
       if (!used[k]) continue;
       const x = kx[k]!;
       if (x > reachX) {
-        schedule(k, M_FLEE, now + Math.max(0, (tmp.x - x) * 0.015) + rand() * 0.12);
-        fleeTo[k] = Math.min(x - 1.2 * s, reachX - (0.4 + rand() * 1.4) * s);
+        // A scramble back, not a rout: a couple of meters, then they cower and press forward again
+        // (the host must stay close behind the hero at every dragon size).
+        schedule(k, M_FLEE, now + Math.max(0, Math.min(0.4, (tmp.x - x) * 0.015)) + rand() * 0.12);
+        fleeTo[k] = x - (1.1 + rand() * 1.3);
       } else if (x > reachX - 2.5) schedule(k, M_BRACE, now + rand() * 0.25);
     }
   };
@@ -682,7 +684,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       case M_FLEE: {
         lane[k] = Math.min(laneMax[k]!, lane[k]! + dt * 1.2);
         const d = aux[k]! - kx[k]!;
-        const sp = RUN * 1.45 * Math.sqrt(Math.max(1, dragonSize() / 1.5)) * dt;
+        const sp = RUN * 1.45 * dt;
         if (Math.abs(d) <= sp) {
           kx[k] = aux[k]!;
           mode[k] = M_BRACE;
@@ -1142,7 +1144,15 @@ export function createCrowd(scene: Scene): CrowdRender {
   dbg.button('regroup', release);
   dbg.button('raise: footmen', () => onRaise(false));
   dbg.button('raise: archers', () => onRaise(true));
-  if (dbg.enabled) (window as unknown as { __crowd?: unknown }).__crowd = { hero, sheets, arrows, bannerArt, flung: () => flungN };
+  if (dbg.enabled) (window as unknown as { __crowd?: unknown }).__crowd = { hero, sheets, arrows, bannerArt, flung: () => flungN,
+    /** Gap (m) from the hero to the nearest knight, and that knight's mode (debug). */
+    gap: () => {
+      let best = 1e9;
+      let bm = -1;
+      for (let k = 0; k < MAXK; k++) if (used[k] && !merge[k] && heroX - kx[k]! < best) { best = heroX - kx[k]!; bm = mode[k]!; }
+      return { gap: best, mode: bm, heroX };
+    },
+  };
   scene.debug.watch('crowd', () => `${orderN} spr ×${squad} lod ${lastLod} ${cpuAvg.toFixed(2)} ms ${(sheets.memory() / 1048576).toFixed(1)} MB`);
 
   return { layer, view };
