@@ -1,7 +1,7 @@
 // Film grain as a CSS overlay (not a canvas pass): a pre-generated noise tile as the background of
 // a fixed, pointer-events:none element inserted right before #ui, blended with 'overlay' by the
-// compositor and jittered at 24 fps with a steps() animation. It costs no canvas fill per frame and
-// stays out of M2's drawScene() snapshots. The tile is drawn at device resolution so grains stay
+// compositor and jittered at 24 fps by a steps() transform animation. It costs no canvas fill or
+// repaint per frame and stays out of M2's drawScene() snapshots. The tile is drawn at device resolution so grains stay
 // one device pixel on Retina.
 import { context2d, makeCanvas } from '../atlas';
 
@@ -49,7 +49,10 @@ export function createGrain(): Grain {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const size = TILE / dpr;
   if (!document.getElementById(STYLE_ID)) {
-    // 8 jumps per cycle at 24 fps; offsets are arbitrary non-repeating fractions of the tile.
+    // The element overhangs the viewport by one tile on the top/left and is jittered with a
+    // compositor-only transform (translate3d in steps), never background-position, so the grain
+    // costs no repaint in Safari/Firefox. 8 jumps per cycle at 24 fps; offsets are arbitrary
+    // non-repeating fractions of the tile.
     const offs = [
       [0, 0],
       [0.37, 0.61],
@@ -61,13 +64,14 @@ export function createGrain(): Grain {
       [0.67, 0.93],
     ];
     const frames = offs
-      .map(([x, y], i) => `${((i / offs.length) * 100).toFixed(2)}%{background-position:${(x! * size).toFixed(1)}px ${(y! * size).toFixed(1)}px}`)
+      .map(([x, y], i) => `${((i / offs.length) * 100).toFixed(2)}%{transform:translate3d(${(x! * size).toFixed(1)}px,${(y! * size).toFixed(1)}px,0)}`)
       .join('');
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent =
       `@keyframes fx-grain{${frames}}` +
-      `.fx-grain{position:fixed;inset:0;pointer-events:none;mix-blend-mode:overlay;opacity:${OPACITY};` +
+      `.fx-grain{position:fixed;left:${-size}px;top:${-size}px;width:calc(100% + ${size}px);height:calc(100% + ${size}px);` +
+      `pointer-events:none;mix-blend-mode:overlay;opacity:${OPACITY};will-change:transform;` +
       `background-size:${size}px ${size}px;animation:fx-grain ${(offs.length / 24).toFixed(3)}s steps(1,end) infinite}` +
       `.fx-grain.still{animation:none}`;
     document.head.appendChild(style);

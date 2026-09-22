@@ -14,12 +14,15 @@ export interface FxApi {
   flash(color: string, alpha: number, seconds: number): void;
   /** Chromatic / zoom punch for big moments (0..1; respects settings.reduceMotion). */
   kick(strength: number): void;
-  /** Called when coins reach the gold counter (count landed this frame). For clinks. */
-  onCoinLanded(fn: (count: number) => void): () => void;
+  /**
+   * Called when coins reach the gold counter: `count` landed this frame (for clinks) and `value`,
+   * the Decimal gold those coins carry (each kill/stagger reward is split exactly across its
+   * coins), so the HUD can count up as they land.
+   */
+  onCoinLanded(fn: (count: number, value?: Decimal) => void): () => void;
   /**
    * Spawn a preset effect at a world point, sized for the current zoom. `intensity` (default 1)
    * scales the particle count (or the size, for shockwave/flare/glint/slash).
-   * Optional until app/scene.ts's NULL_FX implements it; call as `scene.fx.burst?.(...)`.
    */
-  burst?(preset: FxPreset, wx: number, wy: number, intensity?: number): void;
+  burst(preset: FxPreset, wx: number, wy: number, intensity?: number): void;
 }

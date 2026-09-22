@@ -3,7 +3,7 @@
 //      center for ~0.3 s (a lens "hit"). Pure Canvas 2D compositing, no ctx.filter: the frame so
 //      far is copied into two half-res buffers, each masked to one channel with 'multiply'; the
 //      main canvas keeps only green ('multiply' #0f0), then the red and blue buffers are added
-//      back ('lighter') at slightly different scales. Green (most of the luminance) stays
+//      back ('lighter'), both scaled outward (red more), so no channel loses the screen edge. Green (most of the luminance) stays
 //      full-res and sharp. Only runs while a kick is live.
 //   2. Vignette: an elliptical radial gradient baked once per size/palette into a small canvas.
 //      It stays in canvas (one source-over drawImage of a cached 256 px canvas, no blend mode)
@@ -113,12 +113,12 @@ export function createPost(scene: Scene): PostLayer {
     ctx.globalCompositeOperation = 'lighter';
     const cx = W * 0.5;
     const cy = H * 0.5;
-    // Red pushed outward, blue pulled in: warm/cool fringes like a lens hit.
+    // Both channels scale outward (so neither leaves an uncovered edge), red more than blue:
+    // warm outer / cool inner fringes like a lens hit.
     const kr = 1 + amount;
-    const kb = 1 - amount * 0.35;
+    const kb = 1 + amount * 0.35;
     ctx.drawImage(bufR!, 0, 0, bw, bh, cx - cx * kr, cy - cy * kr, W * kr, H * kr);
-    // Blue shrinks slightly; pad it to the edges by also stretching it a touch beyond them.
-    ctx.drawImage(bufB!, 0, 0, bw, bh, cx - cx * kb - 1, cy - cy * kb - 1, W * kb + 2, H * kb + 2);
+    ctx.drawImage(bufB!, 0, 0, bw, bh, cx - cx * kb, cy - cy * kb, W * kb, H * kb);
     ctx.globalCompositeOperation = 'source-over';
   };
 

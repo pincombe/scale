@@ -3,8 +3,12 @@
 // shadow, gradient fill, coin icon) is rendered into it ONCE when the value changes, so a frame is
 // just one drawImage per number (no fillText/strokeText in the hot path).
 //
-// Army hits aggregate: a new army hit merges into that unit's live number (bumping it) instead of
-// spawning another, so a big army never turns the screen into number soup.
+// Army hits and rapid crits aggregate: a new hit merges into the live number of its group (bumping
+// it) instead of spawning another, so a big army or a crit spree never turns into number soup.
+//
+// Memory: each slot's canvas is sized to fit its text (rounded to buckets), rendered at about
+// DPR x 1.2, shrinks when reused for smaller text, and the pool never holds more than MAX_BYTES of
+// backing store (renders drop resolution instead of growing past it).
 import type { Decimal } from '../../core/decimal';
 import { fmt } from '../../core/format';
 import type { Camera } from '../camera';
@@ -47,26 +51,32 @@ const OUTLINE = '#1c0c05';
 
 const STYLES: readonly Style[] = [
   // click
-  { font: `800 34px ${CINZEL}`, size: 34, fill: ['#ffffff', '#fffaf0', '#ffe2b8'], outline: OUTLINE, stroke: 3.2, res: 1.3, icon: false, life: 0.85, rise: 64, riseT: 0.85, fadeT: 0.3, alpha: 1 },
+  { font: `800 34px ${CINZEL}`, size: 34, fill: ['#ffffff', '#fffaf0', '#ffe2b8'], outline: OUTLINE, stroke: 3.2, res: 1.2, icon: false, life: 0.85, rise: 64, riseT: 0.85, fadeT: 0.3, alpha: 1 },
   // crit
-  { font: `900 58px ${CINZEL}`, size: 58, fill: ['#fffbe6', '#ffe066', '#ffb42a', '#ff7a1a'], outline: '#2a0e02', stroke: 4.5, res: 1.8, icon: false, life: 1.25, rise: 90, riseT: 1.2, fadeT: 0.35, alpha: 1 },
+  { font: `900 58px ${CINZEL}`, size: 58, fill: ['#fffbe6', '#ffe066', '#ffb42a', '#ff7a1a'], outline: '#2a0e02', stroke: 4.5, res: 1.2, icon: false, life: 1.25, rise: 90, riseT: 1.2, fadeT: 0.35, alpha: 1 },
   // army
-  { font: `700 21px ${CINZEL}`, size: 21, fill: ['#fff0dc', '#f2c89a', '#d99a64'], outline: OUTLINE, stroke: 2.6, res: 1.4, icon: false, life: 1.3, rise: 44, riseT: 1.4, fadeT: 0.3, alpha: 0.86 },
+  { font: `700 21px ${CINZEL}`, size: 21, fill: ['#fff0dc', '#f2c89a', '#d99a64'], outline: OUTLINE, stroke: 2.6, res: 1.2, icon: false, life: 1.3, rise: 44, riseT: 1.4, fadeT: 0.3, alpha: 0.86 },
   // gold (+N)
-  { font: `800 28px ${CINZEL}`, size: 28, fill: ['#fffbe0', '#ffd95e', '#e8961c'], outline: '#2a1202', stroke: 3.2, res: 1.3, icon: true, life: 1.3, rise: 58, riseT: 1.2, fadeT: 0.35, alpha: 1 },
+  { font: `800 28px ${CINZEL}`, size: 28, fill: ['#fffbe0', '#ffd95e', '#e8961c'], outline: '#2a1202', stroke: 3.2, res: 1.2, icon: true, life: 1.3, rise: 58, riseT: 1.2, fadeT: 0.35, alpha: 1 },
   // callout (STAGGERED!)
-  { font: `900 40px ${CINZEL}`, size: 40, fill: ['#ffffff', '#dff9ff', '#7fdcff', '#3aa6e8'], outline: '#06121c', stroke: 4, res: 1.9, icon: false, life: 1.35, rise: 34, riseT: 1.3, fadeT: 0.35, alpha: 1 },
+  { font: `900 40px ${CINZEL}`, size: 40, fill: ['#ffffff', '#dff9ff', '#7fdcff', '#3aa6e8'], outline: '#06121c', stroke: 4, res: 1.2, icon: false, life: 1.35, rise: 34, riseT: 1.3, fadeT: 0.35, alpha: 1 },
   // kill reward (+N, big)
-  { font: `900 46px ${CINZEL}`, size: 46, fill: ['#ffffff', '#fff0a0', '#ffc53a', '#e0801a'], outline: '#2a1202', stroke: 4.2, res: 1.6, icon: true, life: 1.8, rise: 80, riseT: 1.6, fadeT: 0.45, alpha: 1 },
+  { font: `900 46px ${CINZEL}`, size: 46, fill: ['#ffffff', '#fff0a0', '#ffc53a', '#e0801a'], outline: '#2a1202', stroke: 4.2, res: 1.2, icon: true, life: 1.8, rise: 80, riseT: 1.6, fadeT: 0.45, alpha: 1 },
 ];
 const DRAW_ORDER = [NK_ARMY, NK_CLICK, NK_GOLD, NK_REWARD, NK_CRIT, NK_CALLOUT] as const;
 
 const MAX = 48;
-const PAD = 10;
-/** Army hits merge into a live number of the same unit younger than this (s)... */
-const MERGE_WINDOW = 1.1;
-/** ...as long as that number isn't older than this (keeps values fresh). */
-const MERGE_MAX_AGE = 2.0;
+const PAD = 8;
+/** Backing-store budget for all number canvases (bytes). */
+const MAX_BYTES = 8 * 1024 * 1024;
+/** Merge rules: a hit merges into a live number of its group whose last merge (or spawn) was less
+ * than `window` s ago, as long as the number is younger than `maxAge` (keeps values fresh). */
+const ARMY_WINDOW = 1.1;
+const ARMY_MAX_AGE = 2.0;
+const CRIT_WINDOW = 0.35;
+const CRIT_MAX_AGE = 1.0;
+/** Merge group used for crits. */
+export const GROUP_CRIT = 200;
 
 export class NumberPool {
   private readonly active = new Uint8Array(MAX);
@@ -90,6 +100,7 @@ export class NumberPool {
   private readonly dstW = new Float32Array(MAX);
   private readonly dstH = new Float32Array(MAX);
   private head = 0;
+  private bytes = 0;
   private lastClick = -1;
   private stack = 0;
   private clock = 0;
@@ -106,6 +117,11 @@ export class NumberPool {
     let n = 0;
     for (let i = 0; i < MAX; i++) n += this.active[i]!;
     return n;
+  }
+
+  /** Backing-store bytes held by the number canvases (debug; capped at MAX_BYTES). */
+  get memBytes(): number {
+    return this.bytes;
   }
 
   setDpr(dpr: number): void {
@@ -155,21 +171,28 @@ export class NumberPool {
 
   /** Army hit: merge into that group's live number if it's fresh, else spawn a new one. */
   army(group: number, wx: number, wy: number, amount: Decimal): void {
+    if (!this.merge(NK_ARMY, group, amount, ARMY_WINDOW, ARMY_MAX_AGE, 0.7)) this.spawn(NK_ARMY, wx, wy, amount, null, group);
+  }
+
+  /** Crit: rapid crits merge into one number that re-slams, instead of piling into a column. */
+  crit(wx: number, wy: number, amount: Decimal): void {
+    if (!this.merge(NK_CRIT, GROUP_CRIT, amount, CRIT_WINDOW, CRIT_MAX_AGE, 0.9)) this.spawn(NK_CRIT, wx, wy, amount, null, GROUP_CRIT);
+  }
+
+  private merge(kind: number, group: number, amount: Decimal, window: number, maxAge: number, extend: number): boolean {
     for (let i = 0; i < MAX; i++) {
-      if (!this.active[i] || this.kind[i] !== NK_ARMY || this.group[i] !== group) continue;
+      if (!this.active[i] || this.kind[i] !== kind || this.group[i] !== group) continue;
       const a = this.age[i]!;
-      if (a > MERGE_MAX_AGE || this.life[i]! - a < 0.2) continue;
+      if (a > maxAge || this.life[i]! - a < 0.2 || this.bump[i]! >= window) continue;
       // Fresh enough: add to it, re-pop it and keep it alive a little longer.
-      if (this.bump[i]! < MERGE_WINDOW) {
-        const sum = this.amount[i]!.add(amount);
-        this.amount[i] = sum;
-        this.bump[i] = 0;
-        this.life[i] = Math.max(this.life[i]!, a + 0.7);
-        this.render(i, fmt(sum));
-        return;
-      }
+      const sum = this.amount[i]!.add(amount);
+      this.amount[i] = sum;
+      this.bump[i] = 0;
+      this.life[i] = Math.max(this.life[i]!, a + extend);
+      this.render(i, fmt(sum));
+      return true;
     }
-    this.spawn(NK_ARMY, wx, wy, amount, null, group);
+    return false;
   }
 
   update(realDt: number): void {
@@ -214,7 +237,7 @@ export class NumberPool {
           s = (kind === NK_ARMY ? 0.7 : 0.45) + (kind === NK_ARMY ? 0.3 : 0.55) * outBack(k);
         }
         const b = this.bump[i]!;
-        if (b < 0.16 && kind === NK_ARMY) s *= 1 + 0.28 * (1 - b / 0.16);
+        if (b < 0.16 && b < age) s *= 1 + (kind === NK_CRIT ? 0.4 : 0.28) * (1 - b / 0.16);
         s *= 0.82 + 0.18 * fade;
         let alpha = st.alpha * fade * fade;
         if (kind !== NK_CRIT && kind !== NK_CALLOUT && kind !== NK_REWARD && age < 0.05) alpha *= age / 0.05;
@@ -280,11 +303,11 @@ export class NumberPool {
   private render(i: number, text: string): void {
     const kind = this.kind[i]!;
     const st = STYLES[kind]!;
-    const res = Math.max(1, this.dpr) * st.res;
     let cv = this.canvases[i];
     if (!cv) {
-      cv = makeCanvas(64, 32);
+      cv = makeCanvas(1, 1);
       this.canvases[i] = cv;
+      this.bytes += 4;
     }
     let c = context2d(cv);
     c.font = st.font;
@@ -293,11 +316,27 @@ export class NumberPool {
     const gap = st.icon ? st.size * 0.14 : 0;
     const wCss = tw + iconS + gap + PAD * 2 + st.stroke * 2;
     const hCss = st.size * 1.3 + PAD * 2;
-    const W = Math.ceil(wCss * res);
-    const H = Math.ceil(hCss * res);
-    if (cv.width < W || cv.height < H) {
-      cv.width = Math.max(cv.width, W);
-      cv.height = Math.max(cv.height, H);
+    let res = Math.max(1, this.dpr) * st.res;
+    let W = Math.ceil(wCss * res);
+    let H = Math.ceil(hCss * res);
+    const cw = cv.width;
+    const ch = cv.height;
+    if (cw < W || ch < H || cw * ch > 2.5 * W * H) {
+      // Refit (bucketed so small value changes don't reallocate), within the pool budget.
+      let nw = Math.ceil(W / 32) * 32;
+      let nh = Math.ceil(H / 16) * 16;
+      const room = MAX_BYTES - (this.bytes - cw * ch * 4);
+      if (nw * nh * 4 > room) {
+        const k = Math.sqrt(Math.max(4, room) / (nw * nh * 4));
+        res *= k;
+        W = Math.max(1, Math.floor(wCss * res));
+        H = Math.max(1, Math.floor(hCss * res));
+        nw = W;
+        nh = H;
+      }
+      this.bytes += nw * nh * 4 - cw * ch * 4;
+      cv.width = nw;
+      cv.height = nh;
       c = context2d(cv);
     }
     c.setTransform(1, 0, 0, 1, 0, 0);

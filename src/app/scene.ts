@@ -63,4 +63,5 @@ export const NULL_FX: FxApi = {
   flash: () => undefined,
   kick: () => undefined,
   onCoinLanded: () => () => undefined,
+  burst: () => undefined,
 };

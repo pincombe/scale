@@ -104,7 +104,8 @@ export async function boot(): Promise<void> {
     backdrop.front,
     fx.text,
     fx.post,
-    createParticleLayer('particles.screen', particles.screen),
+    // Real clock: coins to the HUD must arrive on schedule through hit-stop and slow-mo.
+    createParticleLayer('particles.screen', particles.screen, 'real'),
   ]);
 
   createSfx(scene);

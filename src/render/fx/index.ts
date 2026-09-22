@@ -18,35 +18,46 @@
 //   beam        soft vertical light shaft (spawned with rot -PI/2)                   (world, additive)
 //   coin        spinning coin (96-frame flip ramp) for the HUD fountain              (screen, normal)
 //   coinGlint   glint where coins land on the HUD                                    (screen, additive)
-// Others can reuse them via scene.fx.burst?.(name, wx, wy, intensity) (see FxPreset in ./api.ts).
+// Others can reuse them via scene.fx.burst(name, wx, wy, intensity) (see FxPreset in ./api.ts).
 //
 // ---- Reactions ----
 //   strike       sparks, flare, slash streak across the impact, click number, tiny shake + zoom punch
-//     crit       + hit-stop 70-80 ms, white-gold sparks, glint, double shockwave, X-slash, big gold
-//                  number that slams in, kick (chromatic split), small warm flash
-//     stagger    + STAGGERED! callout, big ring, ember burst
+//     crit       + white-gold sparks, glint, double shockwave, X-slash, a big gold number that slams
+//                  in (rapid crits merge into it), kick (chromatic split). A decaying "crit heat"
+//                  damps the kick and shake of a crit spree, and hit-stop (70 ms) only lands on the
+//                  first crit after a CRIT_STOP_GAP pause: isolated crits punch, sprees feel like
+//                  power, not an earthquake. No full-screen flash on crits.
+//     stagger    + STAGGERED! callout, big ring, ember burst, gentle warm flash
 //   armyHit      small sparks per blow/arrow, ONE aggregated army number (merges), shake ~ damage/maxHp
 //   dragonDeath  hit-stop, short slow-mo beat (~0.55 s), warm flash, kick, flare, shockwaves, embers + smoke + dust,
 //                  smoldering embers over the dying body, big +gold number, and the coin fountain:
-//                  coins burst from the corpse, then home to the HUD 'gold' anchor; every arrival
-//                  pulses the counter and fires onCoinLanded. All coins land ~0.6-1.4 s after death.
+//                  coins burst from the corpse, then home to the HUD 'gold' anchor (retargeted if it
+//                  moves); every arrival pulses the counter and fires onCoinLanded(count, value),
+//                  each coin carrying an exact Decimal share of the reward. All land ~0.6-1.4 s
+//                  after death.
 //   goldGain     (stagger) a few coins from the weak spot + gold number
 //   milestone / unlock(unit) / purchase(upgrade)   gold shimmer and light shafts rising over the army
+//                  (merged: one shimmer per frame however many events a purchase emits)
 //
 // Timing: world effects run on scaled time (they freeze in hit-stop and crawl in slow-mo); numbers
-// and the coin flight run on wall time so the reward always arrives on schedule.
+// and the coin flight (particles.screen runs on the real clock) use wall time so the reward always
+// arrives on schedule.
+//
+// Tuning mirrored by the balance sim: crit hit-stop 0.07 s (0.08 on a stagger), at most once per
+// CRIT_STOP_GAP; kill hit-stop 0.08 s + slowMo(0.25, 0.55); kicks: crit 0.55 x critDamp, stagger
+// 0.8, kill 1.
 import type { Scene } from '../../app/scene';
 import type { Layer, View } from '../types';
 import type { DamageKind, FxApi, FxPreset } from './api';
-import type { Decimal } from '../../core/decimal';
+import { D, type Decimal } from '../../core/decimal';
 import type { Palette } from '../palette';
 import { createPost, type PostLayer } from '../post';
-import type { ParticleSpec, ParticleSystem } from '../particles';
+import { PF_HOMING, type ParticleSpec, type ParticleSystem } from '../particles';
 import { rect, vec2 } from '../../lib/vec';
 import { buildPresets, type Presets } from './presets';
 import { fxSprites } from './sprites';
 import { NK_ARMY, NK_CALLOUT, NK_CLICK, NK_CRIT, NK_GOLD, NK_REWARD, NumberPool } from './numbers';
-import { coinCount, coinDelay, damageFrac, hitTrauma } from './tuning';
+import { CRIT_COOL, CRIT_STOP_GAP, coinCount, coinDelay, coinShares, critDamp, damageFrac, heatAfterCrit, hitTrauma } from './tuning';
 
 export interface FxRender {
   api: FxApi;
@@ -125,6 +136,7 @@ export function createFx(scene: Scene): FxRender {
 
   const tmp = vec2();
   const tmp2 = vec2();
+  const tmp3 = vec2();
   const box = rect();
   const world = (): ParticleSystem => scene.particles.world;
   const screen = (): ParticleSystem => scene.particles.screen;
@@ -182,19 +194,29 @@ export function createFx(scene: Scene): FxRender {
   let slashFlip = false;
 
   // ---- coins ----
+  const ZERO = D(0);
   let landed = 0;
+  let landedValue: Decimal = D(0);
+  /** Decimal share carried by each screen particle slot (gold coins only). */
+  const coinValue: (Decimal | null)[] = new Array<Decimal | null>(scene.particles.screen.capacity).fill(null);
+  let coinTx = -1;
+  let coinTy = -1;
   let deathClock = -1;
   let firstLand = -1;
   let lastLand = -1;
   let clock = 0;
   let glints = 0;
 
-  const coins = (sx: number, sy: number, n: number, spreadPx: number): void => {
+  const coins = (sx: number, sy: number, want: number, spreadPx: number, total: Decimal): void => {
     const s = P().coin;
     const scr = screen();
     const target = scene.ui.anchor('gold', tmp2);
     const tx = target ? target.x : 36;
     const ty = target ? target.y : 32;
+    coinTx = tx;
+    coinTy = ty;
+    const shares = coinShares(total, want);
+    const n = shares.count;
     const hs = Math.max(0.7, Math.min(1.3, camera.viewH / 900));
     for (let j = 0; j < n; j++) {
       const a = -Math.PI / 2 + (Math.random() * 2 - 1) * s.spread;
@@ -202,6 +224,7 @@ export function createFx(scene: Scene): FxRender {
       const i = scr.spawn(s, sx + (Math.random() - 0.5) * spreadPx, sy + (Math.random() - 0.5) * spreadPx * 0.4, Math.cos(a) * sp, Math.sin(a) * sp);
       scr.grav[i] *= hs;
       scr.tag[i] = TAG_GOLD;
+      coinValue[i] = j === n - 1 ? shares.last : shares.each;
       // Arrival order is staggered so they land as a run of clinks, not one clump.
       scr.homeTo(i, tx, ty, coinDelay(j, n) + Math.random() * 0.04, 1.6);
     }
@@ -210,7 +233,41 @@ export function createFx(scene: Scene): FxRender {
   // particles.screen's single onArrive slot belongs to fx (coins); others subscribe through
   // FxApi.onCoinLanded.
   scene.particles.screen.onArrive = (sys, i) => {
-    if (sys.tag[i] === TAG_GOLD) landed++;
+    if (sys.tag[i] !== TAG_GOLD) return;
+    landed++;
+    const v = coinValue[i];
+    if (v) {
+      landedValue = landedValue.add(v);
+      coinValue[i] = null;
+    }
+  };
+
+  /** Add trauma, but never push it past `cap` (sprees saturate instead of escalating). */
+  const shake = (t: number, cap: number): void => {
+    const room = cap - camera.trauma;
+    if (room > 0) camera.addTrauma(t < room ? t : room);
+  };
+
+  // ---- crit heat: a spree of crits damps kick/shake and skips hit-stop ----
+  let critHeat = 0;
+  let lastCrit = -10;
+
+  /**
+   * Where a strike's number starts (world): above small dragons (so it never covers them), and
+   * pushed off the head toward the tail (the dragon faces left, so +x) when it would cover it.
+   */
+  const numberAnchor = (x: number, y: number, liftPx: number): void => {
+    const z = camera.zoomEff;
+    const k = 1 / z;
+    scene.dragon.bounds(box);
+    let ny = y - liftPx * k;
+    if (box.h * z < 140) ny = Math.min(ny, box.y - 10 * k);
+    scene.dragon.headPoint(tmp3);
+    let nx = x;
+    const dx = (nx - tmp3.x) * z;
+    if (dx > -60 && dx < 60) nx = tmp3.x + 60 * k;
+    tmp2.x = nx;
+    tmp2.y = ny;
   };
 
   // ---- event reactions ----
@@ -233,19 +290,26 @@ export function createFx(scene: Scene): FxRender {
       const a = -0.6 + (Math.random() - 0.5) * 0.3;
       slash(e.x, e.y, a, k, 1.35);
       slash(e.x, e.y, a + 1.25 + Math.PI, k, 1.2);
-      numbers.spawn(NK_CRIT, e.x, e.y - 24 * k, e.damage);
-      // Hit-stop only on crits (<= 80 ms; infra ignores one within 0.3 s of the last) and kills.
-      time.hitStop(e.stagger ? 0.08 : 0.07);
-      camera.addTrauma(hitTrauma(f, 'crit'));
-      post.kick(0.55);
-      post.flash(scene.palette.accent.glow, 0.12, 0.2);
+      numberAnchor(e.x, e.y, 24);
+      numbers.crit(tmp2.x, tmp2.y, e.damage);
+      const damp = critDamp(critHeat);
+      critHeat = heatAfterCrit(critHeat);
+      // Hit-stop and the chromatic kick only on the first crit after a pause (and on kills):
+      // an isolated crit punches; a spree gets sparks, a merged number, damped shake, zoom punch.
+      if (clock - lastCrit >= CRIT_STOP_GAP) {
+        time.hitStop(e.stagger ? 0.08 : 0.07);
+        post.kick(0.55);
+      } else camera.punchZoom(0.02);
+      lastCrit = clock;
+      shake(hitTrauma(f, 'crit') * damp, 0.25 + 0.4 * damp);
     } else {
       w.burst(p.spark, e.x, e.y, 14, -Math.PI / 2, k);
       w.burst(p.flare, e.x, e.y, 1, 0, k);
       const a = (slashFlip ? -0.55 : 0.55) + (Math.random() - 0.5) * 0.35;
       slash(e.x, e.y, slashFlip ? a : a + Math.PI, k);
-      numbers.spawn(NK_CLICK, e.x, e.y - 10 * k, e.damage);
-      camera.addTrauma(hitTrauma(f, 'click'));
+      numberAnchor(e.x, e.y, 10);
+      numbers.spawn(NK_CLICK, tmp2.x, tmp2.y, e.damage);
+      shake(hitTrauma(f, 'click'), 0.35);
       camera.punchZoom(0.014);
     }
     if (e.stagger) {
@@ -256,8 +320,9 @@ export function createFx(scene: Scene): FxRender {
       ring(tmp.x, tmp.y, k, 2.6, 0.6);
       w.burst(p.ember, tmp.x, tmp.y, 24, -Math.PI / 2, k * 1.3);
       w.burst(p.glint, tmp.x, tmp.y, 1, 0, k * 2.2);
-      camera.addTrauma(0.3);
+      shake(0.3, 0.6);
       post.kick(0.8);
+      post.flash(scene.palette.accent.glow, 0.1, 0.3);
     }
   });
 
@@ -275,7 +340,7 @@ export function createFx(scene: Scene): FxRender {
     scene.dragon.bounds(box);
     numbers.army(0, box.x + box.w * (0.3 + 0.4 * Math.random()), box.y - 14 * k, e.damage);
     const f = frac(e.damage);
-    camera.addTrauma(hitTrauma(f, 'army'));
+    shake(hitTrauma(f, 'army'), 0.35);
     if (f > 0.08) camera.punchZoom(0.008);
   });
 
@@ -314,13 +379,13 @@ export function createFx(scene: Scene): FxRender {
     camera.worldToScreen(cx, cy, tmp);
     deathClock = clock;
     firstLand = lastLand = -1;
-    coins(tmp.x, tmp.y, coinCount(e.gold), Math.min(160, px * 0.5));
+    coins(tmp.x, tmp.y, coinCount(e.gold), Math.min(160, px * 0.5), e.gold);
 
     time.hitStop(0.08);
     time.slowMo(0.25, 0.55);
-    camera.addTrauma(hitTrauma(1, 'kill'));
+    shake(hitTrauma(1, 'kill'), 0.75);
     post.kick(1);
-    post.flash(scene.palette.accent.glow, 0.34, 0.5);
+    post.flash(scene.palette.accent.glow, 0.22, 0.5);
   });
 
   game.on('goldGain', (e) => {
@@ -330,7 +395,7 @@ export function createFx(scene: Scene): FxRender {
     const wy = tmp.y;
     numbers.spawn(NK_GOLD, wx, wy - 50 / camera.zoomEff, e.amount);
     camera.worldToScreen(wx, wy, tmp);
-    coins(tmp.x, tmp.y, 6, 20);
+    coins(tmp.x, tmp.y, 6, 20, e.amount);
   });
 
   const armyShimmer = (strength: number): void => {
@@ -350,19 +415,36 @@ export function createFx(scene: Scene): FxRender {
     w.burst(p.glint, box.x + box.w * 0.5, box.y + box.h * 0.4, 1, 0, k * 1.6 * strength);
   };
 
+  // One purchase can emit several milestones (+ an unlock): merge them into one shimmer per frame.
+  let shimmerPending = 0;
+  let shimmerFlash = false;
   game.on('milestone', () => {
-    armyShimmer(1);
-    post.flash(scene.palette.accent.gold, 0.08, 0.35);
+    shimmerPending = 1;
+    shimmerFlash = true;
   });
   game.on('unlock', (e) => {
-    if (e.kind === 'unit') armyShimmer(1);
+    if (e.kind === 'unit') shimmerPending = 1;
   });
   game.on('purchase', (e) => {
-    if (e.kind === 'upgrade') armyShimmer(0.6);
+    if (e.kind === 'upgrade' && shimmerPending < 0.6) shimmerPending = 0.6;
   });
   game.on('resync', () => {
     numbers.clear();
     eActive.fill(0);
+    shimmerPending = 0;
+    shimmerFlash = false;
+    // Drop in-flight coins silently (no landing, no clink): the HUD snaps to state.
+    const scr = screen();
+    for (let i = 0; i < scr.capacity; i++) {
+      if (scr.life[i] !== 0 && scr.tag[i] === TAG_GOLD) {
+        scr.flags[i] &= ~PF_HOMING;
+        scr.tag[i] = 0;
+        scr.age[i] = scr.life[i]!;
+      }
+      coinValue[i] = null;
+    }
+    landed = 0;
+    landedValue = ZERO;
   });
 
   // ---- API ----
@@ -405,7 +487,7 @@ export function createFx(scene: Scene): FxRender {
     }
   };
 
-  const landedFns: ((n: number) => void)[] = [];
+  const landedFns: ((n: number, value?: Decimal) => void)[] = [];
   const api: FxApi = {
     damageNumber(wx, wy, amount, kind) {
       if (kind === 'army') numbers.army(1, wx, wy, amount);
@@ -426,7 +508,8 @@ export function createFx(scene: Scene): FxRender {
   // ---- debug ----
   const dbg = scene.debug;
   dbg.section('FX');
-  dbg.watch('numbers', () => String(numbers.count));
+  dbg.watch('numbers', () => `${numbers.count} live, ${(numbers.memBytes / 1048576).toFixed(1)} MB`);
+  dbg.watch('crit heat', () => critHeat.toFixed(2));
   dbg.watch('coins land', () => (firstLand < 0 ? '-' : `${firstLand.toFixed(2)}-${lastLand.toFixed(2)} s`));
   dbg.button('crit', () => {
     const d = scene.dragon;
@@ -453,13 +536,25 @@ export function createFx(scene: Scene): FxRender {
       numbers.setDpr(v.dpr);
       numbers.update(v.realDt);
       updateEmitters(v.dt);
-      // The coin flight runs on wall time: top up the screen system (its layer advances by the
-      // scaled dt) so slow-mo and hit-stop never delay the reward. See the report / BUILD_LOG.
-      const extra = v.realDt - v.dt;
-      if (extra > 1e-5) screen().update(extra);
+      critHeat = critHeat > 0 ? Math.max(0, critHeat - CRIT_COOL * v.realDt) : 0;
+      if (shimmerPending > 0) {
+        armyShimmer(shimmerPending);
+        if (shimmerFlash) post.flash(scene.palette.accent.gold, 0.06, 0.35);
+        shimmerPending = 0;
+        shimmerFlash = false;
+      }
+      // Coins follow the gold counter if it moves (or appears after they were launched).
+      const anchor = scene.ui.anchor('gold', tmp3);
+      if (anchor && (anchor.x !== coinTx || anchor.y !== coinTy) && screen().count > 0) {
+        coinTx = anchor.x;
+        coinTy = anchor.y;
+        screen().retarget(TAG_GOLD, coinTx, coinTy);
+      }
       if (landed > 0) {
         const n = landed;
+        const value = landedValue;
         landed = 0;
+        landedValue = ZERO;
         if (deathClock >= 0) {
           const t = clock - deathClock;
           if (firstLand < 0) firstLand = t;
@@ -467,7 +562,7 @@ export function createFx(scene: Scene): FxRender {
         }
         glints += n;
         scene.ui.pulse('gold');
-        for (let j = 0; j < landedFns.length; j++) landedFns[j]!(n);
+        for (let j = 0; j < landedFns.length; j++) landedFns[j]!(n, value);
       }
       if (glints > 0) {
         glints = 0;
