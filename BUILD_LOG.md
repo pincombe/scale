@@ -237,7 +237,19 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 ## Next steps
 **Finish M1**
 1. Land 1.2 and 1.3. For each: typecheck and tests for the folder, a browser check, commit, then a `reviewer` pass (the dragon is max, the crowd high). Route findings back.
-2. ✅ 1.9 landed (bfd6db1). Pending: its review, and an ARCHITECTURE §4 refresh (click formula, stagger gold, `DragonState.staggers`, save v3).
+2. ✅ 1.9 landed (bfd6db1); review done. **WP 1.9b (builder-high), launch after 1.2 lands:**
+   - **Weak-spot liveness moves into core.** The rig currently blocks the weak spot for the first 72% of `enter` (`weakLiveFor` in `render/dragon/weakspot.ts`), but the sim doesn't. Make it a pure core rule that core enforces in `strike` (non-live weak hits become normal hits), and have the rig import it. With the rig's real behavior, engaged click share drops 46% → 35% and size at 3:00 drops 8.4 → 7.1 m, so both fail.
+   - **Sim models the throat weak spot during breath windups.**
+   - **Shopping pause:** 0.3 s + 0.15 s per purchase; the engaged bot currently buys ~31 times a minute at no cost.
+   - **Fix the crash** in `npm run sim -- --profile casual`.
+   - **Shared tuning:** juice time constants exported from `fx/tuning.ts` and imported by both fx and the sim.
+   - **Targets:**
+     - drop the trivially-passing ones;
+     - add a stagger share of gold cap, a casual novelty gap and a worst-seed attacks-seen floor;
+     - compute click share against remaining HP.
+   - **Casual pacing:** apply the reviewer's recommendation (`hpBase` 20 → 14, heroicExample share 0.015 → 0.0175), then retune to all-PASS.
+   - **UI fix:** `ui/effectText.ts:23` rounds 1.5% to "2%"; use `Math.round(share*1000)/10`.
+   - **Docs:** ARCHITECTURE §4 refresh (save v3, `DragonState.staggers`, `idleAfterEnter` 1.0, click formula, stagger gold 50% then 10%).
 3. Route the 1.1 review findings to a builder.
 4. **Integration and art-direction pass (lead):**
    - Build statically and play the first 3–4 minutes at 1440×900 against the §2 beats.
