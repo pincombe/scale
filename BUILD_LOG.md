@@ -4,40 +4,17 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 
 ## Resume here
 - **Milestone:** M1 First Blood ★. We are **not yet at the ★ playtest**. The user has not played anything yet. Stop at the M1 playtest and wait for feedback before starting M2 (KICKOFF).
-- **Snapshot (2026-09-22, HEAD bfd6db1):**
-  - Tests: all pass (`npm test` green again since 1.9 landed). `npm run sim`: 30/30 targets PASS.
-  - Typecheck: clean.
-  - Build: 416 KB raw / 188 KB gzip, incl. uncommitted in-flight work (fonts are 98 KB of it).
+- **Snapshot (2026-09-23, HEAD 6544218):** tests 236/236, typecheck clean, `npm run sim` 35/35, build 425 KB raw / 190 KB gzip (fonts 98 KB).
 - **Done and committed:**
   - 0.1, 0.2, 0.3.
   - 1.1 backdrop (+ review fixes), 1.2 dragon rig, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
-- **In flight (uncommitted in the working tree):**
-  - Review of 1.2 (dragon rig, committed 57a9402).
-  - Polish round from the art pass, all agents finished and resumed:
-    - Crowd: the army's front ranks trail ~8 m behind the hero at huge dragons, so close the gap.
-    - HUD: toasts get a premium backing, max 2 visible, clear of the name/HP bar; re-check the Hire button against the bigger hero.
-    - Sim/core: scale `enter`/`dying` durations with dragon size (newts ~1.0–1.1 s → 1.6 s by 4 m) for a snappier first minute, then retune.
-  - Dragon fix round (1.2 review + art notes), with the dragon agent:
-    1. **High:** the swipe-windup tail target sits on top of loose-scale candidate 0, so clicking the old scale staggers every swipe for the first ~10 dragons.
-    2. Footstep dust and shake repeat on frozen frames.
-    3. The flame is 24 px at every size.
-    4. Knees sink into the ground.
-    5. Wings and crest aren't clickable.
-    6. The throat marker covers the newt's eye; weak-spot candidates should use the target zoom.
-    7. Big dragons hover while idle.
-    8. More presence at 1–3 m.
-    9. Scale cues for huge dragons.
-  - Backdrop "clearing": the foreground grass hides the 0.5 m newt's legs and half its body. Keep grass low in the hero–dragon band.
-  - ✅ Landed: WP 1.10 framing and composition (8086746).
-    - Closer base framing: the hero at ≈ 28–34% of stage height, so the first newt reads at ≥ ~70 px.
-    - Frame the dragon, the hero and the army's front, not the whole army. The army can run off-screen left; the clash point sits at ~40% of stage width.
-    - The dragon's share of stage width ramps from ~25% at 1 m to ~44% at ≥ 10 m.
-    - Evidence: dragon #12 (1.2 m) was a 120×33 px speck at the stage edge because the director framed the whole 7.2 m army.
+- **In flight:** the **M1 milestone review** (reviewer, whole build; brief in the lead's scratchpad `brief-m1-review.md`). It checks the first 3–4 minutes as a judge, integration bugs, end-to-end performance at 1440×900 DPR 2, size and constraints, and gives a blunt feel verdict. After it: fix any blockers, then the ★ playtest handoff.
+- **All M1 WPs have landed, been reviewed and been fixed:** 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 (+1.9b), 1.10 framing. HEAD 6544218. `npm run check` green (236 tests), sim 35/35, build 425 KB raw / 190 KB gzip.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
-  1. Run `git status`. Uncommitted files belong to the in-flight WPs: `src/render/crowd/` = the 1.3 review fixes; `src/core/`, `src/sim/`, `src/render/dragon/weakspot.ts`, `src/render/fx/tuning.ts`+`index.ts`, `src/ui/effectText.ts` and ARCHITECTURE.md = 1.9b.
+  1. Run `git status`. It should be clean. Everything is committed as of 6544218.
   2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
   3. If the WP is complete per its brief summary below, commit it. If not, re-launch it with that brief summary and tell the agent to continue from the files on disk.
-  4. The 1.2 review must be re-run if its result is lost (reviewer agent, commit 57a9402). The 1.1, 1.3 and 1.9 reviews are done, and their findings are recorded in this file.
+  4. If the milestone review's result is lost, re-run it with the checklist under Next steps, "M1 milestone review".
 
 ## In flight: brief summaries (enough to re-launch)
 - **1.2 Dragon rig v1 + newt** (builder-max, owns `src/render/dragon/**`). ✅ Landed in 57a9402 and now in review; kept here as reference. As built: weak spot min `WEAK_HIT_MIN_PX = 11`; on small dragons the loose scale sits on the tail; throat only during breath windups, tail base during swipe windups; the swipe is a quick turnaround with the tail lashing through the front ranks at ~50–450 ms plus a dust shockwave; the dragon adds its own small shake on tail slams and on footsteps of dragons ≥ 5 m; `setOverride` on the returned object is for mutations; optional `DragonView.tailPoint`/`breathReachX`. **Adding a species:** add a `SpeciesDef` with `young`/`old` parameter sets, blended by size on a log scale. The sets cover proportions and posture; head shape (eye, brow, teeth, horns, gills, whiskers, frill); leg pairs; wings; crest; tail fin, spade or club; head count; per-individual variation; and behavior tuning. Set a feature to 0 to switch it off.
@@ -260,14 +237,15 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 | WP | Agent | Owns | Status | Commit |
 |---|---|---|---|---|
 | 1.1 Meadow backdrop, palette, eye in the hills | builder-high | `src/render/backdrop/**`, MEADOW values | ✅ accepted after review (1 high + 6 fixed) | aeeee92, b7f2b17 |
-| 1.2 Dragon rig v1 + newt, weak spot, hit test | builder-max | `src/render/dragon/**` | ✅ committed; **review in flight** | 57a9402 |
+| 1.2 Dragon rig v1 + newt, weak spot, hit test | builder-max | `src/render/dragon/**` | ✅ accepted after review (1 high + 5 fixed, plus art notes) | 57a9402, 6544218 |
 | 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ✅ accepted after review (2 high + 7 fixed) | 7376082, 04598dd |
 | 1.4 Juice: presets, numbers, hit-stop, shake, coins, post FX | builder-high | `src/render/fx/**`, `post.ts` | ✅ accepted after review (1 high + 9 fixed) | fd76ef0, 82496a7 |
 | 1.5 Economy core | builder-high | `src/core/**` | ✅ committed; review done, 5 fixes handed to 1.9 | 255c39e |
 | 1.6 HUD, Army/Upgrades panels, title, progressive disclosure | builder-medium | `src/ui/**` | ✅ committed (no formal review) | 825e78f |
 | 1.7 SFX v1 | builder-high | `src/audio/**` | ✅ accepted after review (2 high + 6 fixed) | 01fc25a, c0b831b |
 | 1.8 Meadow text | writer | `src/core/content/text.ts` | ✅ committed | f7d020d |
-| 1.9 Balance sim v0 + 5 core fixes | builder-high | `src/sim/**`, `BALANCE`, listed core fixes | ✅ committed (30/30 targets PASS, 20 seeds); **review in flight** | bfd6db1 |
+| 1.9 Balance sim v0 + 5 core fixes (+1.9b fidelity, size-scaled phases) | builder-high | `src/sim/**`, `BALANCE`, core fixes | ✅ accepted after review (35/35 targets) | bfd6db1, 551f104, 2925c0f |
+| 1.10 Framing and composition (dragon-first camera) | builder-high | `src/render/director.ts` | ✅ accepted (lead art pass) | 8086746 |
 
 ## Process notes (how this build runs)
 **Agents and reviews**
@@ -355,3 +333,4 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: Backdrop polish (b550de5): painterly receding mountains; layers sized from screen height so the closer framing doesn't rescale them. Juice polish (b6f9d4f): kill burst scales with dragon size (no white blob); numbers crisp and above the sparks (the "broken glyphs" were spark streaks). WP 1.9b (551f104): weak-spot liveness in core, 35/35 sim targets.
 - 2026-09-22: WP 1.10 framing (8086746): hero 29% of stage height, clash point ~40%, dragon share of width 25% → 44% from 1 m to 10 m (capped by the base framing until ~3 m), crowd LODs raised. Polish round sent: crowd gap, HUD toasts, size-scaled enter/dying.
 - 2026-09-22: 1.2 review: good shape, within budget (draw 0.06–0.11 ms); 1 high (swipe tail target on top of the scale) + 5 lower. Fix round sent with art notes; grass clearing sent to backdrop. M2 extensibility notes recorded.
+- 2026-09-23: Polish round landed: crowd gap (c544733), grass clearing (ecfa2ff), premium toasts (d6ab8fc), size-scaled enter/dying (2925c0f), dragon fix round incl. presence at 1–3 m and big-dragon cues (6544218). Lead spot check on a static build: title, first kill, Hire button, dragon-12 composition and dragon-20 fire breath look good. M1 milestone review launched.
