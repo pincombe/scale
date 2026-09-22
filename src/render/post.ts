@@ -1,118 +1,186 @@
-// Post FX layer (slot 6). STUB quality (WP 0.2): vignette, animated film grain, full-screen flash.
-// The juice WP (1.4) owns this file and adds the chromatic kick, color grading, etc.
-// Canvas 2D only: no ctx.filter (Chrome-only). Grain uses the 'overlay' composite mode.
+// Post FX layer (slot 6), owned by the juice WP (1.4). In order:
+//   1. Chromatic kick: for big moments the red and blue channels split radially from the stage
+//      center for ~0.3 s (a lens "hit"). Pure Canvas 2D compositing, no ctx.filter: the frame so
+//      far is copied into two half-res buffers, each masked to one channel with 'multiply'; the
+//      main canvas keeps only green ('multiply' #0f0), then the red and blue buffers are added
+//      back ('lighter') at slightly different scales. Green (most of the luminance) stays
+//      full-res and sharp. Only runs while a kick is live.
+//   2. Vignette: an elliptical radial gradient baked once per size/palette into a small canvas.
+//      It stays in canvas (one source-over drawImage of a cached 256 px canvas, no blend mode)
+//      because the HUD coin fountain (particles.screen, slot 7) must fly OVER it into the
+//      top-left gold counter at full brightness; a CSS vignette would dim every coin as it lands.
+//   3. Flash: a full-screen additive wash that fades out (the stronger of overlapping flashes wins).
+// Film grain is NOT a canvas pass: it's a CSS overlay (fx/grain.ts), composited for free and kept
+// out of M2 snapshots. Its visibility follows this layer's `visible` flag.
+// settings.reduceFlashes scales flashes and kicks down; reduceMotion scales the kick's zoom punch
+// (via camera.motionScale) and the chromatic split.
 import type { Scene } from '../app/scene';
 import type { Layer, View } from './types';
 import type { Palette } from './palette';
 import { makeCanvas, context2d } from './atlas';
 import { rgba } from '../lib/color';
+import { createGrain } from './fx/grain';
 
 export interface PostLayer extends Layer {
   flash(color: string, alpha: number, seconds: number): void;
-  /** Momentary punch (0..1): zoom punch now; chromatic kick later (juice WP). */
+  /** Momentary punch (0..1): zoom punch plus a chromatic split. */
   kick(strength: number): void;
 }
 
-const GRAIN_SIZE = 128;
-const GRAIN_FPS = 24;
+const KICK_DUR = 0.34;
+/** Max radial channel split at kick 1, as a fraction of the half-diagonal. */
+const KICK_SPLIT = 0.014;
+const VIGNETTE_PX = 256;
 
 export function createPost(scene: Scene): PostLayer {
   let vignette: HTMLCanvasElement | null = null;
-  let vW = 0;
-  let vH = 0;
   let vPalette: Palette | null = null;
 
-  // Grain tile: gray noise around mid-gray so 'overlay' both lightens and darkens.
-  const tile = makeCanvas(GRAIN_SIZE, GRAIN_SIZE);
-  const tctx = context2d(tile);
-  const img = tctx.createImageData(GRAIN_SIZE, GRAIN_SIZE);
-  let s = 0x3c6ef372;
-  for (let i = 0; i < img.data.length; i += 4) {
-    s ^= s << 13;
-    s ^= s >>> 17;
-    s ^= s << 5;
-    const v = 128 + (((s >>> 0) / 4294967296 - 0.5) * 2) * 110;
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  tctx.putImageData(img, 0, 0);
-  const pattern = tctx.createPattern(tile, 'repeat');
-  let grainX = 0;
-  let grainY = 0;
-  let grainClock = 0;
+  const grain = createGrain();
+  let grainShown = true;
+  grain.setAnimated(!scene.settings.get('reduceMotion'));
+  scene.settings.onChange((st, key) => {
+    if (key === 'reduceMotion') grain.setAnimated(!st.reduceMotion);
+  });
 
   let flashColor = '#ffffff';
   let flashA0 = 0;
   let flashDur = 1;
   let flashT = 1;
 
-  const bakeVignette = (w: number, h: number, p: Palette): void => {
+  let kickA0 = 0;
+  let kickT = KICK_DUR;
+  let kickNow = 0;
+
+  // Chromatic scratch buffers (half-res, lazily sized to the target canvas).
+  let bufR: HTMLCanvasElement | null = null;
+  let bufB: HTMLCanvasElement | null = null;
+  let ctxR: CanvasRenderingContext2D | null = null;
+  let ctxB: CanvasRenderingContext2D | null = null;
+
+  const bakeVignette = (p: Palette): void => {
     vPalette = p;
-    vW = w;
-    vH = h;
-    const k = 0.25; // quarter resolution; smooth gradients upscale cleanly
-    vignette = makeCanvas(w * k, h * k);
+    // A square gradient stretched to the viewport gives an elliptical vignette at any aspect.
+    const n = VIGNETTE_PX;
+    vignette = makeCanvas(n, n);
     const ctx = context2d(vignette);
-    ctx.scale(k, k);
-    const cx = w * 0.5;
-    const cy = h * 0.46;
-    const r = Math.hypot(w, h) * 0.5;
-    const g = ctx.createRadialGradient(cx, cy, r * 0.42, cx, cy, r * 1.02);
+    const c = n / 2;
+    const g = ctx.createRadialGradient(c, c * 0.94, n * 0.26, c, c * 0.94, n * 0.74);
     g.addColorStop(0, rgba(p.vignette, 0));
-    g.addColorStop(0.55, rgba(p.vignette, p.vignetteStrength * 0.45));
+    g.addColorStop(0.35, rgba(p.vignette, p.vignetteStrength * 0.18));
+    g.addColorStop(0.7, rgba(p.vignette, p.vignetteStrength * 0.62));
     g.addColorStop(1, rgba(p.vignette, p.vignetteStrength));
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, n, n);
   };
+
+  const ensureBuffers = (w: number, h: number): void => {
+    const bw = Math.max(1, Math.ceil(w / 2));
+    const bh = Math.max(1, Math.ceil(h / 2));
+    if (bufR && bufR.width === bw && bufR.height === bh) return;
+    bufR = makeCanvas(bw, bh);
+    bufB = makeCanvas(bw, bh);
+    ctxR = context2d(bufR);
+    ctxB = context2d(bufB);
+  };
+
+  /** Split the red and blue channels of everything drawn so far (device px, identity transform). */
+  const chromatic = (ctx: CanvasRenderingContext2D, amount: number): void => {
+    const src = ctx.canvas as HTMLCanvasElement;
+    const W = src.width;
+    const H = src.height;
+    ensureBuffers(W, H);
+    const bw = bufR!.width;
+    const bh = bufR!.height;
+    const r = ctxR!;
+    const b = ctxB!;
+    r.globalCompositeOperation = 'copy';
+    r.drawImage(src, 0, 0, bw, bh);
+    r.globalCompositeOperation = 'multiply';
+    r.fillStyle = '#ff0000';
+    r.fillRect(0, 0, bw, bh);
+    b.globalCompositeOperation = 'copy';
+    b.drawImage(src, 0, 0, bw, bh);
+    b.globalCompositeOperation = 'multiply';
+    b.fillStyle = '#0000ff';
+    b.fillRect(0, 0, bw, bh);
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'lighter';
+    const cx = W * 0.5;
+    const cy = H * 0.5;
+    // Red pushed outward, blue pulled in: warm/cool fringes like a lens hit.
+    const kr = 1 + amount;
+    const kb = 1 - amount * 0.35;
+    ctx.drawImage(bufR!, 0, 0, bw, bh, cx - cx * kr, cy - cy * kr, W * kr, H * kr);
+    // Blue shrinks slightly; pad it to the edges by also stretching it a touch beyond them.
+    ctx.drawImage(bufB!, 0, 0, bw, bh, cx - cx * kb - 1, cy - cy * kb - 1, W * kb + 2, H * kb + 2);
+    ctx.globalCompositeOperation = 'source-over';
+  };
+
+  const reduceFlashes = (): boolean => scene.settings.get('reduceFlashes');
 
   const layer: PostLayer = {
     name: 'post',
     visible: true,
     flash(color, alpha, seconds) {
-      const a = alpha * (scene.settings.get('reduceFlashes') ? 0.3 : 1);
+      const a = alpha * (reduceFlashes() ? 0.3 : 1);
       // Keep the stronger of an ongoing flash and the new one.
-      const cur = flashT < flashDur ? flashA0 * (1 - flashT / flashDur) : 0;
-      if (a < cur) return;
+      const k = flashT < flashDur ? 1 - flashT / flashDur : 0;
+      if (a < flashA0 * k * k) return;
       flashColor = color;
       flashA0 = a;
       flashDur = Math.max(0.01, seconds);
       flashT = 0;
     },
     kick(strength) {
-      scene.camera.punchZoom(0.06 * strength);
+      const st = Math.max(0, Math.min(1, strength));
+      scene.camera.punchZoom(0.055 * st);
+      let a = st;
+      if (reduceFlashes()) a *= 0.3;
+      if (scene.settings.get('reduceMotion')) a *= 0.5;
+      if (a >= kickNow) {
+        kickA0 = a;
+        kickT = 0;
+      }
     },
     update(v: View) {
       flashT += v.realDt;
-      grainClock += v.realDt;
-      if (grainClock >= 1 / GRAIN_FPS) {
-        grainClock %= 1 / GRAIN_FPS;
-        grainX = Math.floor(Math.random() * GRAIN_SIZE);
-        grainY = Math.floor(Math.random() * GRAIN_SIZE);
+      kickT += v.realDt;
+      const kk = kickT < KICK_DUR ? 1 - kickT / KICK_DUR : 0;
+      kickNow = kickA0 * kk * kk;
+      if (grain.el && grainShown !== layer.visible) {
+        grainShown = layer.visible;
+        grain.el.style.display = grainShown ? '' : 'none';
       }
     },
     draw(ctx: CanvasRenderingContext2D, v: View) {
       const { width: w, height: h, dpr } = v;
-      if (!vignette || vPalette !== v.palette || vW !== w || vH !== h) bakeVignette(w, h, v.palette);
-      ctx.drawImage(vignette!, 0, 0, w, h);
 
-      // Film grain in device pixels so it stays fine on Retina.
-      if (pattern) {
-        ctx.setTransform(1, 0, 0, 1, -grainX, -grainY);
-        ctx.globalCompositeOperation = 'overlay';
-        ctx.globalAlpha = 0.07;
-        ctx.fillStyle = pattern;
-        ctx.fillRect(grainX, grainY, w * dpr, h * dpr);
+      if (kickNow > 0.02) {
+        chromatic(ctx, kickNow * KICK_SPLIT);
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'source-over';
       }
+
+      if (!vignette || vPalette !== v.palette) bakeVignette(v.palette);
+      ctx.drawImage(vignette!, 0, 0, w, h);
 
       if (flashT < flashDur) {
         const k = 1 - flashT / flashDur;
-        ctx.globalAlpha = flashA0 * k * k;
-        ctx.fillStyle = flashColor;
-        ctx.fillRect(0, 0, w, h);
-        ctx.globalAlpha = 1;
+        const a = flashA0 * k * k;
+        if (a > 0.004) {
+          // Additive: brights bloom toward white instead of a flat gray wash.
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = a > 1 ? 1 : a;
+          ctx.fillStyle = flashColor;
+          ctx.fillRect(0, 0, w, h);
+          ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = 'source-over';
+        }
       }
     },
   };

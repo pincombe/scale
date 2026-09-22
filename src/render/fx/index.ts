@@ -1,19 +1,52 @@
-// FX STUB (WP 0.2). The juice WP (1.4) replaces this folder (and render/post.ts): particle
-// presets, damage numbers, hit-stop, screen shake, coins flying to the HUD, sword arcs.
+// Juice (WP 1.4): every click, hit and kill should feel great. createFx(scene) returns the FxApi
+// (./api.ts) plus the layers 'fx.text' (slot 5: damage numbers and callouts) and 'post' (slot 6:
+// ../post.ts). Effects key off game events, the scene.dragon / scene.crowd services and the camera,
+// never off another module's internals.
 //
-// Contract kept by any replacement: createFx(scene) returns { api, text, post }: the FxApi
-// (./api.ts) plus the layers 'fx.text' (slot 5) and 'post' (slot 6). The stub already wires the
-// basic reactions (sparks + numbers on hits, coins to the 'gold' anchor, slow-mo on kills) so the
-// skeleton plays; it's the place to make them spectacular.
+// ---- Presets (./presets.ts; authored in screen px, pass scale = 1 / camera.zoomEff in world) ----
+//   spark       click sparks: white -> gold -> fire streaks fountaining up          (world, additive)
+//   sparkBig    crit sparks: bigger, faster, white-gold, all directions              (world, additive)
+//   sparkSmall  dim little sparks for army blows                                     (world, additive)
+//   flare       brief bloom at an impact; flareBig for crits and kills               (world, additive)
+//   glint       4-point star glint                                                   (world, additive)
+//   slash       crescent streak; set particle rot to orient it                       (world, additive)
+//   ring        expanding shockwave ring                                             (world, additive)
+//   ember       rising fire embers, hot white -> ember red                           (world, additive)
+//   dust        low ground puff that skids on the ground                             (world, normal)
+//   smoke       dark rising smoke                                                    (world, normal)
+//   shimmer     gold motes floating up (milestones, upgrades)                        (world, additive)
+//   beam        soft vertical light shaft (spawned with rot -PI/2)                   (world, additive)
+//   coin        spinning coin (96-frame flip ramp) for the HUD fountain              (screen, normal)
+//   coinGlint   glint where coins land on the HUD                                    (screen, additive)
+// Others can reuse them via scene.fx.burst?.(name, wx, wy, intensity) (see FxPreset in ./api.ts).
+//
+// ---- Reactions ----
+//   strike       sparks, flare, slash streak across the impact, click number, tiny shake + zoom punch
+//     crit       + hit-stop 70-80 ms, white-gold sparks, glint, double shockwave, X-slash, big gold
+//                  number that slams in, kick (chromatic split), small warm flash
+//     stagger    + STAGGERED! callout, big ring, ember burst
+//   armyHit      small sparks per blow/arrow, ONE aggregated army number (merges), shake ~ damage/maxHp
+//   dragonDeath  hit-stop, short slow-mo beat (~0.55 s), warm flash, kick, flare, shockwaves, embers + smoke + dust,
+//                  smoldering embers over the dying body, big +gold number, and the coin fountain:
+//                  coins burst from the corpse, then home to the HUD 'gold' anchor; every arrival
+//                  pulses the counter and fires onCoinLanded. All coins land ~0.6-1.4 s after death.
+//   goldGain     (stagger) a few coins from the weak spot + gold number
+//   milestone / unlock(unit) / purchase(upgrade)   gold shimmer and light shafts rising over the army
+//
+// Timing: world effects run on scaled time (they freeze in hit-stop and crawl in slow-mo); numbers
+// and the coin flight run on wall time so the reward always arrives on schedule.
 import type { Scene } from '../../app/scene';
 import type { Layer, View } from '../types';
-import type { DamageKind, FxApi } from './api';
+import type { DamageKind, FxApi, FxPreset } from './api';
 import type { Decimal } from '../../core/decimal';
-import { fmt } from '../../core/format';
+import type { Palette } from '../palette';
 import { createPost, type PostLayer } from '../post';
-import { CURVE_FADE, CURVE_FLASH, CURVE_HOLD, particleSpec, type ParticleSpec, type ParticleSystem } from '../particles';
-import { outBack, outCubic } from '../../lib/ease';
+import type { ParticleSpec, ParticleSystem } from '../particles';
 import { rect, vec2 } from '../../lib/vec';
+import { buildPresets, type Presets } from './presets';
+import { fxSprites } from './sprites';
+import { NK_ARMY, NK_CALLOUT, NK_CLICK, NK_CRIT, NK_GOLD, NK_REWARD, NumberPool } from './numbers';
+import { coinCount, coinDelay, damageFrac, hitTrauma } from './tuning';
 
 export interface FxRender {
   api: FxApi;
@@ -21,162 +54,363 @@ export interface FxRender {
   post: PostLayer;
 }
 
-const MAX_NUMBERS = 64;
-const KIND_ID: Record<DamageKind, number> = { click: 0, crit: 1, army: 2, gold: 3 };
-const FONT = ['700 26px "Cinzel Variable", serif', '800 46px "Cinzel Variable", serif', '600 20px "Cinzel Variable", serif', '700 26px "Cinzel Variable", serif'];
-const FILL = ['#fff4dc', '#ffd35a', '#ffcfa0', '#ffe27a'];
-const LIFE = [0.75, 1.1, 0.7, 1.2];
-const RISE = [58, 84, 40, 70];
 const TAG_GOLD = 1;
+const KIND_ID: Record<DamageKind, number> = { click: NK_CLICK, crit: NK_CRIT, army: NK_ARMY, gold: NK_GOLD };
 
-interface Specs {
-  spark: ParticleSpec;
-  flare: ParticleSpec;
-  ember: ParticleSpec;
-  coin: ParticleSpec;
-}
+// ---- Emitters: spawn a preset continuously over a region for a while (shimmer, smolder) ----
+const EMAX = 16;
+const EM_RECT = 0;
+const EM_BODY = 1;
 
 export function createFx(scene: Scene): FxRender {
   const post = createPost(scene);
+  const { game, time, camera } = scene;
 
-  // Damage-number pool (struct of arrays; the text is formatted once, at spawn).
-  const nActive = new Uint8Array(MAX_NUMBERS);
-  const nX = new Float64Array(MAX_NUMBERS);
-  const nY = new Float64Array(MAX_NUMBERS);
-  const nAge = new Float32Array(MAX_NUMBERS);
-  const nKind = new Uint8Array(MAX_NUMBERS);
-  const nDrift = new Float32Array(MAX_NUMBERS);
-  const nText: string[] = new Array<string>(MAX_NUMBERS).fill('');
-  let nHead = 0;
+  let presets: Presets | null = null;
+  let presetsFor: Palette | null = null;
+  const P = (): Presets => {
+    if (!presets || presetsFor !== scene.palette) {
+      presets = buildPresets(scene.atlas, scene.sprites, scene.palette);
+      presetsFor = scene.palette;
+    }
+    return presets;
+  };
 
-  const landedFns: ((n: number) => void)[] = [];
-  let landed = 0;
+  let coinIcon: HTMLCanvasElement | null = null;
+  let glowGold: HTMLCanvasElement | null = null;
+  const numbers = new NumberPool(
+    () => {
+      if (!coinIcon) coinIcon = scene.atlas.canvas(fxSprites(scene.atlas).coin);
+      return coinIcon;
+    },
+    () => {
+      if (!glowGold) glowGold = scene.atlas.canvas(scene.atlas.tint(scene.sprites.glow, scene.palette.accent.gold, 0.5));
+      return glowGold;
+    },
+  );
+
+  const eActive = new Uint8Array(EMAX);
+  const eMode = new Uint8Array(EMAX);
+  const eSpec: (ParticleSpec | null)[] = new Array<ParticleSpec | null>(EMAX).fill(null);
+  const eX = new Float64Array(EMAX);
+  const eY = new Float64Array(EMAX);
+  const eW = new Float64Array(EMAX);
+  const eH = new Float64Array(EMAX);
+  const eRate = new Float32Array(EMAX);
+  const eLeft = new Float32Array(EMAX);
+  const eAcc = new Float32Array(EMAX);
+  const eScale = new Float32Array(EMAX);
+
+  const emit = (spec: ParticleSpec, mode: number, x: number, y: number, w: number, h: number, rate: number, seconds: number, scale = 1): void => {
+    let slot = -1;
+    for (let i = 0; i < EMAX; i++) {
+      if (!eActive[i]) {
+        slot = i;
+        break;
+      }
+    }
+    if (slot < 0) return;
+    eActive[slot] = 1;
+    eSpec[slot] = spec;
+    eMode[slot] = mode;
+    eX[slot] = x;
+    eY[slot] = y;
+    eW[slot] = w;
+    eH[slot] = h;
+    eRate[slot] = rate;
+    eLeft[slot] = seconds;
+    eAcc[slot] = 0;
+    eScale[slot] = scale;
+  };
+
   const tmp = vec2();
+  const tmp2 = vec2();
   const box = rect();
+  const world = (): ParticleSystem => scene.particles.world;
+  const screen = (): ParticleSystem => scene.particles.screen;
 
-  let specs: Specs | null = null;
-  const ensureSpecs = (): Specs => {
-    if (specs) return specs;
-    const { atlas, sprites, palette } = scene;
-    // Authored in screen px; world bursts pass scale = 1 / zoom.
-    specs = {
-      spark: particleSpec({
-        sprite: atlas.ramp(sprites.spark, ['#ffffff', palette.accent.gold, palette.accent.fire], 4, 0.5),
-        ramp: 4,
-        additive: true,
-        align: true,
-        life: 0.3,
-        lifeVar: 0.4,
-        speed: 900,
-        speedVar: 0.5,
-        angle: -0.5,
-        spread: 1.4,
-        drag: 5,
-        gravity: 1400,
-        size: 34,
-        sizeEnd: 10,
-        curve: CURVE_FADE,
-      }),
-      flare: particleSpec({ sprite: atlas.tint(sprites.glow, palette.accent.glow, 0.7), additive: true, life: 0.14, lifeVar: 0.1, size: 110, sizeEnd: 170, sizeVar: 0.1, curve: CURVE_FLASH, alpha: 0.9 }),
-      ember: particleSpec({ sprite: atlas.tint(sprites.ember, palette.accent.fire, 0.6), additive: true, life: 0.7, lifeVar: 0.4, speed: 320, speedVar: 0.6, angle: -1.2, spread: 1.2, drag: 2, gravity: 700, size: 9, sizeEnd: 3 }),
-      coin: particleSpec({ sprite: sprites.coin, life: 2.6, lifeVar: 0.1, speed: 560, speedVar: 0.4, angle: -Math.PI / 2, spread: 1.05, gravity: 1500, size: 22, sizeEnd: 18, sizeVar: 0.18, curve: CURVE_HOLD, spinVar: 3 }),
-    };
-    return specs;
-  };
-
-  const spawnNumber = (wx: number, wy: number, amount: Decimal, kind: DamageKind): void => {
-    const i = nHead;
-    nHead = (nHead + 1) % MAX_NUMBERS;
-    nActive[i] = 1;
-    nX[i] = wx;
-    nY[i] = wy;
-    nAge[i] = 0;
-    nKind[i] = KIND_ID[kind];
-    nDrift[i] = (Math.random() - 0.5) * 36;
-    nText[i] = (kind === 'gold' ? '+' : '') + fmt(amount);
-  };
-
-  const coins = (screen: ParticleSystem, sx: number, sy: number, n: number): void => {
-    const s = ensureSpecs();
-    const target = scene.ui.anchor('gold', tmp);
-    for (let k = 0; k < n; k++) {
-      const a = s.coin.angle + s.coin.spread * (Math.random() * 2 - 1);
-      const sp = s.coin.speed * (1 + s.coin.speedVar * (Math.random() * 2 - 1));
-      const i = screen.spawn(s.coin, sx, sy, Math.cos(a) * sp, Math.sin(a) * sp);
-      screen.tag[i] = TAG_GOLD;
-      if (target) screen.homeTo(i, target.x, target.y, 0.42 + Math.random() * 0.35, 1);
+  const updateEmitters = (dt: number): void => {
+    if (dt <= 0) return;
+    const w = world();
+    const k = 1 / camera.zoomEff;
+    for (let i = 0; i < EMAX; i++) {
+      if (!eActive[i]) continue;
+      eLeft[i] -= dt;
+      if (eLeft[i]! <= 0) {
+        eActive[i] = 0;
+        continue;
+      }
+      eAcc[i] += eRate[i]! * dt;
+      const spec = eSpec[i]!;
+      while (eAcc[i]! >= 1) {
+        eAcc[i] -= 1;
+        let x: number;
+        let y: number;
+        if (eMode[i] === EM_BODY) {
+          scene.dragon.impactPoint(tmp);
+          x = tmp.x;
+          y = tmp.y;
+        } else {
+          x = eX[i]! + Math.random() * eW[i]!;
+          y = eY[i]! + Math.random() * eH[i]!;
+        }
+        w.burst(spec, x, y, 1, spec.angle, k * eScale[i]!);
+      }
     }
   };
 
-  const corpseScreen = (): void => {
-    scene.dragon.bounds(box);
-    scene.camera.worldToScreen(box.x + box.w * 0.5, box.y + box.h * 0.55, tmp);
+  /** One slash streak across (x, y) at `angle` (rad), sized in screen px * k. */
+  const slash = (x: number, y: number, angle: number, k: number, size = 1): void => {
+    const w = world();
+    const s = P().slash;
+    const sp = 110 * k;
+    const i = w.spawn(s, x, y, Math.cos(angle) * sp, Math.sin(angle) * sp);
+    w.rot[i] = angle;
+    w.size0[i] *= k * size;
+    w.size1[i] *= k * size;
   };
 
+  /** A ring with custom size/life (the preset is a quick one). */
+  const ring = (x: number, y: number, k: number, size: number, life: number): void => {
+    const w = world();
+    const i = w.spawn(P().ring, x, y, 0, 0);
+    w.size0[i] *= k * size * 0.5;
+    w.size1[i] *= k * size;
+    w.life[i] = life;
+  };
+
+  let slashFlip = false;
+
+  // ---- coins ----
+  let landed = 0;
+  let deathClock = -1;
+  let firstLand = -1;
+  let lastLand = -1;
+  let clock = 0;
+  let glints = 0;
+
+  const coins = (sx: number, sy: number, n: number, spreadPx: number): void => {
+    const s = P().coin;
+    const scr = screen();
+    const target = scene.ui.anchor('gold', tmp2);
+    const tx = target ? target.x : 36;
+    const ty = target ? target.y : 32;
+    const hs = Math.max(0.7, Math.min(1.3, camera.viewH / 900));
+    for (let j = 0; j < n; j++) {
+      const a = -Math.PI / 2 + (Math.random() * 2 - 1) * s.spread;
+      const sp = s.speed * (1 + s.speedVar * (Math.random() * 2 - 1)) * hs;
+      const i = scr.spawn(s, sx + (Math.random() - 0.5) * spreadPx, sy + (Math.random() - 0.5) * spreadPx * 0.4, Math.cos(a) * sp, Math.sin(a) * sp);
+      scr.grav[i] *= hs;
+      scr.tag[i] = TAG_GOLD;
+      // Arrival order is staggered so they land as a run of clinks, not one clump.
+      scr.homeTo(i, tx, ty, coinDelay(j, n) + Math.random() * 0.04, 1.6);
+    }
+  };
+
+  // particles.screen's single onArrive slot belongs to fx (coins); others subscribe through
+  // FxApi.onCoinLanded.
   scene.particles.screen.onArrive = (sys, i) => {
     if (sys.tag[i] === TAG_GOLD) landed++;
   };
 
-  const { game, time, camera } = scene;
+  // ---- event reactions ----
+  const frac = (damage: Decimal): number => damageFrac(damage, game.state.dragon.maxHp);
 
   game.on('strike', (e) => {
-    const s = ensureSpecs();
-    const world = scene.particles.world;
+    const p = P();
+    const w = world();
     const k = 1 / camera.zoomEff;
-    spawnNumber(e.x, e.y - 12 * k, e.damage, e.crit ? 'crit' : 'click');
-    world.burst(s.spark, e.x, e.y, e.crit ? 22 : 10, -0.5, k);
-    world.burst(s.flare, e.x, e.y, 1, 0, k * (e.crit ? 1.6 : 1));
+    const f = frac(e.damage);
+    slashFlip = !slashFlip;
     if (e.crit) {
-      world.burst(s.ember, e.x, e.y, 10, -1.2, k);
-      time.hitStop(0.06);
-      camera.addTrauma(0.32);
-      api.kick(0.5);
-      api.flash(scene.palette.accent.glow, 0.12, 0.18);
+      w.burst(p.sparkBig, e.x, e.y, 26, -Math.PI / 2, k);
+      w.burst(p.spark, e.x, e.y, 14, -Math.PI / 2, k);
+      w.burst(p.flareBig, e.x, e.y, 1, 0, k * 0.38);
+      w.burst(p.glint, e.x, e.y, 1, 0, k * 1.5);
+      w.burst(p.ember, e.x, e.y, 8, -Math.PI / 2, k);
+      ring(e.x, e.y, k, 1, 0.3);
+      ring(e.x, e.y, k, 1.8, 0.5);
+      const a = -0.6 + (Math.random() - 0.5) * 0.3;
+      slash(e.x, e.y, a, k, 1.35);
+      slash(e.x, e.y, a + 1.25 + Math.PI, k, 1.2);
+      numbers.spawn(NK_CRIT, e.x, e.y - 24 * k, e.damage);
+      // Hit-stop only on crits (<= 80 ms; infra ignores one within 0.3 s of the last) and kills.
+      time.hitStop(e.stagger ? 0.08 : 0.07);
+      camera.addTrauma(hitTrauma(f, 'crit'));
+      post.kick(0.55);
+      post.flash(scene.palette.accent.glow, 0.12, 0.2);
     } else {
-      camera.addTrauma(0.14);
+      w.burst(p.spark, e.x, e.y, 14, -Math.PI / 2, k);
+      w.burst(p.flare, e.x, e.y, 1, 0, k);
+      const a = (slashFlip ? -0.55 : 0.55) + (Math.random() - 0.5) * 0.35;
+      slash(e.x, e.y, slashFlip ? a : a + Math.PI, k);
+      numbers.spawn(NK_CLICK, e.x, e.y - 10 * k, e.damage);
+      camera.addTrauma(hitTrauma(f, 'click'));
+      camera.punchZoom(0.014);
+    }
+    if (e.stagger) {
+      if (!scene.dragon.weakSpot(tmp)) scene.dragon.headPoint(tmp);
+      scene.dragon.bounds(box);
+      // Above the dragon, clear of the crit number rising from the weak spot.
+      numbers.spawn(NK_CALLOUT, box.x + box.w * 0.5, Math.min(tmp.y - 110 * k, box.y - 70 * k), null, 'STAGGERED!');
+      ring(tmp.x, tmp.y, k, 2.6, 0.6);
+      w.burst(p.ember, tmp.x, tmp.y, 24, -Math.PI / 2, k * 1.3);
+      w.burst(p.glint, tmp.x, tmp.y, 1, 0, k * 2.2);
+      camera.addTrauma(0.3);
+      post.kick(0.8);
     }
   });
 
   game.on('armyHit', (e) => {
-    const s = ensureSpecs();
-    const world = scene.particles.world;
+    const p = P();
+    const w = world();
     const k = 1 / camera.zoomEff;
-    const n = Math.min(e.hits, 5);
+    const melee = e.unit === 'footman';
+    const n = Math.min(e.hits, melee ? 6 : 8);
     for (let j = 0; j < n; j++) {
       scene.dragon.impactPoint(tmp);
-      world.burst(s.spark, tmp.x, tmp.y, 3, -0.5, k * 0.7);
+      w.burst(p.sparkSmall, tmp.x, tmp.y, melee ? 3 : 2, -Math.PI / 2, k);
     }
-    scene.dragon.impactPoint(tmp);
-    spawnNumber(tmp.x, tmp.y, e.damage, 'army');
-    camera.addTrauma(0.05);
+    // Army numbers float above the dragon's back, apart from the click numbers at the cursor.
+    scene.dragon.bounds(box);
+    numbers.army(0, box.x + box.w * (0.3 + 0.4 * Math.random()), box.y - 14 * k, e.damage);
+    const f = frac(e.damage);
+    camera.addTrauma(hitTrauma(f, 'army'));
+    if (f > 0.08) camera.punchZoom(0.008);
   });
 
   game.on('dragonDeath', (e) => {
-    const s = ensureSpecs();
-    corpseScreen();
-    const sx = tmp.x;
-    const sy = tmp.y;
-    const mag = Math.max(0, Math.log10(Math.max(1, e.gold.toNumber())));
-    coins(scene.particles.screen, sx, sy, Math.min(36, Math.round(6 + 3 * mag)));
-    scene.particles.screen.burst(s.flare, sx, sy, 1, 0, 2.2);
+    const p = P();
+    const w = world();
+    const k = 1 / camera.zoomEff;
     scene.dragon.bounds(box);
-    spawnNumber(box.x + box.w * 0.5, box.y - 0.1 * box.h, e.gold, 'gold');
-    time.slowMo(0.25, 1.0);
-    camera.addTrauma(0.55);
-    api.kick(1);
-    api.flash(scene.palette.accent.glow, 0.28, 0.35);
+    const cx = box.x + box.w * 0.5;
+    const cy = box.y + box.h * 0.55;
+    const px = box.w * camera.zoomEff;
+    const sz = Math.max(0.75, Math.min(2.2, Math.sqrt(px / 140)));
+
+    w.burst(p.flareBig, cx, cy, 1, 0, k * sz * 0.6);
+    w.burst(p.glint, cx, cy, 1, 0, k * 2.4 * sz);
+    ring(cx, cy, k, 1.6 * sz, 0.45);
+    ring(cx, cy, k, 3.2 * sz, 0.8);
+    for (let j = 0; j < 44; j++) {
+      scene.dragon.impactPoint(tmp);
+      w.burst(p.ember, tmp.x, tmp.y, 1, -Math.PI / 2, k * 1.25);
+    }
+    for (let j = 0; j < 14; j++) {
+      scene.dragon.impactPoint(tmp);
+      w.burst(p.sparkBig, tmp.x, tmp.y, 1, -Math.PI / 2, k * 0.8);
+    }
+    for (let j = 0; j < 8; j++) {
+      scene.dragon.impactPoint(tmp);
+      w.burst(p.smoke, tmp.x, tmp.y, 1, -Math.PI / 2, k * sz * 0.8);
+    }
+    for (let j = 0; j < 14; j++) w.burst(p.dust, box.x + Math.random() * box.w, -0.02 * box.h, 1, -Math.PI / 2, k * sz);
+    // The body smolders while it collapses (the dying phase), in slow-mo.
+    emit(p.ember, EM_BODY, 0, 0, 0, 0, 34, 1.5, 1.1);
+
+    numbers.spawn(NK_REWARD, cx, box.y - 20 * k, e.gold);
+
+    camera.worldToScreen(cx, cy, tmp);
+    deathClock = clock;
+    firstLand = lastLand = -1;
+    coins(tmp.x, tmp.y, coinCount(e.gold), Math.min(160, px * 0.5));
+
+    time.hitStop(0.08);
+    time.slowMo(0.25, 0.55);
+    camera.addTrauma(hitTrauma(1, 'kill'));
+    post.kick(1);
+    post.flash(scene.palette.accent.glow, 0.34, 0.5);
   });
 
   game.on('goldGain', (e) => {
     if (e.source !== 'stagger') return;
-    corpseScreen();
-    coins(scene.particles.screen, tmp.x, tmp.y, 6);
     if (!scene.dragon.weakSpot(tmp)) scene.dragon.headPoint(tmp);
-    spawnNumber(tmp.x, tmp.y, e.amount, 'gold');
+    const wx = tmp.x;
+    const wy = tmp.y;
+    numbers.spawn(NK_GOLD, wx, wy - 50 / camera.zoomEff, e.amount);
+    camera.worldToScreen(wx, wy, tmp);
+    coins(tmp.x, tmp.y, 6, 20);
   });
 
+  const armyShimmer = (strength: number): void => {
+    const p = P();
+    const w = world();
+    const k = 1 / camera.zoomEff;
+    scene.crowd.bounds(box);
+    emit(p.shimmer, EM_RECT, box.x, box.y + box.h * 0.2, box.w, box.h * 0.8, 70 * strength, 1.1, 1);
+    const beams = strength >= 1 ? 3 : 1;
+    for (let j = 0; j < beams; j++) {
+      const bx = box.x + box.w * (beams === 1 ? 0.5 : 0.18 + 0.32 * j);
+      const i = w.spawn(p.beam, bx, 0, 0, -30 * k);
+      w.size0[i] *= k * strength;
+      w.size1[i] *= k * strength;
+      w.y[i] = -w.size0[i]! * 0.42;
+    }
+    w.burst(p.glint, box.x + box.w * 0.5, box.y + box.h * 0.4, 1, 0, k * 1.6 * strength);
+  };
+
+  game.on('milestone', () => {
+    armyShimmer(1);
+    post.flash(scene.palette.accent.gold, 0.08, 0.35);
+  });
+  game.on('unlock', (e) => {
+    if (e.kind === 'unit') armyShimmer(1);
+  });
+  game.on('purchase', (e) => {
+    if (e.kind === 'upgrade') armyShimmer(0.6);
+  });
+  game.on('resync', () => {
+    numbers.clear();
+    eActive.fill(0);
+  });
+
+  // ---- API ----
+  const burst = (preset: FxPreset, wx: number, wy: number, intensity = 1): void => {
+    const p = P();
+    const w = world();
+    const k = 1 / camera.zoomEff;
+    const c = (n: number): number => Math.max(1, Math.round(n * intensity));
+    switch (preset) {
+      case 'sparks':
+        w.burst(p.spark, wx, wy, c(10), -Math.PI / 2, k);
+        break;
+      case 'sparksBig':
+        w.burst(p.sparkBig, wx, wy, c(20), -Math.PI / 2, k);
+        break;
+      case 'embers':
+        w.burst(p.ember, wx, wy, c(14), -Math.PI / 2, k);
+        break;
+      case 'dust':
+        w.burst(p.dust, wx, wy, c(6), -Math.PI / 2, k);
+        break;
+      case 'smoke':
+        w.burst(p.smoke, wx, wy, c(4), -Math.PI / 2, k);
+        break;
+      case 'shockwave':
+        ring(wx, wy, k, intensity, 0.3 + 0.15 * intensity);
+        break;
+      case 'flare':
+        w.burst(p.flare, wx, wy, 1, 0, k * intensity);
+        break;
+      case 'glint':
+        w.burst(p.glint, wx, wy, 1, 0, k * intensity);
+        break;
+      case 'shimmer':
+        w.burst(p.shimmer, wx, wy, c(12), -Math.PI / 2, k);
+        break;
+      case 'slash':
+        slash(wx, wy, -0.5, k, intensity);
+        break;
+    }
+  };
+
+  const landedFns: ((n: number) => void)[] = [];
   const api: FxApi = {
-    damageNumber: spawnNumber,
+    damageNumber(wx, wy, amount, kind) {
+      if (kind === 'army') numbers.army(1, wx, wy, amount);
+      else numbers.spawn(KIND_ID[kind], wx, wy, amount);
+    },
     flash: (color, alpha, seconds) => post.flash(color, alpha, seconds),
     kick: (strength) => post.kick(strength),
     onCoinLanded(fn) {
@@ -186,50 +420,63 @@ export function createFx(scene: Scene): FxRender {
         if (i >= 0) landedFns.splice(i, 1);
       };
     },
+    burst,
   };
 
+  // ---- debug ----
+  const dbg = scene.debug;
+  dbg.section('FX');
+  dbg.watch('numbers', () => String(numbers.count));
+  dbg.watch('coins land', () => (firstLand < 0 ? '-' : `${firstLand.toFixed(2)}-${lastLand.toFixed(2)} s`));
+  dbg.button('crit', () => {
+    const d = scene.dragon;
+    const p = d.weakSpot(tmp) ?? d.impactPoint(tmp);
+    game.dispatch({ type: 'strike', weak: true, aimed: true, x: p.x, y: p.y });
+  });
+  dbg.button('stagger', () => {
+    game.dispatch({ type: 'debug', op: 'phase', phase: 'windup', attack: 'breath' });
+    const d = scene.dragon;
+    const p = d.weakSpot(tmp) ?? d.headPoint(tmp);
+    game.dispatch({ type: 'strike', weak: true, aimed: true, x: p.x, y: p.y });
+  });
+  dbg.button('milestone fx', () => {
+    armyShimmer(1);
+    post.flash(scene.palette.accent.gold, 0.08, 0.35);
+  });
+
+  // ---- the fx.text layer ----
   const text: Layer = {
     name: 'fx.text',
     visible: true,
     update(v: View) {
-      for (let i = 0; i < MAX_NUMBERS; i++) {
-        if (!nActive[i]) continue;
-        nAge[i] += v.dt;
-        if (nAge[i]! >= LIFE[nKind[i]!]!) nActive[i] = 0;
-      }
+      clock += v.realDt;
+      numbers.setDpr(v.dpr);
+      numbers.update(v.realDt);
+      updateEmitters(v.dt);
+      // The coin flight runs on wall time: top up the screen system (its layer advances by the
+      // scaled dt) so slow-mo and hit-stop never delay the reward. See the report / BUILD_LOG.
+      const extra = v.realDt - v.dt;
+      if (extra > 1e-5) screen().update(extra);
       if (landed > 0) {
         const n = landed;
         landed = 0;
+        if (deathClock >= 0) {
+          const t = clock - deathClock;
+          if (firstLand < 0) firstLand = t;
+          lastLand = t;
+        }
+        glints += n;
         scene.ui.pulse('gold');
         for (let j = 0; j < landedFns.length; j++) landedFns[j]!(n);
       }
+      if (glints > 0) {
+        glints = 0;
+        const a = scene.ui.anchor('gold', tmp2);
+        if (a) screen().burst(P().coinGlint, a.x + (Math.random() - 0.5) * 10, a.y + (Math.random() - 0.5) * 10, 1, 0, 1);
+      }
     },
     draw(ctx: CanvasRenderingContext2D, v: View) {
-      const cam = v.camera;
-      const dpr = v.dpr;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = 'rgba(24,10,4,0.85)';
-      for (let i = 0; i < MAX_NUMBERS; i++) {
-        if (!nActive[i]) continue;
-        const kind = nKind[i]!;
-        const t = nAge[i]! / LIFE[kind]!;
-        cam.worldToScreen(nX[i]!, nY[i]!, tmp);
-        const pop = kind === 1 ? 1.25 : 1;
-        const sc = pop * (0.35 + 0.65 * outBack(Math.min(1, t / 0.16)));
-        const x = tmp.x + nDrift[i]! * t;
-        const y = tmp.y - RISE[kind]! * outCubic(t);
-        ctx.globalAlpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
-        ctx.setTransform(dpr * sc, 0, 0, dpr * sc, dpr * x, dpr * y);
-        ctx.font = FONT[kind]!;
-        ctx.lineWidth = kind === 1 ? 6 : 4.5;
-        ctx.strokeText(nText[i]!, 0, 0);
-        ctx.fillStyle = FILL[kind]!;
-        ctx.fillText(nText[i]!, 0, 0);
-      }
-      ctx.globalAlpha = 1;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      numbers.draw(ctx, v.camera, v.dpr);
     },
   };
 
