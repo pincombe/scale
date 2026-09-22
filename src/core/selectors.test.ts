@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { applyAction } from './actions';
 import { BALANCE, UNITS } from './content';
 import { D } from './decimal';
-import { TICK_DT, armyDps, clickDamage, killGold, unitCost, unitDamage } from './formulas';
+import { TICK_DT, armyDps, clickDamage, dyingDuration, enterDuration, killGold, unitCost, unitDamage } from './formulas';
 import * as sel from './selectors';
 import { createInitialState } from './state';
 import { tick } from './tick';
@@ -78,7 +78,7 @@ describe('selectors', () => {
     expect(sel.goldPerSec(s).eq(0)).toBe(true); // no army, no clicks
     s.units.footman = 10;
     const dps = armyDps(s).toNumber();
-    const killTime = s.dragon.maxHp.toNumber() / dps + BALANCE.phase.dying + BALANCE.phase.enter;
+    const killTime = s.dragon.maxHp.toNumber() / dps + dyingDuration(s.dragon.size) + enterDuration(s.dragon.size);
     expect(sel.goldPerSec(s).toNumber()).toBeCloseTo(killGold(s).toNumber() / killTime, 9);
     expect(sel.goldPerSec(s, 6, 0.3).gt(sel.goldPerSec(s))).toBe(true);
   });

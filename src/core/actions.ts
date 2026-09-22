@@ -3,7 +3,7 @@
 import { D } from './decimal';
 import { PHASE, UNITS, upgradeDefOf } from './content';
 import { addGold, damageDragon, killDragon, setPhase, spawnDragon, startWindup } from './dragon';
-import { BUY_MAX, MAX_BUY, clickDamage, maxAffordable, staggerGold, unitCost, upgradeCost } from './formulas';
+import { BUY_MAX, MAX_BUY, clickDamage, dyingDuration, enterDuration, maxAffordable, staggerGold, unitCost, upgradeCost } from './formulas';
 import { checkMilestones } from './progress';
 import { weakSpotHittable } from './weakspot';
 import type { Action, DebugAction, DragonPhase, Emit, GameState } from './types';
@@ -81,10 +81,10 @@ function buyUpgrade(state: GameState, id: string, emit: Emit): void {
   emit({ type: 'purchase', kind: 'upgrade', id, amount: 1 });
 }
 
-function defaultDur(phase: DragonPhase): number {
+function defaultDur(state: GameState, phase: DragonPhase): number {
   switch (phase) {
     case 'enter':
-      return PHASE.enter;
+      return enterDuration(state.dragon.size);
     case 'idle':
       return PHASE.idleMax;
     case 'windup':
@@ -96,7 +96,7 @@ function defaultDur(phase: DragonPhase): number {
     case 'stagger':
       return PHASE.stagger;
     case 'dying':
-      return PHASE.dying;
+      return dyingDuration(state.dragon.size);
   }
 }
 
@@ -141,7 +141,7 @@ function applyDebug(state: GameState, a: DebugAction, emit: Emit): void {
       if (a.phase === 'windup') startWindup(state, a.attack ?? 'breath', emit);
       else {
         if (a.attack) state.dragon.attack = a.attack;
-        setPhase(state, a.phase, defaultDur(a.phase), emit);
+        setPhase(state, a.phase, defaultDur(state, a.phase), emit);
       }
       break;
     case 'tier':

@@ -67,6 +67,7 @@ export interface Balance {
   upgrades: Record<UpgradeId, UpgradeBalance>;
   phase: {
     enter: number;
+    enterQuick: number;
     idleMin: number;
     idleMax: number;
     idleAfterEnter: number;
@@ -76,6 +77,9 @@ export interface Balance {
     swipe: number;
     stagger: number;
     dying: number;
+    dyingQuick: number;
+    quickSize: number;
+    fullSize: number;
     breathChance: number;
   };
 }
@@ -96,8 +100,8 @@ export const BALANCE: Balance = {
      */
     hpBase: 12,
     hpGrowthEarly: 1.75,
-    hpGrowthLate: 1.225,
-    hpGrowthFade: 5,
+    hpGrowthLate: 1.23,
+    hpGrowthFade: 8,
     /** Kill gold = HP × goldPerHp (× goldMult upgrades). */
     goldPerHp: 0.9,
     /** Tier t multiplies HP and gold by these to the power t (placeholder until M2 tunes tiers). */
@@ -148,9 +152,9 @@ export const BALANCE: Balance = {
 
   /**
    * Tuned by the balance sim (juiced engaged player, median of 20 seeds, bought at): pointySwords
-   * 0:11, keenEye 0:27, drillSergeant 0:46, bounty 1:07, fletching 1:39, heroicExample 1:53,
-   * warHorns 2:49, quickNock 3:06, grindstone 3:14 (the last push before the boss). A casual
-   * player (shops every 10 s) gets pointySwords ~0:25 and heroicExample ~2:45. Most unlock 10–30 s
+   * 0:10, keenEye 0:23, drillSergeant 0:37, bounty 1:00, fletching 1:28, heroicExample 1:33,
+   * warHorns 2:33, quickNock 2:45, grindstone 2:56 (the last push before the boss). A casual
+   * player (shops every 10 s) gets pointySwords ~0:25 and heroicExample ~2:35. Most unlock 10–30 s
    * before they're affordable, so the panel usually has something to save for.
    */
   upgrades: {
@@ -160,14 +164,17 @@ export const BALANCE: Balance = {
     bounty: { cost: 600, unlock: { stat: 'kills', at: 6 }, effect: { kind: 'goldMult', mult: 1.5 } },
     fletching: { cost: 2500, unlock: { stat: 'archer', at: 3 }, effect: { kind: 'unitMult', unit: 'archer', mult: 2 } },
     warHorns: { cost: 30000, unlock: { stat: 'footman', at: 40 }, effect: { kind: 'armyMult', mult: 1.5 } },
-    heroicExample: { cost: 3000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.02 } },
+    heroicExample: { cost: 3000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.0175 } },
     quickNock: { cost: 40000, unlock: { stat: 'archer', at: 20 }, effect: { kind: 'periodMult', unit: 'archer', mult: 0.7 } },
     grindstone: { cost: 40000, unlock: { stat: 'kills', at: 25 }, effect: { kind: 'clickMult', mult: 3 } },
   },
 
   /** Dragon phase timings in seconds (the phase machine lives in core/dragon.ts). */
   phase: {
+    /** Entrance of a big dragon (≥ fullSize m); small ones are quicker (enterQuick, see below). */
     enter: 1.6,
+    /** Newts (≤ quickSize m) scuttle in this fast. */
+    enterQuick: 1.0,
     idleMin: 3,
     idleMax: 6,
     /** A fresh dragon idles only this long after its entrance, so every dragon telegraphs an attack early. */
@@ -178,7 +185,17 @@ export const BALANCE: Balance = {
     breath: 1.5,
     swipe: 0.9,
     stagger: 2.0,
+    /** Death of a big dragon (≥ fullSize m): the roar, the fold, the burn. */
     dying: 1.6,
+    /** Newts (≤ quickSize m) pop this fast, so the first minute moves. */
+    dyingQuick: 1.1,
+    /**
+     * Enter and dying durations ease from the quick values at ≤ quickSize m to the full ones at
+     * ≥ fullSize m, linear in log size (formulas.enterDuration / dyingDuration). The rig animates
+     * both on normalized progress, so they just play faster.
+     */
+    quickSize: 0.6,
+    fullSize: 4,
     /** Chance a windup leads to breath (else swipe). */
     breathChance: 0.6,
   },

@@ -4,7 +4,7 @@ import { D } from './decimal';
 import type { Decimal } from './decimal';
 import { nextFloat, nextRange, nextU32, seedRng } from '../lib/rng';
 import { PHASE, dragonName, speciesOf } from './content';
-import { dragonMaxHp, dragonSize, killGold } from './formulas';
+import { dragonMaxHp, dragonSize, dyingDuration, enterDuration, killGold } from './formulas';
 import type { DragonAttack, DragonPhase, DragonState, Emit, GameState } from './types';
 
 export function addGold(state: GameState, amount: Decimal): void {
@@ -40,9 +40,11 @@ export function makeDragon(state: GameState, index: number, phase: DragonPhase, 
 }
 
 export function spawnDragon(state: GameState, index: number, emit: Emit): void {
-  state.dragon = makeDragon(state, index, 'enter', PHASE.enter);
-  emit({ type: 'dragonSpawn', id: state.dragon.id });
-  emit({ type: 'dragonPhase', id: state.dragon.id, phase: 'enter', dur: PHASE.enter });
+  const d = makeDragon(state, index, 'enter', 0);
+  d.phaseDur = enterDuration(d.size);
+  state.dragon = d;
+  emit({ type: 'dragonSpawn', id: d.id });
+  emit({ type: 'dragonPhase', id: d.id, phase: 'enter', dur: d.phaseDur });
 }
 
 export function setPhase(state: GameState, phase: DragonPhase, dur: number, emit: Emit): void {
@@ -101,7 +103,7 @@ export function killDragon(state: GameState, emit: Emit): void {
   const gold = killGold(state);
   addGold(state, gold);
   emit({ type: 'dragonDeath', id: d.id, gold });
-  setPhase(state, 'dying', PHASE.dying, emit);
+  setPhase(state, 'dying', dyingDuration(d.size), emit);
 }
 
 /** Apply damage; returns true if this killed the dragon. No effect while dying. */

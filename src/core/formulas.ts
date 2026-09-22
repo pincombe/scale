@@ -83,6 +83,28 @@ export function dragonSize(_tier: number, index: number): number {
   return last[1] * Math.pow(BALANCE.dragon.sizeGrowthAfter, index - last[0]);
 }
 
+// ---- Phase timing ----
+
+/** 0 at ≤ quickSize m, 1 at ≥ fullSize m, linear in log size between. */
+function sizeBlend(size: number): number {
+  const p = BALANCE.phase;
+  if (!(size > p.quickSize)) return 0;
+  if (size >= p.fullSize) return 1;
+  return Math.log(size / p.quickSize) / Math.log(p.fullSize / p.quickSize);
+}
+
+/** Entrance duration (s) of a dragon this long: newts scuttle in, big dragons take their time. */
+export function enterDuration(size: number): number {
+  const p = BALANCE.phase;
+  return p.enterQuick + (p.enter - p.enterQuick) * sizeBlend(size);
+}
+
+/** Death duration (s) of a dragon this long: newts pop, big dragons stay dramatic. */
+export function dyingDuration(size: number): number {
+  const p = BALANCE.phase;
+  return p.dyingQuick + (p.dying - p.dyingQuick) * sizeBlend(size);
+}
+
 // ---- Upgrades ----
 
 export function hasUpgrade(state: GameState, id: string): boolean {

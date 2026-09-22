@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction } from './actions';
-import { PHASE } from './content';
 import { TICK_DT, clickDamage } from './formulas';
 import { createInitialState } from './state';
 import { tick } from './tick';
@@ -50,7 +49,7 @@ describe('weak-spot rule', () => {
   it('measures progress through the phase', () => {
     const { s } = entering();
     expect(phaseProgress(s.dragon)).toBe(0);
-    s.dragon.phaseT = PHASE.enter / 2;
+    s.dragon.phaseT = s.dragon.phaseDur / 2;
     expect(phaseProgress(s.dragon)).toBeCloseTo(0.5, 9);
     s.dragon.phaseDur = 0;
     expect(phaseProgress(s.dragon)).toBe(1);

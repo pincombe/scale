@@ -2,11 +2,13 @@
 // Decimal ops each, fine for 10 Hz UI refreshes (not for per-frame render loops).
 import { D } from './decimal';
 import type { Decimal } from './decimal';
-import { BALANCE, PHASE, UNITS, UNIT_IDS, UPGRADES, sizeWord, upgradeDefOf } from './content';
+import { BALANCE, UNITS, UNIT_IDS, UPGRADES, sizeWord, upgradeDefOf } from './content';
 import type { Requirement, UpgradeDef } from './content';
 import {
   armyDps,
   clickDamage,
+  dyingDuration,
+  enterDuration,
   hasUpgrade,
   killGold,
   maxAffordable,
@@ -109,7 +111,7 @@ export function clickDps(s: GameState, clicksPerSec: number, weakRate = 0): Deci
 export function goldPerSec(s: GameState, clicksPerSec = 0, weakRate = 0): Decimal {
   const dps = armyDps(s).add(clickDps(s, clicksPerSec, weakRate));
   if (dps.lte(0)) return D(0);
-  const killTime = s.dragon.maxHp.div(dps).toNumber() + PHASE.dying + PHASE.enter;
+  const killTime = s.dragon.maxHp.div(dps).toNumber() + dyingDuration(s.dragon.size) + enterDuration(s.dragon.size);
   return killGold(s).div(killTime);
 }
 
