@@ -205,13 +205,13 @@ describe('army', () => {
   it('upgrades apply once', () => {
     const s = createInitialState(1);
     const { events, emit } = recorder();
-    applyAction(s, { type: 'debug', op: 'gold', amount: 1000 }, emit);
-    s.flags['upgrade.whetstone'] = true;
-    applyAction(s, { type: 'buyUpgrade', id: 'whetstone' }, emit);
-    applyAction(s, { type: 'buyUpgrade', id: 'whetstone' }, emit);
-    expect(s.upgrades['whetstone']).toBe(1);
+    applyAction(s, { type: 'debug', op: 'gold', amount: 1e6 }, emit);
+    s.flags['upgrade.grindstone'] = true;
+    applyAction(s, { type: 'buyUpgrade', id: 'grindstone' }, emit);
+    applyAction(s, { type: 'buyUpgrade', id: 'grindstone' }, emit);
+    expect(s.upgrades['grindstone']).toBe(1);
     expect(ofType(events, 'purchase').length).toBe(1);
     applyAction(s, { type: 'strike', weak: false, aimed: true, x: 0, y: 0 }, emit);
-    expect(ofType(events, 'strike')[0]!.damage.eq(2)).toBe(true);
+    expect(ofType(events, 'strike')[0]!.damage.eq(3)).toBe(true);
   });
 });

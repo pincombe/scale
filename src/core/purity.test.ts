@@ -23,7 +23,7 @@ function stripComments(code: string): string {
 
 const IMPORT_RE = /(?:import|export)\s[^'"`]*?from\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)|import\s+['"]([^'"]+)['"]/g;
 const FORBIDDEN_GLOBALS =
-  /\b(document|window|navigator|localStorage|sessionStorage|requestAnimationFrame|HTMLElement|HTMLCanvasElement|CanvasRenderingContext2D|OffscreenCanvas|AudioContext|Image|fetch)\b|Math\.random|Date\.now|performance\.now/;
+  /\b(document|window|globalThis|navigator|localStorage|sessionStorage|requestAnimationFrame|setTimeout|setInterval|queueMicrotask|HTMLElement|HTMLCanvasElement|CanvasRenderingContext2D|OffscreenCanvas|AudioContext|Image|fetch|performance|crypto)\b|\bnew\s+Date\b|\bDate\s*\.\s*now\b|Math\.random/;
 
 /** Relative imports must resolve inside one of `folders`; bare imports must be in `packages`. */
 function check(folder: 'core' | 'lib', folders: string[], packages: string[]): string[] {
@@ -52,6 +52,15 @@ describe('purity', () => {
   it('src/lib imports only lib, and touches no DOM or clock', () => {
     const problems = check('lib', ['lib'], []);
     expect(problems).toEqual([]);
+  });
+
+  it('the forbidden-globals pattern catches clocks, timers and host objects', () => {
+    for (const bad of ['new Date()', 'Date.now()', 'performance.now()', 'setTimeout(f, 1)', 'setInterval(f, 1)', 'crypto.getRandomValues(a)', 'globalThis.x', 'window.x', 'document.body', 'Math.random()']) {
+      expect(FORBIDDEN_GLOBALS.test(bad), bad).toBe(true);
+    }
+    for (const ok of ['const dateLike = 1', 'state.t += dt', 'nextFloat(rng)', 'updateDocs()']) {
+      expect(FORBIDDEN_GLOBALS.test(ok), ok).toBe(false);
+    }
   });
 
   it('the scan actually sees the sources', () => {

@@ -1,106 +1,149 @@
-// Placeholder content tables (WP 0.2): the numbers. Player-facing strings live in ./text.ts
-// (the writer's file). The economy WP (1.5) replaces these values; the shapes other folders read
-// are UnitDef / UpgradeDef / UNIT_IDS / PHASE.
-import type { UnitId } from '../types';
-import { DRAGON_EPITHETS, DRAGON_NAMES, UNIT_TEXT, UPGRADE_TEXT } from './text';
+// Content tables: the tunable numbers (./balance.ts) merged with player-facing text (./text.ts).
+// Other folders read UNITS / UNIT_IDS / UPGRADES / UPGRADE_IDS / MILESTONES / PHASE from here.
+// Getters read BALANCE live, so the sim can tweak BALANCE in-process between runs.
+import type { UnitId, UpgradeId } from '../types';
+import { BALANCE } from './balance';
+import type { Requirement, UpgradeEffect } from './balance';
+import { MICROCOPY, UNIT_TEXT, UPGRADE_TEXT, dragonName, sizeWord } from './text';
 
-export { DRAGON_EPITHETS, DRAGON_NAMES };
+export { BALANCE, MICROCOPY, dragonName, sizeWord };
+export type { Balance, Requirement, UnitBalance, UpgradeBalance, UpgradeEffect } from './balance';
 
 export const UNIT_IDS: readonly UnitId[] = ['footman', 'archer'];
 
+/** Display order in the Upgrades panel (roughly the order they unlock). */
+export const UPGRADE_IDS: readonly UpgradeId[] = [
+  'pointySwords',
+  'keenEye',
+  'drillSergeant',
+  'bounty',
+  'fletching',
+  'warHorns',
+  'heroicExample',
+  'quickNock',
+  'grindstone',
+];
+
 export interface UnitDef {
-  id: UnitId;
-  name: string;
-  plural: string;
+  readonly id: UnitId;
+  readonly name: string;
+  readonly plural: string;
+  readonly flavor: string;
   /** 'melee' units hit in beats; 'ranged' units loose volleys with flight time. */
-  kind: 'melee' | 'ranged';
-  baseCost: number;
-  costGrowth: number;
+  readonly kind: 'melee' | 'ranged';
+  readonly baseCost: number;
+  readonly costGrowth: number;
   /** Damage per unit per beat/volley, before multipliers. */
-  damage: number;
-  /** Seconds between beats/volleys. */
-  interval: number;
+  readonly damage: number;
+  /** Base seconds between beats/volleys (quickNock shortens it: use formulas.unitPeriod). */
+  readonly interval: number;
   /** Ranged only: arrow flight time in seconds. */
-  flight: number;
+  readonly flight: number;
+  /** When it appears. */
+  readonly unlock: Requirement;
   /** Flag that reveals it (set by an 'unlock' event). */
-  unlockFlag: string;
+  readonly unlockFlag: string;
+}
+
+function unitDef(id: UnitId, kind: 'melee' | 'ranged'): UnitDef {
+  const b = (): (typeof BALANCE.units)[UnitId] => BALANCE.units[id];
+  return {
+    id,
+    kind,
+    unlockFlag: 'unit.' + id,
+    get name() {
+      return UNIT_TEXT[id].name;
+    },
+    get plural() {
+      return UNIT_TEXT[id].plural;
+    },
+    get flavor() {
+      return UNIT_TEXT[id].flavor;
+    },
+    get baseCost() {
+      return b().baseCost;
+    },
+    get costGrowth() {
+      return b().costGrowth;
+    },
+    get damage() {
+      return b().damage;
+    },
+    get interval() {
+      return b().interval;
+    },
+    get flight() {
+      return b().flight;
+    },
+    get unlock() {
+      return b().unlock;
+    },
+  };
 }
 
 export const UNITS: Record<UnitId, UnitDef> = {
-  footman: {
-    id: 'footman',
-    ...UNIT_TEXT.footman,
-    kind: 'melee',
-    baseCost: 10,
-    costGrowth: 1.12,
-    damage: 1,
-    interval: 1.0,
-    flight: 0,
-    unlockFlag: 'unit.footman',
-  },
-  archer: {
-    id: 'archer',
-    ...UNIT_TEXT.archer,
-    kind: 'ranged',
-    baseCost: 60,
-    costGrowth: 1.13,
-    damage: 4,
-    interval: 2.5,
-    flight: 1.1,
-    unlockFlag: 'unit.archer',
-  },
+  footman: unitDef('footman', 'melee'),
+  archer: unitDef('archer', 'ranged'),
 };
 
 export interface UpgradeDef {
-  id: string;
-  name: string;
-  flavor: string;
-  cost: number;
-  /** Which damage it multiplies. */
-  target: 'strike' | UnitId;
-  mult: number;
+  readonly id: UpgradeId;
+  readonly name: string;
+  readonly flavor: string;
+  /** Gold (one-shot). */
+  readonly cost: number;
+  /** When it appears in the panel. */
+  readonly unlock: Requirement;
+  /** What it does (the UI writes the effect line from this). */
+  readonly effect: UpgradeEffect;
+  /** Flag that reveals it: 'upgrade.<id>'. */
+  readonly unlockFlag: string;
 }
 
-export const UPGRADES: readonly UpgradeDef[] = [
-  {
-    id: 'pointySwords',
-    ...UPGRADE_TEXT.pointySwords!,
-    cost: 60,
-    target: 'footman',
-    mult: 2,
-  },
-  {
-    id: 'whetstone',
-    ...UPGRADE_TEXT.whetstone!,
-    cost: 120,
-    target: 'strike',
-    mult: 2,
-  },
-  {
-    id: 'fletching',
-    ...UPGRADE_TEXT.fletching!,
-    cost: 400,
-    target: 'archer',
-    mult: 2,
-  },
-];
+function upgradeDef(id: UpgradeId): UpgradeDef {
+  return {
+    id,
+    unlockFlag: 'upgrade.' + id,
+    get name() {
+      return UPGRADE_TEXT[id].name;
+    },
+    get flavor() {
+      return UPGRADE_TEXT[id].flavor;
+    },
+    get cost() {
+      return BALANCE.upgrades[id].cost;
+    },
+    get unlock() {
+      return BALANCE.upgrades[id].unlock;
+    },
+    get effect() {
+      return BALANCE.upgrades[id].effect;
+    },
+  };
+}
 
-/** Owned counts that double a unit's damage. */
-export const MILESTONES: readonly number[] = [10, 25, 50, 100, 200, 300, 400, 500];
+export const UPGRADES: readonly UpgradeDef[] = UPGRADE_IDS.map(upgradeDef);
 
-/** Phase timings in seconds. */
-export const PHASE = {
-  enter: 1.6,
-  idleMin: 3,
-  idleMax: 6,
-  firstIdle: 4,
-  windup: 1.2,
-  breath: 1.5,
-  swipe: 0.9,
-  stagger: 1.4,
-  dying: 1.6,
-  /** Chance a windup leads to breath (else swipe). */
-  breathChance: 0.6,
-} as const;
+const UPGRADE_BY_ID = new Map<string, UpgradeDef>(UPGRADES.map((u) => [u.id, u]));
 
-export const WEAK_MULT = 5;
+/** The upgrade with this id, or undefined for unknown ids. */
+export function upgradeDefOf(id: string): UpgradeDef | undefined {
+  return UPGRADE_BY_ID.get(id);
+}
+
+/** Owned counts that multiply a unit type's damage by MILESTONE_MULT each. */
+export const MILESTONES: readonly number[] = BALANCE.milestones.at;
+export const MILESTONE_MULT = BALANCE.milestones.mult;
+
+/** Phase timings in seconds (live view of BALANCE.phase). */
+export const PHASE: Readonly<typeof BALANCE.phase> = BALANCE.phase;
+
+/** Base weak-spot crit multiplier (keenEye raises it: use formulas.weakMult(state)). */
+export const WEAK_MULT = BALANCE.click.weakMult;
+
+/** Dragon species per tier (render keys the rig on it). */
+export const TIER_SPECIES: readonly string[] = ['newt'];
+
+export function speciesOf(tier: number): string {
+  return TIER_SPECIES[Math.min(tier, TIER_SPECIES.length - 1)] ?? 'newt';
+}

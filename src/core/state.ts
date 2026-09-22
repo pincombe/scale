@@ -5,7 +5,7 @@ import { seedRng } from '../lib/rng';
 import type { DragonState, GameState } from './types';
 
 /** Save schema version. Bump it (and add a migration in M3) whenever GameState's shape changes. */
-export const STATE_VERSION = 1;
+export const STATE_VERSION = 2;
 
 export function createInitialState(seed: number): GameState {
   const upgrades: Record<string, number> = {};
@@ -22,6 +22,7 @@ export function createInitialState(seed: number): GameState {
     upgrades,
     kills: 0,
     flags: {},
+    stats: { strikes: 0, crits: 0, staggers: 0 },
     dragon: null as unknown as DragonState,
     nextDragonId: 1,
     army: { meleeT: UNITS.footman.interval, volleyT: UNITS.archer.interval, volleys: [] },

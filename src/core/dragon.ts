@@ -2,9 +2,9 @@
 // rewards depend on them (stagger bonus); render only animates them.
 import { D } from './decimal';
 import type { Decimal } from './decimal';
-import { nextFloat, nextInt, nextRange, nextU32 } from '../lib/rng';
-import { DRAGON_EPITHETS, DRAGON_NAMES, PHASE } from './content';
-import { dragonGold, dragonMaxHp, dragonSize } from './formulas';
+import { nextFloat, nextRange, nextU32, seedRng } from '../lib/rng';
+import { PHASE, dragonName, speciesOf } from './content';
+import { dragonMaxHp, dragonSize, killGold } from './formulas';
 import type { DragonAttack, DragonPhase, DragonState, Emit, GameState } from './types';
 
 export function addGold(state: GameState, amount: Decimal): void {
@@ -16,12 +16,17 @@ export function addGold(state: GameState, amount: Decimal): void {
 export function makeDragon(state: GameState, index: number, phase: DragonPhase, phaseDur: number): DragonState {
   const rng = state.rng;
   const maxHp = dragonMaxHp(state.tier, index);
+  const species = speciesOf(state.tier);
+  // Names draw from their own stream seeded by state.rng, so however many numbers the writer's
+  // dragonName() consumes, the main stream (and everything after it) stays put.
+  const nameRng = seedRng(nextU32(rng));
+  const { name, epithet } = dragonName(() => nextFloat(nameRng), species, index);
   return {
     id: state.nextDragonId++,
     index,
-    species: 'newt',
-    name: DRAGON_NAMES[nextInt(rng, DRAGON_NAMES.length)]!,
-    epithet: DRAGON_EPITHETS[nextInt(rng, DRAGON_EPITHETS.length)]!,
+    species,
+    name,
+    epithet,
     size: dragonSize(state.tier, index),
     seed: nextU32(rng),
     hp: maxHp,
@@ -90,7 +95,7 @@ export function killDragon(state: GameState, emit: Emit): void {
   const d = state.dragon;
   d.hp = D(0);
   state.kills++;
-  const gold = dragonGold(state.tier, d.index);
+  const gold = killGold(state);
   addGold(state, gold);
   emit({ type: 'dragonDeath', id: d.id, gold });
   setPhase(state, 'dying', PHASE.dying, emit);

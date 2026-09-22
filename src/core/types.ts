@@ -6,6 +6,18 @@ import type { RngState } from '../lib/rng';
 
 export type UnitId = 'footman' | 'archer';
 
+/** Tier-0 upgrade ids (one-shots). Actions and state key upgrades by plain string ids. */
+export type UpgradeId =
+  | 'pointySwords'
+  | 'drillSergeant'
+  | 'keenEye'
+  | 'fletching'
+  | 'bounty'
+  | 'warHorns'
+  | 'heroicExample'
+  | 'quickNock'
+  | 'grindstone';
+
 export type DragonPhase = 'enter' | 'idle' | 'windup' | 'breath' | 'swipe' | 'stagger' | 'dying';
 
 /** The attack a windup leads into. Valid during windup/breath/swipe (render the right tell). */
@@ -37,10 +49,21 @@ export interface DragonState {
 /** An archer volley in flight (core-private; render learns about it from the 'volley' event). */
 export interface PendingVolley {
   unit: UnitId;
+  /** Id of the dragon it was loosed at; it lands on nothing if that dragon is gone. */
+  target: number;
   /** Seconds until impact. */
   t: number;
   damage: Decimal;
   arrows: number;
+}
+
+/** Lifetime counters (read-only for render/UI: chronicle lines, sim stats, first-strike reveal). */
+export interface Stats {
+  /** Strikes that landed (clicks on a living dragon). */
+  strikes: number;
+  /** Weak-spot strikes. */
+  crits: number;
+  staggers: number;
 }
 
 /** Army timers (core-private). */
@@ -73,6 +96,7 @@ export interface GameState {
   /** Progressive disclosure / unlocks, e.g. 'unit.archer', 'upgrade.pointySwords', 'feature.panel'. */
   flags: Record<string, boolean>;
   dragon: DragonState;
+  stats: Stats;
   // ---- core-private below: serialized, but render/UI must not depend on these ----
   nextDragonId: number;
   army: ArmyState;
@@ -95,6 +119,7 @@ export type DebugAction =
 export type Action =
   /** x, y: world impact point in meters (opaque to core; echoed in the 'strike' event). */
   | { type: 'strike'; weak: boolean; aimed: boolean; x: number; y: number }
+  /** amount: how many to hire (1, 10, ...), or BUY_MAX (-1) for as many as gold allows. All-or-nothing. */
   | { type: 'buyUnit'; unit: UnitId; amount: number }
   | { type: 'buyUpgrade'; id: string }
   | DebugAction;

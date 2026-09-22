@@ -11,7 +11,9 @@ export type {
   GameEvent,
   GameEventType,
   GameState,
+  Stats,
   UnitId,
+  UpgradeId,
 } from './types';
 export { Decimal, D } from './decimal';
 export { createInitialState, STATE_VERSION } from './state';
@@ -19,5 +21,47 @@ export { tick } from './tick';
 export { applyAction } from './actions';
 export { serialize, deserialize, toJSON, fromJSON } from './serialize';
 export { fmt, setNotation, getNotation, type Notation } from './format';
-export { TICK_DT, strikeDamage, unitDamage, unitCost, upgradeCost, milestoneMult } from './formulas';
-export { UNITS, UNIT_IDS, UPGRADES, MILESTONES, PHASE, WEAK_MULT, type UnitDef, type UpgradeDef } from './content';
+export {
+  TICK_DT,
+  BUY_MAX,
+  MAX_BUY,
+  strikeDamage,
+  clickDamage,
+  unitDamage,
+  unitDps,
+  armyDps,
+  unitCost,
+  maxAffordable,
+  upgradeCost,
+  milestoneMult,
+  milestoneCount,
+  milestoneAt,
+  unitPeriod,
+  weakMult,
+  killGold,
+  staggerGold,
+  dragonMaxHp,
+  dragonGold,
+  dragonSize,
+  wholeCeil,
+  wholeNumber,
+} from './formulas';
+export {
+  BALANCE,
+  MICROCOPY,
+  UNITS,
+  UNIT_IDS,
+  UPGRADES,
+  UPGRADE_IDS,
+  MILESTONES,
+  PHASE,
+  WEAK_MULT,
+  sizeWord,
+  upgradeDefOf,
+  type UnitDef,
+  type UpgradeDef,
+  type UpgradeEffect,
+  type Requirement,
+} from './content';
+export { UNLOCK_FLAGS } from './progress';
+export * as sel from './selectors';

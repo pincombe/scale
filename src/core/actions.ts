@@ -1,9 +1,9 @@
 // applyAction: the only way anything outside core changes the game. Applied immediately;
 // events go to the emit callback (the Game facade queues them until the next frame).
 import { D } from './decimal';
-import { PHASE, UNITS, WEAK_MULT } from './content';
+import { PHASE, UNITS, upgradeDefOf } from './content';
 import { addGold, damageDragon, killDragon, setPhase, spawnDragon, startWindup } from './dragon';
-import { strikeDamage, unitCost, upgradeCost } from './formulas';
+import { BUY_MAX, MAX_BUY, clickDamage, maxAffordable, staggerGold, unitCost, upgradeCost } from './formulas';
 import { checkMilestones } from './progress';
 import type { Action, DebugAction, DragonPhase, Emit, GameState } from './types';
 
@@ -32,24 +32,30 @@ function strike(state: GameState, a: Extract<Action, { type: 'strike' }>, emit: 
   const d = state.dragon;
   if (d.phase === 'dying') return; // nothing to hit until the next dragon arrives
   const weak = a.weak === true;
-  const base = strikeDamage(state);
-  const damage = weak ? base.mul(WEAK_MULT) : base;
+  const damage = clickDamage(state, weak);
   const lethal = d.hp.lte(damage) && !state.flags['debug.immortal'];
+  // A weak-spot hit during the windup (the glowing throat) staggers: stunned, extra army damage
+  // and a gold bonus. A killing blow just kills.
   const stagger = weak && d.phase === 'windup' && !lethal;
+  state.stats.strikes++;
+  if (weak) state.stats.crits++;
   emit({ type: 'strike', damage, crit: weak, weak, stagger, aimed: a.aimed === true, x: finite(a.x), y: finite(a.y) });
   damageDragon(state, damage, emit);
   if (stagger) {
-    const bonus = d.maxHp.mul(0.15).ceil();
+    state.stats.staggers++;
+    const bonus = staggerGold(state);
     addGold(state, bonus);
     emit({ type: 'goldGain', amount: bonus, source: 'stagger' });
     setPhase(state, 'stagger', PHASE.stagger, emit);
   }
 }
 
+/** Hire `amount` units (BUY_MAX = as many as gold allows). All-or-nothing: too little gold, no-op. */
 function buyUnit(state: GameState, a: Extract<Action, { type: 'buyUnit' }>, emit: Emit): void {
   const def = UNITS[a.unit];
-  const amount = Math.floor(a.amount);
-  if (!def || !(amount >= 1) || !state.flags[def.unlockFlag]) return;
+  if (!def || !state.flags[def.unlockFlag]) return;
+  const amount = a.amount === BUY_MAX ? maxAffordable(state, a.unit) : Math.min(MAX_BUY, Math.floor(finite(a.amount)));
+  if (!(amount >= 1)) return;
   const cost = unitCost(state, a.unit, amount);
   if (state.gold.lt(cost)) return;
   state.gold = state.gold.sub(cost);
@@ -60,8 +66,9 @@ function buyUnit(state: GameState, a: Extract<Action, { type: 'buyUnit' }>, emit
 }
 
 function buyUpgrade(state: GameState, id: string, emit: Emit): void {
+  const def = upgradeDefOf(id);
   const cost = upgradeCost(id);
-  if (cost === null || (state.upgrades[id] ?? 0) > 0 || !state.flags['upgrade.' + id]) return;
+  if (!def || cost === null || (state.upgrades[id] ?? 0) > 0 || !state.flags[def.unlockFlag]) return;
   if (state.gold.lt(cost)) return;
   state.gold = state.gold.sub(cost);
   state.upgrades[id] = 1;
