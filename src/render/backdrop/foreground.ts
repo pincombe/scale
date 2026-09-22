@@ -149,7 +149,8 @@ export class Foreground {
     const W = view.width;
     const H = view.height;
     const d = view.dpr;
-    const s = cam.refZoom * Math.pow(cam.zoomEff / cam.refZoom, SHRINK);
+    // Sized by the view height (not the base framing) so it frames the edge the same at any framing.
+    const s = (H / 9) * Math.pow(cam.zoomEff / cam.refZoom, SHRINK);
     const ox = cam.stageCX + cam.shakeX * PAN - PAN * (cam.x - cam.refX) * cam.zoomEff;
     const oy = H + 10 + cam.shakeY * PAN;
     const t = view.time;

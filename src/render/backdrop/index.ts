@@ -41,6 +41,8 @@ export interface Backdrop {
 }
 
 const STARS = 46;
+/** Silhouette layer unit as a fraction of the view height. */
+const LAYER_UNIT = 1 / 9;
 /** Clouds are soft: baked at this DPR at most (memory). */
 const CLOUD_DPR = 1.25;
 const RESIZE_SETTLE_MS = 220;
@@ -170,11 +172,35 @@ export function createBackdrop(scene: Scene): Backdrop {
     return out;
   };
 
+  // Layer units: silhouette layers are authored in units of 1/9 of the view height (the original
+  // base framing, where a unit was a meter), anchored so u = -0.5 sits under the stage center at
+  // the reference framing. Mapping u -> the camera's parallax meters L = refX + f (u + 0.5) keeps
+  // the backdrop's composition fixed on screen whatever base framing the director picks.
+  const unitF = (view: View): number => (view.height * LAYER_UNIT) / view.camera.refZoom;
+
+  /** Layer point (u, v) at depth p -> screen. */
+  const layerToScreen = (view: View, p: number, u: number, v: number, out: Vec2): Vec2 => {
+    const cam = view.camera;
+    const f = unitF(view);
+    return cam.parallaxToScreen(p, cam.refX + f * (u + 0.5), f * v, out);
+  };
+
+  /** Multiply the layer transform (layer units) for depth p onto ctx. */
+  const applyLayer = (ctx: CanvasRenderingContext2D, view: View, p: number): void => {
+    const cam = view.camera;
+    const f = unitF(view);
+    cam.applyParallax(ctx, p);
+    ctx.translate(cam.refX + 0.5 * f, 0);
+    ctx.scale(f, f);
+  };
+
+  /** CSS px per layer unit at depth p (incl. punch). */
+  const layerZoom = (view: View, p: number): number => view.camera.parallaxZoom(p) * unitF(view);
+
   /** Visible layer-x range at depth p (ignores roll; the slack covers it). Writes tmp.x/.y. */
   const layerRange = (view: View, p: number, out: Vec2): Vec2 => {
-    const cam = view.camera;
-    cam.parallaxToScreen(p, 0, 0, origin);
-    const z = cam.parallaxZoom(p);
+    layerToScreen(view, p, 0, 0, origin);
+    const z = layerZoom(view, p);
     const m = SAFE_MARGIN + 48;
     out.x = (-m - origin.x) / z;
     out.y = (view.width + m - origin.x) / z;
@@ -183,7 +209,7 @@ export function createBackdrop(scene: Scene): Backdrop {
 
   /** Sun position in layer-p meters (writes `light`); call layerRange for p first (origin). */
   const lightIn = (view: View, p: number): Light => {
-    const z = view.camera.parallaxZoom(p);
+    const z = layerZoom(view, p);
     sunPos(view, sun);
     light.x = (sun.x - origin.x) / z;
     light.y = (sun.y - origin.y) / z;
@@ -206,12 +232,12 @@ export function createBackdrop(scene: Scene): Backdrop {
     const p = c.def.p;
     layerRange(view, p, tmp);
     ctx.save();
-    cam.applyParallax(ctx, p);
+    applyLayer(ctx, view, p);
     if (!c.covers(tmp.x, tmp.y) || c.palette !== view.palette) {
       // A foreign view (M2 snapshot) outside the cache: bake would mutate, so fall back to a
       // flat vector fill of the silhouette.
       ctx.fillStyle = c.crest;
-      const step = 2 / cam.parallaxZoom(p);
+      const step = 2 / layerZoom(view, p);
       ctx.beginPath();
       ctx.moveTo(tmp.x, 2);
       for (let x = tmp.x; x < tmp.y; x += step) ctx.lineTo(x, -c.def.height(x));
@@ -236,7 +262,7 @@ export function createBackdrop(scene: Scene): Backdrop {
       const ex = WYRM_EYE_X;
       const ey = -WYRM_EYE_Y;
       // Look toward the fight (stage center, a little above the ground line).
-      cam.parallaxToScreen(p, ex, ey, origin);
+      layerToScreen(view, p, ex, ey, origin);
       const dx = cam.stageCX - origin.x;
       const dy = cam.anchorFrac * view.height - view.height * 0.08 - origin.y;
       const l = Math.hypot(dx, dy) || 1;
@@ -269,7 +295,7 @@ export function createBackdrop(scene: Scene): Backdrop {
         const c = caches[i]!;
         const p = c.def.p;
         layerRange(view, p, tmp);
-        const zBase = cam.refZoom * Math.pow(cam.zoom / cam.refZoom, p);
+        const zBase = unitF(view) * cam.refZoom * Math.pow(cam.zoom / cam.refZoom, p);
         lightIn(view, p);
         const need = c.need(zBase, tmp.x, tmp.y, view.dpr, view.palette, light.x);
         if (need === 2 || (need === 1 && optional)) {

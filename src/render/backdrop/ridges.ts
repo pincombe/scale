@@ -62,6 +62,11 @@ export interface RidgeDef {
   readonly rimPx: number;
   /** Strength of the lit faces on slopes turned toward the sun (0 = flat silhouette). */
   readonly faces?: number;
+  /** Painterly extras: thin lit edge on sun-facing ridgelines, brush texture, and how far the
+   *  base (valley mist) leans toward the horizon sky color. */
+  readonly edge?: number;
+  readonly texture?: number;
+  readonly baseSky?: number;
   /** Bake resolution caps: far, hazy layers bake at DPR 1 with no zoom headroom (memory). */
   readonly maxDpr?: number;
   readonly headroom?: number;
@@ -95,11 +100,14 @@ export const MOUNTAINS: RidgeDef = {
   decoH: 0.05,
   p: 0.06,
   maxH: 4.8,
-  faces: 0.4,
+  faces: 0.3,
+  edge: 0.55,
+  texture: 0.07,
+  baseSky: 0.4,
   maxDpr: 1,
   headroom: 1,
-  tone: 0.24,
-  baseTone: 0.02,
+  tone: 0.17,
+  baseTone: 0,
   rim: 0.55,
   rimPx: 1.2,
   height(x) {
@@ -126,6 +134,8 @@ function horn(x: number, base: number, tip: number, h: number): number {
 
 function wyrm(x: number): number {
   let h = spline(HEAD_X, HEAD_Y, x);
+  // Weathered crags on the skull and neck so it reads as rock, not a mesa.
+  if (x > 3.2 && x < 9) h += 0.14 * ridged(nM, x * 2.1, 3.3) - 0.07 + 0.04 * nM.simplex2(x * 7, 1.1);
   h += horn(x, 4.45, 5.3, 0.62) + horn(x, 4.95, 5.62, 0.36);
   if (x > 5.8 && x < 8.8) {
     // Spinal crags along the neck, like weathered rocks.
@@ -143,11 +153,14 @@ export const FAR_HILLS: RidgeDef = {
   decoH: 0.05,
   p: 0.12,
   maxH: 1.9,
-  faces: 0.3,
+  faces: 0.25,
+  edge: 0.4,
+  texture: 0.06,
+  baseSky: 0.15,
   maxDpr: 1,
   headroom: 1,
-  tone: 0.4,
-  baseTone: 0.12,
+  tone: 0.34,
+  baseTone: 0.1,
   rim: 0.5,
   rimPx: 1.3,
   height(x) {
@@ -382,6 +395,56 @@ export interface Light {
   y: number;
 }
 
+// ---------------------------------------------------------------- brush texture
+
+const BRUSH_PX = 256;
+/** One texture tile covers this many layer units (wide, short: horizontal strokes). */
+const BRUSH_W = 4.5;
+const BRUSH_H = 2.2;
+let brush: HTMLCanvasElement | null = null;
+
+/** Tileable dry-brush texture: light and dark horizontal strokes with fine grain, alpha only. */
+function brushTexture(): HTMLCanvasElement {
+  if (brush) return brush;
+  const N = BRUSH_PX;
+  const c = makeCanvas(N, N);
+  const ctx = context2d(c);
+  const img = ctx.createImageData(N, N);
+  const d = img.data;
+  // Periodic value noise on lattices that divide the tile, so it repeats seamlessly.
+  const layer = (x: number, y: number, cx: number, cy: number, seed: number): number => {
+    const gx = (x / N) * cx;
+    const gy = (y / N) * cy;
+    const x0 = Math.floor(gx);
+    const y0 = Math.floor(gy);
+    const fx = gx - x0;
+    const fy = gy - y0;
+    const u = fx * fx * (3 - 2 * fx);
+    const v = fy * fy * (3 - 2 * fy);
+    const h = (i: number, j: number): number => hash2f(((i % cx) + cx) % cx + seed * 977, ((j % cy) + cy) % cy) * 2 - 1;
+    const a = h(x0, y0) + (h(x0 + 1, y0) - h(x0, y0)) * u;
+    const b = h(x0, y0 + 1) + (h(x0 + 1, y0 + 1) - h(x0, y0 + 1)) * u;
+    return a + (b - a) * v;
+  };
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      // Strokes wobble a little vertically along their length.
+      const yy = y + 9 * Math.sin((x / N) * TAU * 2) + 4 * Math.sin((x / N) * TAU * 5 + 1.3);
+      // Broad soft mottle, a few long dry strokes, fine grain.
+      const n = 0.55 * layer(x, y, 3, 4, 4) + 0.35 * layer(x, yy, 3, 9, 1) + 0.12 * layer(x, y, 64, 64, 3);
+      const o = (y * N + x) * 4;
+      const val = n > 0 ? 255 : 0;
+      d[o] = val;
+      d[o + 1] = val;
+      d[o + 2] = val;
+      d[o + 3] = Math.min(255, Math.abs(n) * 330);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  brush = c;
+  return c;
+}
+
 /** Scratch for lit-face bands, allocated per bake and freed after it. */
 let scratch: HTMLCanvasElement | null = null;
 
@@ -520,15 +583,18 @@ export class RidgeCache {
     ctx.setTransform(k, 0, 0, k, -x0 * k, -top * k);
 
     this.crest = toneColor(pal, def.tone);
-    this.base = toneColor(pal, def.baseTone);
+    this.base = mixHex(toneColor(pal, def.baseTone), pal.sky[pal.sky.length - 1]!.color, def.baseSky ?? 0);
     this.rimColor = mixHex(pal.rim, pal.haze, 0.55 * (1 - def.tone));
     this.shade = mixHex(this.crest, pal.silhouette, 0.55);
     this.lightX = light.x;
 
     const path = ridgePath(def, x0, x1, Math.max(0.004, 1.4 / k), bottom);
+    // Value gradient: a touch warmer and more saturated at the ridge, hazier toward the base.
+    const ridgeCol = def.texture ? mixHex(this.crest, mixHex(pal.sun.glow, pal.accent.ember, 0.5), 0.12) : this.crest;
     const body = ctx.createLinearGradient(0, -def.maxH * 0.75, 0, 0.02);
-    body.addColorStop(0, this.crest);
-    body.addColorStop(0.55, mixHex(this.crest, this.base, 0.35));
+    body.addColorStop(0, ridgeCol);
+    body.addColorStop(0.3, this.crest);
+    body.addColorStop(0.62, mixHex(this.crest, this.base, 0.4));
     body.addColorStop(1, this.base);
     const R = 11;
     const rimG = ctx.createRadialGradient(light.x, light.y, 0, light.x, light.y, R);
@@ -568,6 +634,27 @@ export class RidgeCache {
       fg.addColorStop(1, rgba(lit, 0));
       paintFaces(ctx, path, cw, ch, k, x0, top, light.x, 0.3, fg, def.faces);
       ctx.setTransform(k, 0, 0, k, -x0 * k, -top * k);
+    }
+    if (def.edge) {
+      // Faint lit edge along the ridgelines that face the sun.
+      const e = mixHex(pal.rim, this.crest, 0.35);
+      const eg = ctx.createLinearGradient(0, -def.maxH, 0, -def.maxH * 0.25);
+      eg.addColorStop(0, e);
+      eg.addColorStop(1, rgba(e, 0.25));
+      paintFaces(ctx, path, cw, ch, k, x0, top, light.x, Math.max(0.05, 2.2 / z), eg, def.edge);
+      ctx.setTransform(k, 0, 0, k, -x0 * k, -top * k);
+    }
+    if (def.texture) {
+      // Dry-brush strokes baked in, fixed in layer space so re-bakes never shift them.
+      const pat = ctx.createPattern(brushTexture(), 'repeat');
+      if (pat) {
+        pat.setTransform(new DOMMatrix([BRUSH_W / BRUSH_PX, 0, 0, BRUSH_H / BRUSH_PX, 0, 0]));
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = def.texture;
+        ctx.fillStyle = pat;
+        ctx.fillRect(x0, top, x1 - x0, bottom - top);
+        ctx.globalAlpha = 1;
+      }
     }
     ctx.globalCompositeOperation = 'source-atop';
     ctx.fillStyle = scatter;
