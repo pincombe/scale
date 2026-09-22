@@ -11,6 +11,7 @@
 //   phases=breath,swipe,windup-breath,windup-swipe (mode=phases: only these)
 //   mode=seq&seq=windup-swipe,swipe,idle  (cycle a phase sequence; ts=2.3 pre-rolls seconds, then pauses)
 //   reach  (draw breathReachX as a cyan line and tailPoint as a magenta dot)
+//   tz=145  (the director's target zoom in px/m: selects size-dependent tiers as the game would)
 //   over=whiskers:0.8,frill:0.35,tailClub:0.03,tailSpade:0,legPairs:1  (morph overrides)
 // Keys: space pause, . step, click a dragon to strike it (the weak spot crits), move the mouse to
 // make it look at you.
@@ -155,7 +156,9 @@ class Cell {
         },
       },
       camera: this.camera,
-      director: { target: { x: 0, zoom: 100 } },
+      // tz=145: pretend the game's director targets this zoom (drives on-screen-size tiers such as
+      // the swipe target and loose-scale candidates) while the lab camera stays close.
+      director: { enabled: P.has('tz'), target: { x: 0, zoom: num('tz', 100) } },
       crowd: {
         heroPoint: (o: { x: number; y: number }) => ((o.x = -0.95), (o.y = -1.2), o),
         frontX: () => -0.3,

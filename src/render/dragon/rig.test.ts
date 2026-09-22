@@ -205,3 +205,112 @@ describe('weak spot modes', () => {
     expect(weakLiveFor('windup', 0)).toBe(true);
   });
 });
+
+describe('swipe windup target (scorpion pose)', () => {
+  it('stays >= 2 hit radii from every tail-mounted loose-scale spot, at every on-screen size', async () => {
+    const { WeakSpot, WEAK_SCALE, WEAK_TAIL, swipeSpotFor } = await import('./weakspot');
+    const { WEAK_HIT_MIN_PX } = await import('./tuning');
+    const sp = { x: 0, y: 0, nx: 0, ny: -1, back: 0, belly: 0 };
+    const ang = { a: 0 };
+    for (const ppu of [50, 80, 145, 300, 600]) {
+      for (const size of [0.5, 1.5, 6, 30]) {
+        for (let seed = 1; seed < 12; seed++) {
+          const rig = rigFor(seed * 7919, size);
+          const ch = new Choreo();
+          ch.reset(seed);
+          const w = new WeakSpot();
+          w.swipeSpot = swipeSpotFor(ppu);
+          for (let f = 0; f < 72; f++) {
+            const t = f / 60;
+            const e = env('windup', 'swipe', t / 1.2, t, t);
+            ch.apply(rig, e);
+            rig.update(e.dt);
+            ch.post(rig, e);
+            if (f % 12 !== 11) continue;
+            const target = w.pos(rig, sp, { x: 0, y: 0 }, ang, WEAK_TAIL);
+            for (const idx of [0, 1]) {
+              const s = w.pos(rig, sp, { x: 0, y: 0 }, ang, WEAK_SCALE, idx);
+              const px = Math.hypot(target.x - s.x, target.y - s.y) * ppu;
+              expect(px).toBeGreaterThanOrEqual(2 * WEAK_HIT_MIN_PX);
+            }
+          }
+        }
+      }
+    }
+  });
+});
+
+describe('grounded', () => {
+  it('big dragons keep their feet planted through a long idle (no marching in place)', () => {
+    for (const size of [12, 41]) {
+      for (const seed of [3, 77, 1234]) {
+        const rig = rigFor(seed, size);
+        rig.tempo = Math.max(0.3, Math.pow(size, -0.3));
+        const ch = new Choreo();
+        ch.reset(seed);
+        let steps = 0;
+        let worstGap = 0;
+        for (let f = 0; f < 60 * 20; f++) {
+          const e = env('idle', 'breath', 0.5, 2.5, f / 60);
+          ch.apply(rig, e);
+          rig.update(e.dt);
+          ch.post(rig, e);
+          if (f < 120) continue;
+          for (let k = 0; k < 4; k++) {
+            if (!rig.legOn[k]) continue;
+            if (rig.stepU[k]! >= 0) steps++;
+            worstGap = Math.max(worstGap, -(rig.ankY[k]! + rig.legR[k]! * 0.55));
+          }
+        }
+        expect(steps).toBe(0);
+        expect(worstGap).toBeLessThan(0.002);
+      }
+    }
+  });
+
+  it('knees stay above the ground in deep crouches', () => {
+    for (const size of [2.5, 12, 41]) {
+      const rig = rigFor(21, size);
+      const ch = new Choreo();
+      ch.reset(21);
+      for (const [phase, attack, dur] of [['windup', 'swipe', 1.2], ['stagger', 'breath', 1.4], ['dying', 'breath', 1.0]] as const) {
+        for (let f = 0; f < dur * 60; f++) {
+          const t = f / 60;
+          const e = env(phase, attack, t / dur, t, t);
+          ch.apply(rig, e);
+          rig.update(e.dt);
+          ch.post(rig, e);
+          for (let k = 0; k < 4; k++) if (rig.legOn[k]) expect(rig.kneeY[k]!).toBeLessThan(0);
+        }
+      }
+    }
+  });
+
+  it('a frozen frame (dt = 0) never repeats a footfall', () => {
+    const rig = rigFor(5, 20);
+    rig.landed[0] = 1;
+    rig.update(0);
+    expect(rig.landed[0]).toBe(0);
+  });
+});
+
+describe('wing hit area', () => {
+  it('the wing membrane is clickable', () => {
+    const rig = rigFor(9, 30);
+    const w = rig.wingPose;
+    // Centroid of the membrane polygon.
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < w.n; i++) {
+      cx += w.pts[i * 2]!;
+      cy += w.pts[i * 2 + 1]!;
+    }
+    cx /= w.n;
+    cy /= w.n;
+    expect(rig.hitBody(cx, cy, 0)).toBe(true);
+    // Well above the wing tips is still sky.
+    let top = 0;
+    for (let i = 0; i < w.n; i++) top = Math.min(top, w.pts[i * 2 + 1]!);
+    expect(rig.hitBody(cx, top - 0.3, 0.005)).toBe(false);
+  });
+});

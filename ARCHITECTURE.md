@@ -149,7 +149,7 @@ Build specs **once** (module scope or lazily), never per frame. `align` rotates 
 
 ```ts
 interface DragonView {                          // scene.dragon (render/dragon)
-  hitTest(wx, wy): 'weak' | 'body' | null;      // live pose; forgiving (min ~16 px weak radius, ~10 px body pad)
+  hitTest(wx, wy): 'weak' | 'body' | null;      // live pose; forgiving (min 11 px weak radius: WEAK_HIT_MIN_PX in render/dragon/tuning.ts; ~10 px body pad)
   impactPoint(out): Vec2;                       // random point on the body: un-aimed clicks, army hits, arrow targets
   weakSpot(out): Vec2 | null;                   // null when not showing
   headPoint(out): Vec2;                         // mouth: fire origin

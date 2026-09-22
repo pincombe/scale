@@ -8,7 +8,7 @@
 // slightly hazier tone for depth. Draws in rig units (u) through ctx transforms.
 import { MOUTH_Y, type HeadShape } from './head';
 import { C_ANGER, C_DIZZY, C_DROOP, C_FACE, C_GLOW, C_SHIFT, C_THROAT, MAX_FINGERS, MAX_NODES, NECK_N, type DragonRig, type WingPose } from './rig';
-import type { ColorRamp } from '../../lib/color';
+import { mixHex, type ColorRamp } from '../../lib/color';
 
 const TAU = Math.PI * 2;
 
@@ -31,6 +31,13 @@ export interface PaintRes {
   scale: HTMLCanvasElement;
   star: HTMLCanvasElement;
   eye: string;
+  /** Palette haze (aerial perspective target). */
+  haze: string;
+  /** Throat pouch fill and the weak spot's cyan (rims, halos). */
+  pouch: string;
+  cyan: string;
+  /** Far-side tone by bigness 0..1 (hazier for huge dragons: aerial perspective). */
+  farRamp: ColorRamp;
 }
 
 /** Per-frame paint inputs computed in update (the painter itself never advances state). */
@@ -48,11 +55,15 @@ export interface PaintState {
   weakY: number;
   weakR: number;
   weakA: number;
+  /** Which marker (weakspot.ts WEAK_*), and whether a swipe target sits on the head (tight halo). */
+  weakMode: number;
+  weakOnHead: number;
   /** The previous marker fading out after a switch (loose scale -> throat, etc.). */
   weak2On: number;
   weak2X: number;
   weak2Y: number;
   weak2A: number;
+  weak2Mode: number;
   /** Pupil target (u). */
   lookX: number;
   lookY: number;
@@ -68,6 +79,12 @@ export interface PaintState {
   time: number;
   /** Overall alpha (fades the last embers). */
   alpha: number;
+  /** 0 (<= 4 m) .. 1 (40 m): drives the huge-dragon scale cues (haze, shadow). */
+  big: number;
+  /** Cached aerial-perspective fill for the current individual + palette (built lazily). */
+  hazeGrad: CanvasGradient | null;
+  hazeFor: unknown;
+  hazeRes: PaintRes | null;
 }
 
 export function createPaintState(): PaintState {
@@ -82,10 +99,13 @@ export function createPaintState(): PaintState {
     weakY: 0,
     weakR: 0.02,
     weakA: 0,
+    weakMode: 0,
+    weakOnHead: 0,
     weak2On: 0,
     weak2X: 0,
     weak2Y: 0,
     weak2A: 0,
+    weak2Mode: 0,
     lookX: -1,
     lookY: 0,
     fire: 0,
@@ -96,6 +116,10 @@ export function createPaintState(): PaintState {
     tongue: 0,
     time: 0,
     alpha: 1,
+    big: 0,
+    hazeGrad: null,
+    hazeFor: null,
+    hazeRes: null,
   };
 }
 
@@ -181,15 +205,17 @@ function extraNeckPath(ctx: CanvasRenderingContext2D, rig: DragonRig, h: number)
 }
 
 /** Dorsal crest: a soft wavy newt crest, or separate spikes leaning toward the tail. */
-function crestPath(ctx: CanvasRenderingContext2D, rig: DragonRig): void {
+function crestPath(ctx: CanvasRenderingContext2D, rig: DragonRig, detail: boolean): void {
   const ind = rig.ind;
   if (ind.crest <= 0 || ind.crestSpikes < 1) return;
   const i0 = rig.indexOfS(ind.crestFrom);
   const iEnd = rig.indexOfS(ind.crestTo);
   const i1 = Math.min(iEnd, cutIndex(rig));
   if (i1 <= i0 + 0.5) return;
-  const count = ind.crestSpikes;
   const sharp = ind.crestSharp > 0.5;
+  // Big on screen: a smaller spike between each pair (more detail, same silhouette rhythm).
+  const fine = detail && sharp;
+  const count = ind.crestSpikes * (fine ? 2 : 1);
   const step = (iEnd - i0) / count;
   const sp = sampleA;
   const n = rig.n;
@@ -201,7 +227,8 @@ function crestPath(ctx: CanvasRenderingContext2D, rig: DragonRig): void {
     const tip = (k & 1) === 1;
     if (tip && sharp) f = Math.min(i1, f + step * 0.3);
     rig.spineAt(f, sp);
-    const h = tip ? rig.crestHeightAt(Math.min(n - 1, Math.round(f))) : -sp.back * 0.2;
+    let h = tip ? rig.crestHeightAt(Math.min(n - 1, Math.round(f))) : -sp.back * 0.2;
+    if (fine && tip && (k & 2) === 0) h *= 0.45;
     poly[m++] = sp.x + sp.nx * (sp.back + h);
     poly[m++] = sp.y + sp.ny * (sp.back + h);
     if (f >= i1) break;
@@ -640,9 +667,38 @@ function tonguePath(ctx: CanvasRenderingContext2D, hs: HeadShape, t: number, ja:
   ctx.fill();
 }
 
+/**
+ * Rows of shingled scale edges along the back, catching the rim light (only when the dragon is big
+ * on screen, as texture). Stroked by the caller.
+ */
+function scaleRows(ctx: CanvasRenderingContext2D, rig: DragonRig): void {
+  const a = rig.iS - 1;
+  const b = Math.min(rig.iH + 6, cutIndex(rig));
+  const sp = sampleA;
+  const spacing = 0.022;
+  for (let row = 0; row < 2; row++) {
+    const depth = row === 0 ? 0.74 : 0.44;
+    let f = a + row * 0.5 * (spacing / Math.max(1e-6, rig.segLen[rig.iS + 1]!));
+    while (f < b) {
+      rig.spineAt(f, sp);
+      // Tangent toward the tail from the normal (tangent = (-ny, nx)).
+      const tx = -sp.ny;
+      const ty = sp.nx;
+      const cx = sp.x + sp.nx * sp.back * depth;
+      const cy = sp.y + sp.ny * sp.back * depth;
+      const h = spacing * 0.5;
+      // A ')' shape: convex toward the tail, like overlapping shingles.
+      ctx.moveTo(cx - tx * h * 0.3 + sp.nx * h, cy - ty * h * 0.3 + sp.ny * h);
+      ctx.quadraticCurveTo(cx + tx * h * 0.9, cy + ty * h * 0.9, cx - tx * h * 0.3 - sp.nx * h, cy - ty * h * 0.3 - sp.ny * h);
+      const seg = rig.segLen[Math.min(rig.n - 1, Math.round(f) + 1)]! || 0.03;
+      f += spacing / seg;
+    }
+  }
+}
+
 // ---- parts in the two silhouette passes ----
 
-function nearParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState, alpha: number, ghostAlpha: number): void {
+function nearParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState, alpha: number, ghostAlpha: number, detail: boolean): void {
   const cut = rig.dissolve;
   // Tail fin and spade.
   ctx.beginPath();
@@ -654,7 +710,7 @@ function nearParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState
   ctx.fill();
   // Crest.
   ctx.beginPath();
-  crestPath(ctx, rig);
+  crestPath(ctx, rig, detail);
   ctx.fill();
   // Body.
   ctx.beginPath();
@@ -838,18 +894,64 @@ function drawEye(ctx: CanvasRenderingContext2D, rig: DragonRig, h: number, st: P
   }
 }
 
-function drawWeak(ctx: CanvasRenderingContext2D, res: PaintRes, st: PaintState, x: number, y: number, ang: number, a: number, hov: number): void {
-  const r = st.weakR;
+/**
+ * A weak-spot marker. The loose scale (and the swipe target) is a white-hot scale with a cool cyan
+ * halo; the breath-windup throat is a molten pouch under the jaw with a cyan rim, sized to the head
+ * so it never swamps the eye. Markers on the head keep a tight halo for the same reason.
+ */
+function drawWeak(
+  ctx: CanvasRenderingContext2D,
+  rig: DragonRig,
+  res: PaintRes,
+  st: PaintState,
+  x: number,
+  y: number,
+  ang: number,
+  a: number,
+  hov: number,
+  mode: number,
+  onHead: number,
+  pxPerU: number,
+): void {
   const pulse = 0.5 + 0.5 * Math.sin(st.time * 7.5);
+  if (mode === WEAK_MODE_THROAT) {
+    const rp = Math.max(rig.headLen * 0.16, 3.5 / pxPerU);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = a * (0.55 + 0.35 * pulse);
+    sprite(ctx, res.glowFire, x, y, rp * 4.2);
+    ctx.globalAlpha = a * (0.3 + 0.2 * pulse + 0.3 * hov);
+    sprite(ctx, res.glowCyan, x, y, rp * (3.4 + hov));
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = a;
+    // The pouch: a swollen, molten bulge, then its cyan rim.
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rig.headA[0]!);
+    ctx.fillStyle = res.pouch;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rp * 1.25, rp * (0.8 + 0.08 * pulse), 0, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = res.cyan;
+    ctx.lineWidth = Math.max(rp * 0.2, 1.3 / pxPerU);
+    ctx.stroke();
+    ctx.restore();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = a * (0.45 + 0.45 * pulse);
+    sprite(ctx, res.glowHot, x, y, rp * (1.5 + 0.4 * pulse));
+    ctx.globalCompositeOperation = 'source-over';
+    return;
+  }
+  const r = st.weakR;
+  const halo = onHead ? 3.2 : 5 + 1.6 * pulse;
   ctx.globalCompositeOperation = 'lighter';
   ctx.globalAlpha = a * (0.45 + 0.3 * pulse + 0.25 * hov);
-  sprite(ctx, res.glowCyan, x, y, r * (5 + 1.6 * pulse) * (1 + hov * 0.4));
+  sprite(ctx, res.glowCyan, x, y, r * halo * (1 + hov * 0.4));
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = a;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(ang - 0.45 + 0.1 * Math.sin(st.time * 3.1));
-  const s = r * (2.1 + 0.15 * pulse + hov * 0.4);
+  const s = r * (2.1 + 0.15 * pulse + hov * 0.4) * (onHead ? 0.85 : 1);
   ctx.drawImage(res.scale, -s * 0.5, -s * 0.5, s, s);
   ctx.restore();
   ctx.globalCompositeOperation = 'lighter';
@@ -857,6 +959,9 @@ function drawWeak(ctx: CanvasRenderingContext2D, res: PaintRes, st: PaintState, 
   sprite(ctx, res.glowWhite, x, y, r * (1.3 + 0.5 * pulse));
   ctx.globalCompositeOperation = 'source-over';
 }
+
+/** Marker mode of the breath-windup throat (mirrors weakspot.ts WEAK_THROAT; kept local to avoid a cycle). */
+const WEAK_MODE_THROAT = 1;
 
 /**
  * Paint the dragon into ctx for view. Pure with respect to state: reads rig + st, draws.
@@ -911,16 +1016,31 @@ export function paintDragon(
     ctx.globalAlpha = 1;
   }
 
-  // ---- contact shadow ----
+  // ---- contact shadow (heavier under huge dragons) ----
   if (rig.dissolve > 0.3) {
-    ctx.globalAlpha = 0.5 * st.alpha * Math.min(1, (rig.dissolve - 0.3) * 3);
+    ctx.globalAlpha = (0.5 + 0.25 * st.big) * st.alpha * Math.min(1, (rig.dissolve - 0.3) * 3);
     ctx.save();
     const mid = rig.x[rig.iS + 4]!;
     ctx.translate(mid, 0);
-    ctx.scale(1, 0.12);
-    sprite(ctx, res.glowDark, 0, 0, 0.95);
+    ctx.scale(1, 0.12 + 0.03 * st.big);
+    sprite(ctx, res.glowDark, 0, 0, 0.95 * (1 + 0.35 * st.big));
     ctx.restore();
     ctx.globalAlpha = 1;
+  }
+  const detail = pxPerU > 380;
+  // Aerial perspective: huge dragons fade toward the sky haze with height (built once per dragon).
+  let bodyFill: string | CanvasGradient = res.silhouette;
+  if (st.big > 0.02) {
+    if (!st.hazeGrad || st.hazeFor !== rig.ind || st.hazeRes !== res) {
+      const g = ctx.createLinearGradient(0, 0, 0, rig.restMinY * 1.15);
+      g.addColorStop(0, res.silhouette);
+      g.addColorStop(0.5, mixHex(res.silhouette, res.haze, 0.06 * st.big));
+      g.addColorStop(1, mixHex(res.silhouette, res.haze, 0.2 * st.big));
+      st.hazeGrad = g;
+      st.hazeFor = rig.ind;
+      st.hazeRes = res;
+    }
+    bodyFill = st.hazeGrad;
   }
 
   const alpha = st.alpha;
@@ -933,7 +1053,7 @@ export function paintDragon(
   ctx.fillStyle = rimColor;
   farParts(ctx, rig, st);
   ctx.restore();
-  ctx.fillStyle = res.far;
+  ctx.fillStyle = res.farRamp.at(st.big);
   farParts(ctx, rig, st);
 
   // ---- main silhouette: a soft wide rim (light wrapping the edge), the crisp rim, then the body ----
@@ -942,17 +1062,28 @@ export function paintDragon(
     ctx.translate(lx * 2.4, ly * 2.4);
     ctx.globalAlpha = alpha * 0.22;
     ctx.fillStyle = rimColor;
-    nearParts(ctx, rig, st, alpha * 0.22, 0);
+    nearParts(ctx, rig, st, alpha * 0.22, 0, detail);
     ctx.restore();
     ctx.globalAlpha = alpha;
   }
   ctx.save();
   ctx.translate(lx, ly);
   ctx.fillStyle = rimColor;
-  nearParts(ctx, rig, st, alpha, 0);
+  nearParts(ctx, rig, st, alpha, 0, detail);
   ctx.restore();
-  ctx.fillStyle = res.silhouette;
-  nearParts(ctx, rig, st, alpha, 0.32);
+  ctx.fillStyle = bodyFill;
+  nearParts(ctx, rig, st, alpha, 0.32, detail);
+
+  // ---- scale texture catching the light along the back (big on screen only) ----
+  if (pxPerU > 420 && rig.dissolve > 0.6) {
+    ctx.strokeStyle = rimColor;
+    ctx.globalAlpha = alpha * 0.14 * Math.min(1, (pxPerU - 420) / 250);
+    ctx.lineWidth = 1.1 / pxPerU;
+    ctx.beginPath();
+    scaleRows(ctx, rig);
+    ctx.stroke();
+    ctx.globalAlpha = alpha;
+  }
 
   // ---- inner fire: the throat and chest glow through the hide ----
   const glow = rig.ch[C_GLOW]!;
@@ -1021,8 +1152,8 @@ export function paintDragon(
   }
 
   // ---- weak spot: a loose, white-hot scale with a cool cyan halo ----
-  if (st.weak2On > 0.01) drawWeak(ctx, res, st, st.weak2X, st.weak2Y, st.weak2A, st.weak2On * alpha, 0);
-  if (st.weakOn > 0.01) drawWeak(ctx, res, st, st.weakX, st.weakY, st.weakA, st.weakOn * alpha, st.hover);
+  if (st.weak2On > 0.01) drawWeak(ctx, rig, res, st, st.weak2X, st.weak2Y, st.weak2A, st.weak2On * alpha, 0, st.weak2Mode, 0, pxPerU);
+  if (st.weakOn > 0.01) drawWeak(ctx, rig, res, st, st.weakX, st.weakY, st.weakA, st.weakOn * alpha, st.hover, st.weakMode, st.weakOnHead, pxPerU);
   ctx.globalAlpha = alpha;
 
   // ---- dizzy stars circling the head ----

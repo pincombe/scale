@@ -531,8 +531,9 @@ export class DragonRig {
     const ind = this.ind;
     for (let k = 0; k < 4; k++) {
       if (!this.legOn[k]) continue;
-      this.spineAtBody(this.legAt[k]!, this.sp);
-      const hipY = this.sp.y + this.sp.belly * 0.42;
+      // From this leg's own hip (far legs sit a little higher and further back).
+      this.hipAt(k);
+      const hipY = this.hipY[k]!;
       const rA = this.legR[k]! * 0.55;
       const h = Math.max(0.01, -hipY - rA);
       const reach = h * ind.legBend;
@@ -707,7 +708,11 @@ export class DragonRig {
 
   /** Advance channels, pose, dynamics, legs and wings by dt (scaled seconds). */
   update(dt: number): void {
-    if (dt <= 0) return;
+    if (dt <= 0) {
+      // Frozen (hit-stop, pause): nothing moves, so nothing lands.
+      this.landed.fill(0);
+      return;
+    }
     const ch = this.ch;
     const tg = this.target;
     for (let c = 0; c < NCH; c++) {
@@ -738,12 +743,13 @@ export class DragonRig {
     const seg = this.segLen;
     tx[iS] = this.restAx + ch[C_X]!;
     ty[iS] = this.restAy + ch[C_Y]! + ch[C_CROUCH]! * this.crouchDepth;
-    // Torso: a gentle arch.
+    // Torso: a gentle arch, tilted chest-up by the species' stance.
     const arch = ch[C_ARCH]!;
+    const tilt = this.ind.tilt;
     let a = 0;
     for (let j = iS; j < iH; j++) {
       const u = (j - iS + 0.5) / BODY_N;
-      a = -arch + 2 * arch * u;
+      a = tilt - arch + 2 * arch * u;
       tx[j + 1] = tx[j]! + seg[j + 1]! * Math.cos(a);
       ty[j + 1] = ty[j]! + seg[j + 1]! * Math.sin(a);
     }
@@ -1100,6 +1106,9 @@ export class DragonRig {
     this.kneeY[k] = this.ikOut[1]!;
     this.ankX[k] = this.ikOut[2]!;
     this.ankY[k] = this.ikOut[3]!;
+    // Deep crouches: keep the knee (its radius) above the ground; a real knee would splay sideways.
+    const kr = this.legR[k]! * 0.68;
+    if (this.kneeY[k]! > -kr) this.kneeY[k] = -kr;
   }
 
   private updateLegs(dt: number): void {
@@ -1147,10 +1156,12 @@ export class DragonRig {
         const home = this.hipX[k]! + this.legHome[k]!;
         const err = this.footX[k]! - home;
         const lim = this.stepDist;
-        // Also step if the leg is overstretched (the body rose or moved).
+        // Also step if the leg is overstretched toward a displaced foot (the body moved off it).
+        // Measured to the ankle target the IK reaches for; a purely vertical stretch (the body
+        // rose) can't be fixed by stepping, so the foot just stays planted.
         const hx = this.footX[k]! - this.hipX[k]!;
-        const hy = this.footY[k]! - this.hipY[k]!;
-        const over = hx * hx + hy * hy > reach * reach * 1.02;
+        const hy = this.footY[k]! - this.legR[k]! * 0.55 - this.hipY[k]!;
+        const over = hx * hx + hy * hy > reach * reach * 1.02 && Math.abs(err) > lim * 0.3;
         if (Math.abs(err) > lim || over) {
           const group = k === LEG_FN || k === LEG_BF ? 0 : 1;
           let blocked = false;
@@ -1322,7 +1333,7 @@ export class DragonRig {
         if (this.segHit(i, j, px, py, pad)) return true;
       }
     }
-    // Heads: an ellipse in head space.
+    // Heads: an ellipse in head space, plus horns and gill fronds.
     if (this.dissolve > 0.02) {
       const hs = this.head;
       for (let h = 0; h < this.heads; h++) {
@@ -1337,7 +1348,30 @@ export class DragonRig {
         const ex = (hx - hs.hitX) / (hs.hitRX + pr);
         const ey = (hy - hs.hitY) / (hs.hitRY + pr);
         if (ex * ex + ey * ey <= 1) return true;
+        for (let k = 0; k < hs.hornN; k++) {
+          const o = k * 10;
+          const H = hs.horns;
+          const bx = (H[o]! + H[o + 8]!) * 0.5;
+          const by = (H[o + 1]! + H[o + 9]!) * 0.5;
+          const r = this.ind.hornWidth * 0.5 + pr;
+          if (segDist2(hx, hy, bx, by, H[o + 4]!, H[o + 5]!) <= r * r) return true;
+        }
+        for (let k = 0; k < hs.gillN; k++) {
+          const o = k * 5;
+          const ga = hs.gills[o + 2]! + this.gillSway[h]! * 0.7;
+          const gl = hs.gills[o + 3]!;
+          const gx = hs.gills[o]!;
+          const gy = hs.gills[o + 1]!;
+          const r = hs.gills[o + 4]! * 1.2 + pr;
+          if (segDist2(hx, hy, gx, gy, gx + Math.cos(ga - 0.25) * gl, gy + Math.sin(ga - 0.25) * gl) <= r * r) return true;
+        }
       }
+    }
+    // Wings: the membranes (near and far), when not burnt away.
+    if (this.wingOn && this.dissolve >= this.s[Math.round(this.iS + this.wingAt * BODY_N)]!) {
+      if (this.inWing(this.wingPose, px, py, pad)) return true;
+      this.wingPoints(this.wingAngle - 0.1, 1, this.wingHit);
+      if (this.inWing(this.wingHit, px, py, pad)) return true;
     }
     // Legs: capsules.
     for (let k = 0; k < 4; k++) {
@@ -1347,6 +1381,27 @@ export class DragonRig {
       if (segDist2(px, py, this.kneeX[k]!, this.kneeY[k]!, this.ankX[k]!, this.ankY[k]!) <= r * r) return true;
     }
     return false;
+  }
+
+  /** Scratch for hit-testing the far wing. */
+  private readonly wingHit: WingPose = { n: 0, pts: new Float32Array(2 * (MAX_FINGERS + 3)) };
+
+  /** Point in a wing membrane polygon, or within `pad` of its edge. */
+  private inWing(w: WingPose, px: number, py: number, pad: number): boolean {
+    const p = w.pts;
+    const n = w.n;
+    let inside = false;
+    let d2 = Infinity;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const xi = p[i * 2]!;
+      const yi = p[i * 2 + 1]!;
+      const xj = p[j * 2]!;
+      const yj = p[j * 2 + 1]!;
+      if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+      const e = segDist2(px, py, xi, yi, xj, yj);
+      if (e < d2) d2 = e;
+    }
+    return inside || d2 <= pad * pad;
   }
 
   private segHit(i: number, j: number, px: number, py: number, pad: number): boolean {
@@ -1369,7 +1424,7 @@ export class DragonRig {
     const ny = this.ny[i]! + (this.ny[j]! - this.ny[i]!) * t;
     const side = ox * nx + oy * ny;
     let r = side >= 0 ? this.back[i]! + (this.back[j]! - this.back[i]!) * t : this.belly[i]! + (this.belly[j]! - this.belly[i]!) * t;
-    if (side >= 0) r += this.crestHeightAt(i) * 0.6;
+    if (side >= 0) r += this.crestHeightAt(i);
     r += pad;
     return ox * ox + oy * oy <= r * r;
   }

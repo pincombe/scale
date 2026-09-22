@@ -24,3 +24,13 @@ export const WEAK_SHIFT_MIN = 9;
 export const WEAK_SHIFT_MAX = 15;
 /** Chance a crit makes the loose scale move elsewhere. */
 export const WEAK_SHIFT_ON_CRIT = 0.35;
+
+/**
+ * Swipe-windup target by on-screen body length (px, at the director's target zoom). It must sit at
+ * least 2x WEAK_HIT_MIN_PX from wherever the loose scale is (tail-mounted on small dragons), or
+ * mashing the old scale would stagger every swipe. Measured minimum separations in the loaded
+ * scorpion pose: the raised tail curl ~0.09 u (so >= 250 px), the gill-crown nape ~0.33 u (>= 72 px);
+ * below that the nasal bridge (~0.5 u).
+ */
+export const SWIPE_CURL_MIN_PX = 250;
+export const SWIPE_NAPE_MIN_PX = 72;

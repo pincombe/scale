@@ -195,7 +195,7 @@ export class Choreo {
       this.puffIn -= dt * (e.phase === 'windup' && e.attack === 'breath' ? 5 : 1);
       if (this.puffIn <= 0) {
         this.puff = true;
-        this.puffIn = 2.2 + this.rng.float() * 3.5;
+        this.puffIn = (1.5 + this.rng.float() * 2.6) * (1 + rig.ind.maturity * 0.6);
       }
     }
   }
@@ -240,10 +240,11 @@ export class Choreo {
 
   private chooseAct(rig: DragonRig): void {
     const acts = rig.ind.species.behavior.acts;
-    if (this.act !== 'rest' && this.rng.float() < 0.5) {
+    const m = rig.ind.maturity;
+    if (this.act !== 'rest' && this.rng.float() < 0.35 + 0.3 * m) {
       this.act = 'rest';
       this.actT = 0;
-      this.actDur = 0.6 + this.rng.float() * 1.2;
+      this.actDur = (0.35 + this.rng.float() * 0.8) * (1 + m);
       return;
     }
     let total = 0;
@@ -317,7 +318,7 @@ export class Choreo {
         tg[C_WSPREAD] = 0.9;
         tg[C_WLIFT] = -0.35;
         // A hopeful little hop that goes nowhere.
-        tg[C_Y] -= 0.035 * hump(u) * rig.ind.buzz;
+        tg[C_Y] -= 0.035 * hump(u) * rig.ind.buzz * Math.max(0, 1 - rig.ind.maturity * 1.6);
         tg[C_HPITCH] += 0.12 * hump(u);
         tg[C_SWAY] *= 1.6;
         break;

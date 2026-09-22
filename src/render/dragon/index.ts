@@ -39,7 +39,7 @@ import {
   WEAK_HIT_SCALE,
   WEAK_SHIFT_ON_CRIT,
 } from './tuning';
-import { WEAK_SCALE, WEAK_THROAT, WeakSpot, weakLiveFor, weakModeFor } from './weakspot';
+import { SWIPE_CURL, WEAK_SCALE, WEAK_TAIL, WeakSpot, swipeSpotFor, weakLiveFor, weakModeFor } from './weakspot';
 import { makeCanvas, context2d } from '../atlas';
 
 export interface DragonRender {
@@ -55,10 +55,10 @@ export interface DragonRender {
 /** The weak spot's cool halo (contrasts with the golden sky and the warm fire). */
 export const WEAK_CYAN = '#6be9ff';
 
-/** Animation speed by size: newts are quick, 40 m wyrms are ponderous. */
+/** Animation speed by size: newts are quick, 40 m wyrms are ponderous (a scale cue in itself). */
 function tempoFor(size: number): number {
-  const t = Math.pow(Math.max(0.05, size), -0.22);
-  return t < 0.42 ? 0.42 : t > 1.2 ? 1.2 : t;
+  const t = Math.pow(Math.max(0.05, size), -0.3);
+  return t < 0.3 ? 0.3 : t > 1.25 ? 1.25 : t;
 }
 
 function clamp01(x: number): number {
@@ -262,6 +262,10 @@ export function createDragon(scene: Scene): DragonRender {
         scale: scaleCanvas,
         star: atlas.canvas(atlas.tint(starId, p.accent.gold, 0.7)),
         eye,
+        haze: p.haze,
+        pouch: mixHex('#ffe3a8', p.accent.fire, 0.35),
+        cyan: WEAK_CYAN,
+        farRamp: new ColorRamp([mixHex(p.silhouette, p.haze, 0.17), mixHex(p.silhouette, p.haze, 0.42)], 16),
       };
       resCache.set(p, r);
     }
@@ -279,18 +283,27 @@ export function createDragon(scene: Scene): DragonRender {
 
   // ---- fire geometry (shared by the emitter and breathReachX) ----
 
-  /** Where the flame lands (world x): the ground in front of the army, further out for bigger dragons. */
-  const fireAimX = (l: number): number => scene.crowd.frontX() - Math.max(0.8, l * 0.3);
-  /** Flame thickness (m) for a stream `dist` long; never thinner than 9 CSS px. */
-  const fireWidth = (dist: number, l: number, pxM: number): number =>
-    Math.max(Math.min(0.12, l * 0.18), dist * 0.12, l * 0.05, 9 * pxM);
+  /** Where the flame lands (world x): a newt's puff licks the front rank; a wyrm's torrent pours across the field. */
+  const fireAimX = (l: number): number => scene.crowd.frontX() - Math.max(0.45, l * 0.3);
+  /** Flame thickness at the mouth (m): sized to the head, so it scales with the dragon on screen. */
+  const fireWidth = (l: number, pxM: number): number => Math.max(rig.headLen * l * 0.42, 4 * pxM);
+  /** Particles per second and life multiplier: a cute puff when young, a torrent when grown. */
+  const fireRate = (): number => 120 + 220 * rig.ind.maturity;
+  const fireLife = (): number => 0.75 + 0.6 * rig.ind.maturity;
+
+  /** Screen px per body length at the director's TARGET framing (stable while the camera eases). */
+  const targetPxPerU = (): number => {
+    const dir = scene.director;
+    const z = dir.enabled && dir.target.zoom > 1 ? dir.target.zoom : scene.camera.zoomEff;
+    return z * L();
+  };
 
   // ---- weak spot ----
 
   /** Loose-scale candidates allowed at this on-screen size (see tuning.ts). */
   const weakCandidates = (): number => {
     const n = rig.ind.weakSpots.length;
-    const ppu = scene.camera.zoomEff * L();
+    const ppu = targetPxPerU();
     return Math.min(n, ppu >= RIDGE_SPOT_MIN_PX ? 4 : ppu >= TORSO_SPOT_MIN_PX ? 3 : 2);
   };
 
@@ -304,6 +317,7 @@ export function createDragon(scene: Scene): DragonRender {
     const d = scene.game.state.dragon;
     const k = d.phaseDur > 0 ? d.phaseT / d.phaseDur : 1;
     if (!weakLiveFor(d.phase, k)) return null;
+    weak.swipeSpot = swipeSpotFor(targetPxPerU());
     const idx = weak.idx < weakCandidates() ? weak.idx : 0;
     return weak.pos(rig, sp, out, weakAng, weakModeFor(d.phase, d.attack), idx);
   };
@@ -454,8 +468,7 @@ export function createDragon(scene: Scene): DragonRender {
       const ax = fireAimX(l);
       rig.mouth(0, tmp2);
       toWorld(tmp2.x, tmp2.y, tmp2);
-      const dist = Math.hypot(ax - tmp2.x, tmp2.y);
-      const w = fireWidth(dist, l, 1 / Math.max(1e-6, scene.camera.zoomEff));
+      const w = fireWidth(l, 1 / Math.max(1e-6, scene.camera.zoomEff));
       // Particles overshoot the aim by ~12% and grow to ~3.6 widths across; the soft edge sits
       // about 2.5 widths past the overshoot.
       return tmp2.x + (ax - tmp2.x) * 1.12 - w * 2.5;
@@ -543,6 +556,7 @@ export function createDragon(scene: Scene): DragonRender {
     // Weak spot: the loose scale, or the throat / tail base during windups (weakspot.ts).
     const prevIdx = weak.idx;
     const prevMode = weak.mode;
+    weak.swipeSpot = swipeSpotFor(targetPxPerU());
     weak.update(dt, d.phase, d.attack, k, weakCandidates());
     if (weak.mode === WEAK_SCALE && prevMode === WEAK_SCALE && weak.idx !== prevIdx && weak.vis > 0.3) {
       // The scale shook loose and moved: a little cyan burst where it was.
@@ -556,13 +570,16 @@ export function createDragon(scene: Scene): DragonRender {
     st.weakX = tmp2.x;
     st.weakY = tmp2.y;
     st.weakA = weakAng.a;
-    st.weakR = baseR * (weak.mode === WEAK_THROAT ? 1.15 : 1);
+    st.weakR = baseR;
+    st.weakMode = weak.mode;
+    st.weakOnHead = weak.mode === WEAK_TAIL && weak.swipeSpot !== SWIPE_CURL ? 1 : 0;
     if (weak.prevFade > 0.01) {
       weak.pos(rig, sp, tmp2, weakAng, weak.prevMode, weak.prevIdx);
       st.weak2On = weak.vis * weak.prevFade;
       st.weak2X = tmp2.x;
       st.weak2Y = tmp2.y;
       st.weak2A = weakAng.a;
+      st.weak2Mode = weak.prevMode;
     } else st.weak2On = 0;
 
     // Hover.
@@ -598,12 +615,11 @@ export function createDragon(scene: Scene): DragonRender {
       const my = tmp2.y;
       const ax = aimW;
       const ay = 0;
-      const dist = Math.hypot(ax - mx, ay - my);
-      const width = fireWidth(dist, l, px);
-      fireAcc += dt * 230 * fireOn;
+      const width = fireWidth(l, px);
+      fireAcc += dt * fireRate() * fireOn;
       const n = Math.floor(fireAcc);
       fireAcc -= n;
-      if (n > 0) emitFire(world, f, mx, my, ax, ay, n, width, 0.6 + 0.4 * fireOn, dt);
+      if (n > 0) emitFire(world, f, mx, my, ax, ay, n, width, 0.6 + 0.4 * fireOn, dt, fireLife());
       // Smoke billows where it lands.
       if (Math.random() < dt * 14 * fireOn) world.burst(f.smoke, ax + (Math.random() - 0.3) * width * 3, -width * 0.5, 1, -Math.PI / 2, width);
       st.fireX = (ax - CLASH_X) / l;
@@ -679,8 +695,8 @@ export function createDragon(scene: Scene): DragonRender {
     }
     lastK = k;
 
-    // Heavy footsteps for big dragons.
-    if (l >= 5) {
+    // Heavy footsteps for big dragons (never on frozen frames: the landing already happened).
+    if (l >= 5 && dt > 0) {
       for (let q = 0; q < 4; q++) {
         if (!rig.landed[q]) continue;
         toWorld(rig.footX[q]!, 0, tmp2);
@@ -734,6 +750,7 @@ export function createDragon(scene: Scene): DragonRender {
     st.time = v.time;
     st.L = l;
     st.originX = CLASH_X;
+    st.big = clamp01(Math.log(Math.max(1e-6, l) / 4) / Math.log(10));
 
     const t1 = performance.now();
     perfAcc += t1 - t0;

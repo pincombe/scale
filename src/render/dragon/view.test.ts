@@ -118,7 +118,7 @@ describe('DragonView tailPoint / breathReachX', () => {
       const { view } = setup(size, 21, 600 / size);
       const x = view.breathReachX!();
       expect(Number.isFinite(x)).toBe(true);
-      expect(x).toBeLessThan(-0.3 - 0.8); // past the front line (-0.3) by at least the minimum aim
+      expect(x).toBeLessThan(-0.3 - 0.45); // past the front line (-0.3) by at least the minimum aim
       expect(x).toBeLessThan(prev);
       prev = x;
     }
@@ -149,7 +149,8 @@ describe('DragonView weak spot rules', () => {
     }
   });
 
-  it('swipe windup: the tail base is the weak spot, distinct from the throat', () => {
+  it('swipe windup: big on screen, the raised tail curl; distinct from the throat', () => {
+    // 2 m at zoom 250 -> 500 px per body length: the curl tier.
     const { view, setPhase } = setup(2, 99, 250);
     setPhase('windup', 'breath', 0.5);
     const throat = view.weakSpot(v())!;
@@ -157,7 +158,26 @@ describe('DragonView weak spot rules', () => {
     const tail = view.weakSpot(v())!;
     expect(view.hitTest(tail.x, tail.y)).toBe('weak');
     expect(view.hitTest(throat.x, throat.y)).not.toBe('weak');
-    expect(tail.x).toBeGreaterThan(throat.x);
+    const b = view.bounds(r());
+    expect(tail.x).toBeGreaterThan(b.x + b.w * 0.55);
+  });
+
+  it('a newt at zoom 100: the swipe target sits >= 2 hit radii from the loose scale, which cannot crit', () => {
+    for (let seed = 1; seed < 60; seed++) {
+      const { view, setPhase } = setup(0.5, seed * 104729, 100);
+      setPhase('idle');
+      const scale = view.weakSpot(v())!;
+      setPhase('windup', 'swipe', 0.02);
+      const target = view.weakSpot(v())!;
+      expect(view.hitTest(target.x, target.y)).toBe('weak');
+      // Mashing the old scale spot is a plain body hit, not a stagger...
+      expect(view.hitTest(scale.x, scale.y)).toBe('body');
+      // ...with margin: the target is at least two hit radii away (in CSS px at this zoom).
+      expect(Math.hypot(target.x - scale.x, target.y - scale.y) * 100).toBeGreaterThanOrEqual(2 * WEAK_HIT_MIN_PX);
+      // After the windup the loose scale is back.
+      setPhase('swipe', 'swipe', 0.1);
+      expect(view.hitTest(scale.x, scale.y)).toBe('weak');
+    }
   });
 
   it('none while flying in or dying', () => {

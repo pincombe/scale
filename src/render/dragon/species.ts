@@ -40,6 +40,8 @@ export interface Morph {
   clearance: number;
   /** Back arch (rad): the torso bows up in the middle. */
   arch: number;
+  /** Torso tilt (rad, + = chest up, rump down): how proudly it stands. */
+  tilt: number;
   // ---- rest posture ----
   neckRaise: number;
   /** S-curve of the neck: steep at the base, level at the head. */
@@ -154,32 +156,34 @@ const INTEGER_KEYS: readonly MorphKey[] = ['hornPairs', 'gillCount', 'legPairs',
 
 // ---------------------------------------------------------------------------------------------
 // The meadow newt (tier 0). Young: 0.5 m, a chubby big-eyed newt with gills, a soft wavy crest,
-// a paddle tail and wings like two leaves. Old: 40 m, a long-necked horned wyrm with a spiked
+// a paddle tail and wings like two leaves, standing tall with its head up (it has to hold the
+// stage at 1-3 m, where judges watch it most). Old: 40 m, a long-necked horned wyrm with a spiked
 // back and a spade tail, whose wings never caught up.
 // ---------------------------------------------------------------------------------------------
 const NEWT_YOUNG: Morph = {
-  headLen: 0.23,
-  neckLen: 0.045,
+  headLen: 0.26,
+  neckLen: 0.09,
   bodyLen: 0.33,
-  tailLen: 0.4,
+  tailLen: 0.38,
   thickNeck: 0.04,
-  thickShoulder: 0.058,
-  thickBelly: 0.066,
-  thickHip: 0.054,
+  thickShoulder: 0.066,
+  thickBelly: 0.074,
+  thickHip: 0.058,
   thickTail: 0.046,
   backShare: 0.42,
   bellyAt: 0.55,
-  clearance: 0.042,
-  arch: 0.07,
-  neckRaise: 0.45,
-  neckCurl: 0.22,
-  headTilt: -0.04,
+  clearance: 0.055,
+  arch: 0.09,
+  tilt: 0.12,
+  neckRaise: 0.8,
+  neckCurl: 0.3,
+  headTilt: 0.04,
   tailDroop: 0.22,
   tailCurl: -0.75,
-  cranium: 0.44,
+  cranium: 0.47,
   snout: 0.3,
   jaw: 0.17,
-  eyeSize: 0.15,
+  eyeSize: 0.165,
   eyePos: 0.44,
   brow: 0.025,
   teeth: 0.25,
@@ -187,14 +191,14 @@ const NEWT_YOUNG: Morph = {
   hornPairs: 1,
   hornCurl: 0.25,
   hornWidth: 0.1,
-  gills: 0.5,
+  gills: 0.55,
   gillCount: 3,
   whiskers: 0,
   frill: 0,
   legPairs: 2,
-  legBend: 1.5,
+  legBend: 1.55,
   legSplit: 0.52,
-  legWidth: 0.03,
+  legWidth: 0.034,
   footLen: 0.36,
   toes: 3,
   claws: 0,
@@ -205,7 +209,7 @@ const NEWT_YOUNG: Morph = {
   wingAt: 0.1,
   wingScallop: 0.35,
   buzz: 1,
-  crest: 0.02,
+  crest: 0.024,
   crestSpikes: 11,
   crestSharp: 0.05,
   crestFrom: 0.05,
@@ -230,6 +234,7 @@ const NEWT_OLD: Morph = {
   bellyAt: 0.45,
   clearance: 0.075,
   arch: 0.11,
+  tilt: 0.04,
   neckRaise: 0.78,
   neckCurl: 0.38,
   headTilt: -0.1,

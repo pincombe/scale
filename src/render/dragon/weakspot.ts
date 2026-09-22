@@ -3,8 +3,10 @@
 // enforced in applyAction): this file maps it onto the rig.
 //
 //   phase                 live weak spot
-//   windup (breath)       the glowing THROAT only (the loose scale dims out and can't be hit)
-//   windup (swipe)        the TAIL BASE, glowing as the tail loads
+//   windup (breath)       the glowing THROAT pouch only (the loose scale dims out and can't be hit)
+//   windup (swipe)        the raised TAIL CURL as the tail loads; on small on-screen dragons, where
+//                         the curl would sit on top of the tail-mounted loose scale, the gill-crown
+//                         NAPE (or the nasal bridge when tiny) instead (see tuning.ts SWIPE_*)
 //   everything else       the LOOSE SCALE (one of the individual's candidates; shifts now and then)
 //   enter (in flight), dying   none
 //
@@ -12,16 +14,24 @@
 import { weakSpotFor, weakSpotLive } from '../../core';
 import type { DragonAttack, DragonPhase } from '../../core';
 import type { DragonRig, SpineSample } from './rig';
-import { WEAK_SHIFT_MAX, WEAK_SHIFT_MIN } from './tuning';
+import { SWIPE_CURL_MIN_PX, SWIPE_NAPE_MIN_PX, WEAK_SHIFT_MAX, WEAK_SHIFT_MIN } from './tuning';
 import { MOUTH_Y } from './head';
 
 export const WEAK_SCALE = 0;
 export const WEAK_THROAT = 1;
 export const WEAK_TAIL = 2;
 
-/** Where the tail-base spot sits (body fraction, side). */
-const TAIL_AT = 1.42;
-const TAIL_SIDE = 0.62;
+/** Swipe-windup target tiers (WeakSpot.swipeSpot). */
+export const SWIPE_CURL = 0;
+export const SWIPE_NAPE = 1;
+export const SWIPE_BROW = 2;
+/** The raised tail curl: this far along the tail (0 root .. 1 tip), on the back edge. */
+const CURL_T = 0.8;
+
+/** Which swipe target fits a dragon this many px per body length on screen. */
+export function swipeSpotFor(pxPerU: number): number {
+  return pxPerU >= SWIPE_CURL_MIN_PX ? SWIPE_CURL : pxPerU >= SWIPE_NAPE_MIN_PX ? SWIPE_NAPE : SWIPE_BROW;
+}
 /** Fade times (s). */
 const FADE_IN = 0.18;
 const FADE_OUT = 0.12;
@@ -37,7 +47,7 @@ export const weakLiveFor = weakSpotLive;
 
 /** The glowing throat (u): the gular pouch under the jaw of the main head (moves with the head). */
 export function throatPoint(rig: DragonRig, out: { x: number; y: number }): { x: number; y: number } {
-  return rig.headToU(0, rig.head.hingeX - 0.16, MOUTH_Y + 0.9 * rig.ind.jaw, out);
+  return rig.headToU(0, rig.head.hingeX - 0.12, MOUTH_Y + 1.02 * rig.ind.jaw, out);
 }
 
 export class WeakSpot {
@@ -51,6 +61,8 @@ export class WeakSpot {
   prevFade = 0;
   /** Phase gate 0..1 (hidden while flying in and while dying). */
   vis = 0;
+  /** Swipe-windup target tier (SWIPE_*), chosen by the host from the on-screen size. */
+  swipeSpot = SWIPE_NAPE;
   private shiftIn = 10;
   private rand: () => number = Math.random;
 
@@ -126,17 +138,24 @@ export class WeakSpot {
       // The throat pouch, just under the back of the jaw (it moves with the head).
       throatPoint(rig, out);
       rig.spineAt(rig.iS * 0.3, sp);
+    } else if (mode === WEAK_TAIL && this.swipeSpot !== SWIPE_CURL) {
+      // Small on screen: on the head, as far from the tail-mounted loose scale as it gets.
+      const hs = rig.head;
+      if (this.swipeSpot === SWIPE_NAPE) rig.headToU(0, 0.02, -0.95 * rig.ind.cranium, out);
+      else rig.headToU(0, hs.nostrilX + 0.2, hs.nostrilY - 0.02, out);
+      rig.spineAt(0, sp);
+      angle.a = rig.headA[0]! + Math.PI;
+      return out;
+    } else if (mode === WEAK_TAIL) {
+      // The raised tail curl (up high in the loaded scorpion pose).
+      rig.spineAt(rig.iH + CURL_T * (rig.n - 1 - rig.iH), sp);
+      out.x = sp.x + sp.nx * sp.back * 0.8;
+      out.y = sp.y + sp.ny * sp.back * 0.8;
     } else {
-      let at = TAIL_AT;
-      let side = TAIL_SIDE;
-      if (mode === WEAK_SCALE) {
-        const spots = rig.ind.weakSpots;
-        const s = spots[idx < spots.length ? idx : 0]!;
-        at = s.at;
-        side = s.side;
-      }
-      rig.spineAtBody(at, sp);
-      const o = (side >= 0 ? side * sp.back : side * sp.belly) * 0.82;
+      const spots = rig.ind.weakSpots;
+      const s = spots[idx < spots.length ? idx : 0]!;
+      rig.spineAtBody(s.at, sp);
+      const o = (s.side >= 0 ? s.side * sp.back : s.side * sp.belly) * 0.82;
       out.x = sp.x + sp.nx * o;
       out.y = sp.y + sp.ny * o;
     }

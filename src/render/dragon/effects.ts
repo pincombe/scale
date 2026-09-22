@@ -268,13 +268,14 @@ export function emitFire(
   width: number,
   intensity: number,
   dt: number,
+  lifeMul = 1,
 ): void {
   const dx = ax - mx;
   const dy = ay - my;
   const reach = Math.sqrt(dx * dx + dy * dy) * 1.12 + width;
   const base = Math.atan2(dy, dx);
   const spec = fx.fire;
-  const life = spec.life;
+  const life = spec.life * lifeMul;
   const v0 = (reach * spec.drag) / (1 - Math.exp(-spec.drag * life));
   for (let n = 0; n < count; n++) {
     const a = base + (ps.rand() - 0.5) * 0.36;
@@ -287,6 +288,7 @@ export function emitFire(
     // Spread births along this frame's travel so the stream is continuous, not a string of beads.
     const f = ps.rand() * dt;
     const i = ps.spawn(spec, mx + vx * f + (ps.rand() - 0.5) * j, my + vy * f + (ps.rand() - 0.5) * j, vx, vy);
+    ps.life[i] *= lifeMul;
     ps.age[i] = f;
     ps.size0[i] *= width;
     ps.size1[i] *= width;
@@ -296,7 +298,7 @@ export function emitFire(
   // A hot white core near the mouth.
   const cn = count > 2 ? Math.floor(count / 3) : count > 0 && ps.rand() < 0.4 ? 1 : 0;
   const core = fx.fireCore;
-  const cv = (reach * 0.55 * core.drag) / (1 - Math.exp(-core.drag * core.life));
+  const cv = (reach * 0.55 * core.drag) / (1 - Math.exp(-core.drag * core.life * lifeMul));
   for (let n = 0; n < cn; n++) {
     const a = base + (ps.rand() - 0.5) * 0.12;
     const sp = cv * (0.85 + 0.3 * ps.rand());
@@ -304,6 +306,7 @@ export function emitFire(
     const vy = Math.sin(a) * sp;
     const f = ps.rand() * dt;
     const i = ps.spawn(core, mx + vx * f, my + vy * f, vx, vy);
+    ps.life[i] *= lifeMul;
     ps.age[i] = f;
     ps.size0[i] *= width;
     ps.size1[i] *= width;
