@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dragon lab</title>
+    <style>
+      html, body { margin: 0; background: #120c10; color: #e8d8c0; font: 12px ui-monospace, Menlo, monospace; overflow: hidden; }
+      #grid { display: grid; gap: 2px; }
+      .cell { position: relative; }
+      .cell canvas { display: block; }
+      .cell .tag { position: absolute; left: 8px; top: 6px; pointer-events: none; text-shadow: 0 1px 2px #000; }
+    </style>
+  </head>
+  <body>
+    <div id="grid"></div>
+    <script type="module" src="./lab.ts"></script>
+  </body>
+</html>

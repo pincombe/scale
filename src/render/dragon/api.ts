@@ -19,4 +19,15 @@ export interface DragonView {
    * the current size, where the dragon will stand once it has entered. Ignores transient motion.
    */
   bounds(out: Rect): Rect;
+  /**
+   * Live tail-tip position (world m). During a swipe the tail lashes low along the ground through
+   * the army's front ranks (roughly 50-450 ms into the phase): fling knights as it passes them.
+   * Optional so null objects stay valid; the real dragon always implements it.
+   */
+  tailPoint?(out: Vec2): Vec2;
+  /**
+   * World x of the far (army-side) end of the flame at full extent for the current dragon: only
+   * knights at x >= breathReachX() are in the fire's path. Optional (see tailPoint).
+   */
+  breathReachX?(): number;
 }

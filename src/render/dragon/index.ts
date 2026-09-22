@@ -1,388 +1,846 @@
-// Dragon STUB (WP 0.2). The dragon-rig WP (1.2) replaces this folder with the procedural rig.
+// Dragon layer (slot 1) + DragonView (scene.dragon): the procedural rig brought to life.
 //
-// Contract kept by any replacement: createDragon(scene) returns { layer, view }: a Layer named
-// 'dragon' (slot 1) and a DragonView (./api.ts) that input, fx, crowd and the director use.
-// The dragon's rest-pose front sits at world x = CLASH_X on the ground (y = 0), facing left,
-// body length = state.dragon.size meters.
+//   species.ts   parameter sets (the meadow newt) + per-individual variation from the seed
+//   head.ts      head geometry (skull, jaw, teeth, horns, gills, frill) in head units
+//   rig.ts       spine chain + dynamics, leg IK and stepping, wings, heads; pure math
+//   choreo.ts    phases and idle micro-behaviors -> pose channels
+//   weakspot.ts  which weak spot is live (loose scale / throat / tail base) and where
+//   paint.ts     rim-lit silhouette, eyes, glows, weak spot
+//   effects.ts   fire, smoke, embers, ash, dust
+//   tuning.ts    named tuning constants (hit radii, weak-spot shifting)
+//   lab.html     dev-only species lab (not in the build): /src/render/dragon/lab.html
 //
-// This stub: static Path2D parts (body, head, tail) in body-length units, animated only through
-// transforms (no per-frame allocation); rim light = the silhouette filled once offset toward the
-// light in the rim color, then again in the silhouette color.
+// State is the truth: the individual is rebuilt whenever state.dragon.id changes, the pose is a
+// function of the phase and its progress (phaseT + alpha * TICK_DT), and events only add one-shot
+// reactions (flinches, flashes, particles). The rig works in body lengths (u); world meters are
+// x = CLASH_X + rig.placeX(x_u) * L, y = y_u * L, with L = state.dragon.size (placeX applies the
+// swipe's turn-around mirror and world shift; identity otherwise).
 import type { Scene } from '../../app/scene';
 import type { Layer, View } from '../types';
 import type { DragonView } from './api';
+import type { Palette } from '../palette';
 import type { Rect, Vec2 } from '../../lib/vec';
+import type { DragonPhase } from '../../core';
 import { CLASH_X } from '../world';
 import { TICK_DT } from '../../core/formulas';
-import { clamp01 } from '../../lib/math';
-import { inOutSine, outCubic, pulse, inQuad } from '../../lib/ease';
-import { CURVE_FADE, CURVE_PULSE, particleSpec } from '../particles';
+import { ColorRamp, mixHex } from '../../lib/color';
+import { buildIndividual, speciesOf, type Morph } from './species';
+import { BODY_N, C_AIR, C_TONGUE, DragonRig, type SpineSample } from './rig';
+import { Choreo, type ChoreoEnv } from './choreo';
+import { createPaintState, paintDragon, type PaintRes } from './paint';
+import { buildDragonFx, emitFire, type DragonFx } from './effects';
+import {
+  BODY_HIT_PAD_PX,
+  RIDGE_SPOT_MIN_PX,
+  TORSO_SPOT_MIN_PX,
+  WEAK_DRAW_FRAC,
+  WEAK_DRAW_MIN_PX,
+  WEAK_HIT_MIN_PX,
+  WEAK_HIT_SCALE,
+  WEAK_SHIFT_ON_CRIT,
+} from './tuning';
+import { WEAK_SCALE, WEAK_THROAT, WeakSpot, weakLiveFor, weakModeFor } from './weakspot';
+import { makeCanvas, context2d } from '../atlas';
 
 export interface DragonRender {
   layer: Layer;
   view: DragonView;
+  /**
+   * Override morph fields for every dragon from now on (mutations such as { heads: 3 }, dev
+   * checks); undefined clears. The current dragon is rebuilt on the next frame.
+   */
+  setOverride(over: Partial<Morph> | undefined): void;
 }
 
-// ---- shape, in body-length units; origin = rest-pose front at ground level; facing -x ----
-const BODY = { cx: 0.5, cy: -0.25, rx: 0.27, ry: 0.13 };
-const HEAD_PIVOT = { x: 0.24, y: -0.33 };
-const TAIL_PIVOT = { x: 0.74, y: -0.27 };
-const WEAK = { x: 0.27, y: -0.22, r: 0.05 };
-const MOUTH = { x: -0.22, y: -0.03 }; // relative to the head pivot
+/** The weak spot's cool halo (contrasts with the golden sky and the warm fire). */
+export const WEAK_CYAN = '#6be9ff';
 
-function bodyPath(): Path2D {
-  const p = new Path2D();
-  p.ellipse(BODY.cx, BODY.cy, BODY.rx, BODY.ry, 0, 0, Math.PI * 2);
-  // Neck.
-  p.moveTo(0.3, -0.33);
-  p.quadraticCurveTo(0.25, -0.37, 0.2, -0.38);
-  p.lineTo(0.2, -0.28);
-  p.quadraticCurveTo(0.27, -0.25, 0.33, -0.2);
-  p.closePath();
-  // Legs (front pair, back pair), with splayed feet.
-  const leg = (x: number, lean: number): void => {
-    p.moveTo(x - 0.04, -0.2);
-    p.lineTo(x + 0.04, -0.2);
-    p.lineTo(x + 0.03 + lean, -0.02);
-    p.lineTo(x + 0.07 + lean, 0);
-    p.lineTo(x - 0.06 + lean, 0);
-    p.lineTo(x - 0.03 + lean, -0.03);
-    p.closePath();
-  };
-  leg(0.34, -0.02);
-  leg(0.66, 0.02);
-  // Dorsal spikes.
-  for (let i = 0; i < 7; i++) {
-    const u = 0.3 + i * 0.065;
-    const t = (u - BODY.cx) / BODY.rx;
-    const top = BODY.cy - BODY.ry * Math.sqrt(Math.max(0, 1 - t * t));
-    const h = 0.045 + 0.02 * Math.sin(i * 1.7);
-    p.moveTo(u - 0.028, top + 0.012);
-    p.lineTo(u + 0.012, top - h);
-    p.lineTo(u + 0.03, top + 0.014);
-    p.closePath();
+/** Animation speed by size: newts are quick, 40 m wyrms are ponderous. */
+function tempoFor(size: number): number {
+  const t = Math.pow(Math.max(0.05, size), -0.22);
+  return t < 0.42 ? 0.42 : t > 1.2 ? 1.2 : t;
+}
+
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+function sstep(a: number, b: number, x: number): number {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+}
+
+/** A loose scale: a rounded, slightly pointed plate, white-hot at the center. */
+function paintScale(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = w * 0.36;
+  ctx.beginPath();
+  ctx.moveTo(cx - r * 1.05, cy);
+  ctx.quadraticCurveTo(cx - r * 0.7, cy - r * 0.95, cx + r * 0.2, cy - r * 0.78);
+  ctx.quadraticCurveTo(cx + r * 1.05, cy - r * 0.35, cx + r * 1.2, cy);
+  ctx.quadraticCurveTo(cx + r * 1.05, cy + r * 0.35, cx + r * 0.2, cy + r * 0.78);
+  ctx.quadraticCurveTo(cx - r * 0.7, cy + r * 0.95, cx - r * 1.05, cy);
+  ctx.closePath();
+  const g = ctx.createRadialGradient(cx - r * 0.15, cy - r * 0.1, 0, cx, cy, r * 1.2);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(0.35, '#fffbe8');
+  g.addColorStop(0.7, '#ffe9a6');
+  g.addColorStop(1, '#9ef3ff');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = w * 0.035;
+  ctx.strokeStyle = 'rgba(80,220,255,0.9)';
+  ctx.stroke();
+  // A ridge line down the middle of the scale.
+  ctx.beginPath();
+  ctx.moveTo(cx - r * 0.7, cy);
+  ctx.lineTo(cx + r * 0.95, cy);
+  ctx.lineWidth = w * 0.03;
+  ctx.strokeStyle = 'rgba(255,214,120,0.7)';
+  ctx.stroke();
+}
+
+/** Four-point sparkle (white; tinted later). */
+function paintStar(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const cx = w / 2;
+  const cy = h / 2;
+  const R = w * 0.48;
+  const r = w * 0.11;
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
+    const rr = i % 2 === 0 ? R : r;
+    const x = cx + Math.cos(a) * rr;
+    const y = cy + Math.sin(a) * rr;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
   }
-  // Folded wing.
-  p.moveTo(0.4, -0.33);
-  p.quadraticCurveTo(0.52, -0.56, 0.62, -0.5);
-  p.quadraticCurveTo(0.6, -0.42, 0.68, -0.34);
-  p.quadraticCurveTo(0.55, -0.37, 0.4, -0.33);
-  p.closePath();
-  return p;
-}
-
-function headPath(): Path2D {
-  // Relative to HEAD_PIVOT; the snout points to -x.
-  const p = new Path2D();
-  p.ellipse(-0.12, -0.04, 0.1, 0.066, -0.08, 0, Math.PI * 2);
-  p.moveTo(-0.18, -0.07);
-  p.quadraticCurveTo(-0.24, -0.05, -0.245, -0.02);
-  p.lineTo(-0.15, 0.015);
-  p.closePath();
-  // Horns sweeping back.
-  p.moveTo(-0.1, -0.09);
-  p.quadraticCurveTo(-0.02, -0.15, 0.04, -0.17);
-  p.quadraticCurveTo(-0.02, -0.12, -0.05, -0.07);
-  p.closePath();
-  p.moveTo(-0.06, -0.085);
-  p.quadraticCurveTo(0.02, -0.12, 0.07, -0.12);
-  p.quadraticCurveTo(0.02, -0.09, -0.02, -0.06);
-  p.closePath();
-  return p;
-}
-
-function tailPath(): Path2D {
-  // Relative to TAIL_PIVOT; tapers out to +x and curls up into a spade.
-  const p = new Path2D();
-  p.moveTo(-0.03, -0.07);
-  p.quadraticCurveTo(0.14, -0.05, 0.25, 0.08);
-  p.quadraticCurveTo(0.29, 0.12, 0.33, 0.1);
-  p.lineTo(0.37, 0.06);
-  p.lineTo(0.36, 0.13);
-  p.lineTo(0.31, 0.15);
-  p.quadraticCurveTo(0.2, 0.14, 0.1, 0.07);
-  p.quadraticCurveTo(0.03, 0.03, -0.03, 0.06);
-  p.closePath();
-  return p;
+  ctx.closePath();
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, w * 0.3);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
 }
 
 export function createDragon(scene: Scene): DragonRender {
-  const body = bodyPath();
-  const head = headPath();
-  const tail = tailPath();
+  const rig = new DragonRig();
+  const choreo = new Choreo();
+  const st = createPaintState();
+  const resCache = new Map<Palette, PaintRes>();
+  let fx: DragonFx | null = null;
+  let fxPalette: Palette | null = null;
+  let starId = -1;
+  let scaleCanvas: HTMLCanvasElement | null = null;
 
-  // Pose (recomputed in update, read by draw and the view). Units: world m / radians.
-  const pose = { ox: CLASH_X, oy: 0, L: 0.5, rot: 0, puff: 0, headRot: 0, tailRot: 0, alpha: 1, glow: 1, weakOn: true };
+  // Identity / phase tracking.
   let curId = -1;
-  let flinch = 0;
-  let flinchV = 0;
+  let curSize = 0;
+  let over: Partial<Morph> | undefined;
+  let needSnap = true;
+  let lastPhase: DragonPhase | '' = '';
+  let phaseEvents = 0;
+  let seenEvents = 0;
+  let lastK = 0;
+
+  // Weak spot (which target is live, fades; see weakspot.ts).
+  const weak = new WeakSpot();
+  const weakAng = { a: 0 };
+
+  // Reactions.
+  let hot = 0;
+  let prevAir = 0;
+  let slamDone = false;
+  let lastDissolve = 1;
+  // Swipe shockwave: a dust wave rolling out through the ranks from where the tail lands.
+  let waveT = -1;
+  let waveX0 = 0;
+  let waveX1 = 0;
+  let waveDur = 0.35;
+  let waveAcc = 0;
+  // Swoosh trail behind the lashing tail tip (world m), newest first.
+  const TRAIL = 12;
+  const trailX = new Float64Array(TRAIL);
+  const trailY = new Float64Array(TRAIL);
+  let trailN = 0;
+  let trailA = 0;
   let fireAcc = 0;
-  let emberAcc = 0;
-  let hot = 0; // hit flash 0..1
+  let deathAcc = 0;
+  let showBones = false;
+
+  const env: ChoreoEnv = {
+    phase: 'idle',
+    attack: 'breath',
+    k: 0,
+    t: 0,
+    dt: 0,
+    time: 0,
+    lookX: -1,
+    lookY: -0.2,
+    lookPull: 0.5,
+    enterDist: 4,
+    lunge: 0,
+    aimX: -2,
+    aimY: 0,
+  };
+
   const tmp: Vec2 = { x: 0, y: 0 };
+  const tmp2: Vec2 = { x: 0, y: 0 };
+  const box: Rect = { x: 0, y: 0, w: 0, h: 0 };
+  const sp: SpineSample = { x: 0, y: 0, nx: 0, ny: -1, back: 0, belly: 0 };
+  let perfAcc = 0;
+  let perfN = 0;
+  let perfShow = 0;
 
-  let fireSpec: ReturnType<typeof particleSpec> | null = null;
-  let emberSpec: ReturnType<typeof particleSpec> | null = null;
-  let weakSprite = -1;
-  let eyeSprite = -1;
+  // ---- identity ----
 
-  const ensureSprites = (): void => {
-    if (fireSpec) return;
-    const { atlas, sprites, palette } = scene;
-    const fire = atlas.ramp(sprites.glow, ['#ffffff', '#fff2b0', palette.accent.fire, palette.accent.ember, '#5a1a08'], 8, 0.6);
-    fireSpec = particleSpec({ sprite: fire, ramp: 8, additive: true, life: 0.55, lifeVar: 0.3, speed: 3.2, speedVar: 0.35, spread: 0.22, size: 0.1, sizeEnd: 0.42, sizeVar: 0.35, drag: 1.5, gravity: -0.6, curve: CURVE_FADE, alpha: 0.9 });
-    emberSpec = particleSpec({ sprite: atlas.tint(sprites.ember, palette.accent.ember, 0.5), additive: true, life: 1.3, lifeVar: 0.4, speed: 0.4, speedVar: 0.6, angle: -Math.PI / 2, spread: 0.9, size: 0.035, sizeEnd: 0.01, radius: 0.2, gravity: -0.5, drag: 0.6, curve: CURVE_PULSE });
-    weakSprite = atlas.tint(sprites.glow, palette.accent.weak, 0.8);
-    eyeSprite = atlas.tint(sprites.ember, palette.accent.fire, 0.9);
+  const ensureIndividual = (): void => {
+    const d = scene.game.state.dragon;
+    if (d.id === curId && d.size === curSize) return;
+    curId = d.id;
+    curSize = d.size;
+    const ind = buildIndividual(speciesOf(d.species), d.seed, d.size, over);
+    rig.setup(ind);
+    rig.tempo = tempoFor(d.size);
+    choreo.reset(d.seed);
+    weak.reset();
+    weak.snap(d.phase, d.attack, d.phaseDur > 0 ? d.phaseT / d.phaseDur : 1);
+    hot = 0;
+    slamDone = false;
+    lastDissolve = 1;
+    needSnap = true;
+    lastPhase = '';
+    seenEvents = phaseEvents;
+    for (const r of resCache.values()) r.eye = ind.eye;
+    eyeDirty = true;
+  };
+  let eyeDirty = true;
+
+  const L = (): number => scene.game.state.dragon.size;
+  // World <-> rig units, through the turn-around mirror and world shift (rig.placeX).
+  const toU = (wx: number, wy: number, out: Vec2): Vec2 => {
+    const l = L();
+    out.x = rig.unplaceX((wx - CLASH_X) / l);
+    out.y = wy / l;
+    return out;
+  };
+  const toWorld = (ux: number, uy: number, out: Vec2): Vec2 => {
+    const l = L();
+    out.x = CLASH_X + rig.placeX(ux) * l;
+    out.y = uy * l;
+    return out;
   };
 
-  // Hit reactions: recoil away from the army (+x), brighter rim for a moment.
+  // ---- palette resources ----
+
+  const ensureRes = (p: Palette): PaintRes => {
+    let r = resCache.get(p);
+    const { atlas, sprites } = scene;
+    if (!scaleCanvas) {
+      scaleCanvas = makeCanvas(64, 64);
+      paintScale(context2d(scaleCanvas), 64, 64);
+      starId = atlas.register('dragon.star', 32, 32, paintStar);
+    }
+    if (!r) {
+      const eye = rig.ind ? rig.ind.eye : p.accent.gold;
+      r = {
+        silhouette: p.silhouette,
+        far: mixHex(p.silhouette, p.haze, 0.17),
+        rim: p.rim,
+        rimHot: new ColorRamp([p.rim, p.accent.glow, '#ffffff'], 24),
+        rimBurn: new ColorRamp([p.rim, p.accent.fire, p.accent.ember], 24),
+        glowFire: atlas.canvas(atlas.tint(sprites.glow, p.accent.fire, 0.35)),
+        glowHot: atlas.canvas(atlas.tint(sprites.glow, '#fff0c0', 0.8)),
+        glowCyan: atlas.canvas(atlas.tint(sprites.glow, WEAK_CYAN, 0.25)),
+        glowWhite: atlas.canvas(sprites.glow),
+        glowEye: atlas.canvas(atlas.tint(sprites.glow, eye, 0.5)),
+        glowDark: atlas.canvas(atlas.tint(sprites.glow, p.silhouette)),
+        glowEmber: atlas.canvas(atlas.tint(sprites.glow, p.accent.ember, 0.5)),
+        scale: scaleCanvas,
+        star: atlas.canvas(atlas.tint(starId, p.accent.gold, 0.7)),
+        eye,
+      };
+      resCache.set(p, r);
+    }
+    if (eyeDirty && rig.ind) {
+      r.eye = rig.ind.eye;
+      r.glowEye = atlas.canvas(atlas.tint(sprites.glow, rig.ind.eye, 0.5));
+      eyeDirty = false;
+    }
+    if (!fx || fxPalette !== p) {
+      fx = buildDragonFx(atlas, sprites, p, atlas.tint(starId, p.accent.gold, 0.6));
+      fxPalette = p;
+    }
+    return r;
+  };
+
+  // ---- fire geometry (shared by the emitter and breathReachX) ----
+
+  /** Where the flame lands (world x): the ground in front of the army, further out for bigger dragons. */
+  const fireAimX = (l: number): number => scene.crowd.frontX() - Math.max(0.8, l * 0.3);
+  /** Flame thickness (m) for a stream `dist` long; never thinner than 9 CSS px. */
+  const fireWidth = (dist: number, l: number, pxM: number): number =>
+    Math.max(Math.min(0.12, l * 0.18), dist * 0.12, l * 0.05, 9 * pxM);
+
+  // ---- weak spot ----
+
+  /** Loose-scale candidates allowed at this on-screen size (see tuning.ts). */
+  const weakCandidates = (): number => {
+    const n = rig.ind.weakSpots.length;
+    const ppu = scene.camera.zoomEff * L();
+    return Math.min(n, ppu >= RIDGE_SPOT_MIN_PX ? 4 : ppu >= TORSO_SPOT_MIN_PX ? 3 : 2);
+  };
+
+  const weakPos = (out: Vec2): Vec2 => weak.pos(rig, sp, out, weakAng);
+
+  /**
+   * The weak spot clicks can hit right now, straight from state (not from last frame's fades):
+   * during a breath windup only the throat, during a swipe windup only the tail base.
+   */
+  const liveWeak = (out: Vec2): Vec2 | null => {
+    const d = scene.game.state.dragon;
+    const k = d.phaseDur > 0 ? d.phaseT / d.phaseDur : 1;
+    if (!weakLiveFor(d.phase, k)) return null;
+    const idx = weak.idx < weakCandidates() ? weak.idx : 0;
+    return weak.pos(rig, sp, out, weakAng, weakModeFor(d.phase, d.attack), idx);
+  };
+
+  const weakHitRadiusU = (): number => {
+    const ppu = Math.max(1e-6, scene.camera.zoomEff * L());
+    const drawn = Math.max(WEAK_DRAW_FRAC, WEAK_DRAW_MIN_PX / ppu);
+    return Math.max(drawn * WEAK_HIT_SCALE, WEAK_HIT_MIN_PX / ppu);
+  };
+
+  // ---- events ----
+
+  scene.game.on('dragonPhase', (e) => {
+    if (e.id === scene.game.state.dragon.id) phaseEvents++;
+  });
+
   scene.game.on('strike', (e) => {
-    flinchV += e.crit ? 0.9 : 0.45;
-    hot = Math.max(hot, e.crit ? 1 : 0.55);
+    ensureIndividual();
+    const crit = e.crit;
+    hot = Math.max(hot, crit ? 1 : 0.62);
+    const p = toU(e.x, e.y, tmp);
+    // Recoil away from the army and away from the blow.
+    rig.impulse(p.x, p.y, crit ? 2.4 : 1.25, crit ? -0.5 : -0.25, 0.32);
+    rig.kickHead(0, crit ? -3.2 : -1.3);
+    choreo.hit(crit);
+    if (crit && fx && weak.live) {
+      weakPos(tmp2);
+      const w = toWorld(tmp2.x, tmp2.y, tmp2);
+      const s = 1 / scene.camera.zoomEff;
+      scene.particles.world.burst(fx.spark, w.x, w.y, 14, -Math.PI / 2, 90 * s);
+      if (!e.stagger && Math.random() < WEAK_SHIFT_ON_CRIT) weak.shiftSoon(0.45);
+    }
+    if (e.stagger && fx) {
+      rig.headToU(0, -0.3, -0.6, tmp2);
+      const w = toWorld(tmp2.x, tmp2.y, tmp2);
+      const s = 1 / scene.camera.zoomEff;
+      scene.particles.world.burst(fx.star, w.x, w.y, 7, -Math.PI / 2, 60 * s);
+    }
   });
-  scene.game.on('armyHit', () => {
-    flinchV += 0.2;
-    hot = Math.max(hot, 0.3);
+
+  scene.game.on('armyHit', (e) => {
+    ensureIndividual();
+    const f = Math.min(1, e.hits / 10);
+    hot = Math.max(hot, 0.18 + 0.12 * f);
+    rig.spineAtBody(0.1 + Math.random() * 0.3, sp);
+    rig.impulse(sp.x, sp.y, 0.35 + 0.35 * f, -0.1, 0.3);
   });
 
-  /** World -> body units (inverse pose). */
-  const toLocal = (wx: number, wy: number, out: Vec2): Vec2 => {
-    const L = pose.L;
-    let u = (wx - (pose.ox + flinch * L)) / L;
-    let v = (wy - pose.oy) / L;
-    // Undo the rotation about the body center.
-    const du = u - BODY.cx;
-    const dv = v - BODY.cy;
-    const c = Math.cos(-pose.rot);
-    const s = Math.sin(-pose.rot);
-    u = BODY.cx + du * c - dv * s;
-    v = BODY.cy + du * s + dv * c;
-    out.x = u;
-    out.y = v;
-    return out;
+  scene.game.on('resync', () => {
+    curId = -1;
+    ensureIndividual();
+    needSnap = true;
+    hot = 0;
+  });
+
+  // ---- phase starts (one-shot setup) ----
+
+  const onPhaseStart = (phase: DragonPhase): void => {
+    const l = L();
+    const cam = scene.camera;
+    if (phase === 'enter') {
+      // Start past the right edge of both the current and the upcoming framing.
+      const dir = scene.director;
+      const half = cam.stageW * 0.5;
+      const edgeNow = cam.x + half / cam.zoomEff;
+      const edgeNext = dir.target.x + half / Math.max(1e-6, dir.target.zoom);
+      const edge = Math.max(edgeNow, edgeNext);
+      env.enterDist = Math.max(1.4, (edge - CLASH_X) / l + 0.12);
+    }
+    if (phase === 'swipe' || phase === 'windup') {
+      // Lunge so the lashing tail (turned around: hip mirrored about the middle, tail out front)
+      // reaches into the army's front ranks.
+      const front = (scene.crowd.frontX() - 0.2 - CLASH_X) / l;
+      const hipMirrored = 2 * rig.midX - rig.x[rig.iH]!;
+      const tipReach = hipMirrored - rig.tailLen * 0.95;
+      env.lunge = Math.max(0, Math.min(1.4, tipReach - front));
+      slamDone = false;
+    }
+    if (phase === 'dying') {
+      lastDissolve = 1;
+      deathAcc = 0;
+    }
   };
 
-  /** Body units -> world (forward pose). */
-  const toWorld = (u: number, v: number, out: Vec2): Vec2 => {
-    const L = pose.L;
-    const du = u - BODY.cx;
-    const dv = v - BODY.cy;
-    const c = Math.cos(pose.rot);
-    const s = Math.sin(pose.rot);
-    out.x = pose.ox + flinch * L + (BODY.cx + du * c - dv * s) * L;
-    out.y = pose.oy + (BODY.cy + du * s + dv * c) * L;
-    return out;
-  };
-
-  const headLocal = (hx: number, hy: number, out: Vec2): Vec2 => {
-    const c = Math.cos(pose.headRot);
-    const s = Math.sin(pose.headRot);
-    out.x = HEAD_PIVOT.x + hx * c - hy * s;
-    out.y = HEAD_PIVOT.y + hx * s + hy * c;
-    return out;
-  };
+  // ---- the view ----
 
   const view: DragonView = {
     hitTest(wx, wy) {
-      const p = toLocal(wx, wy, tmp);
-      const pxPerUnit = scene.camera.zoomEff * pose.L;
-      if (pose.weakOn) {
-        const r = Math.max(WEAK.r * 1.5, 16 / pxPerUnit);
-        const dx = p.x - WEAK.x;
-        const dy = p.y - WEAK.y;
+      ensureIndividual();
+      const d = scene.game.state.dragon;
+      if (d.phase === 'dying' && rig.dissolve < 0.85) return null;
+      const p = toU(wx, wy, tmp);
+      const w = liveWeak(tmp2);
+      if (w) {
+        const r = weakHitRadiusU();
+        const dx = p.x - w.x;
+        const dy = p.y - w.y;
         if (dx * dx + dy * dy <= r * r) return 'weak';
       }
-      const pad = 10 / pxPerUnit;
-      const ex = (p.x - BODY.cx) / (BODY.rx * (1 + pose.puff) + pad);
-      const ey = (p.y - BODY.cy) / (BODY.ry * (1 + pose.puff) + pad);
-      if (ex * ex + ey * ey <= 1) return 'body';
-      // Head, neck, tail and legs: generous boxes.
-      if (p.x >= -0.05 - pad && p.x <= 0.3 && p.y >= -0.5 - pad && p.y <= -0.25 + pad) return 'body';
-      if (p.x >= 0.7 && p.x <= 1.12 + pad && p.y >= -0.36 - pad && p.y <= -0.1 + pad) return 'body';
-      if (p.x >= 0.25 && p.x <= 0.75 && p.y >= -0.2 && p.y <= pad) return 'body';
-      return null;
+      const pad = BODY_HIT_PAD_PX / Math.max(1e-6, scene.camera.zoomEff * L());
+      return rig.hitBody(p.x, p.y, pad) ? 'body' : null;
     },
     impactPoint(out) {
-      // Uniform point in an inner ellipse of the body.
-      const a = Math.random() * Math.PI * 2;
-      const r = Math.sqrt(Math.random()) * 0.8;
-      return toWorld(BODY.cx + Math.cos(a) * r * BODY.rx, BODY.cy + Math.sin(a) * r * BODY.ry, out);
+      ensureIndividual();
+      const r = Math.random();
+      if (r < 0.2 && rig.legOn[0]) {
+        // Front leg, where swords reach.
+        const t = 0.2 + Math.random() * 0.7;
+        const x = rig.kneeX[0]! + (rig.ankX[0]! - rig.kneeX[0]!) * t;
+        const y = rig.kneeY[0]! + (rig.ankY[0]! - rig.kneeY[0]!) * t;
+        return toWorld(x, y, out);
+      }
+      let at: number;
+      let side: number;
+      if (r < 0.65) {
+        at = -0.15 + Math.random() * 0.55; // chest and front body
+        side = -0.75 + Math.random() * 1.3;
+      } else if (r < 0.8) {
+        rig.spineAt(rig.iS * (0.2 + Math.random() * 0.7), sp); // neck, lower half
+        side = -0.7 + Math.random() * 0.8;
+        const s2 = side >= 0 ? side * sp.back : side * sp.belly;
+        return toWorld(sp.x + sp.nx * s2, sp.y + sp.ny * s2, out);
+      } else {
+        at = 0.3 + Math.random() * 0.9;
+        side = -0.6 + Math.random() * 1.2;
+      }
+      rig.spineAtBody(at, sp);
+      const s = side >= 0 ? side * sp.back : side * sp.belly;
+      return toWorld(sp.x + sp.nx * s, sp.y + sp.ny * s, out);
     },
     weakSpot(out) {
-      if (!pose.weakOn) return null;
-      return toWorld(WEAK.x, WEAK.y, out);
+      ensureIndividual();
+      const w = liveWeak(tmp2);
+      return w ? toWorld(w.x, w.y, out) : null;
     },
     headPoint(out) {
-      const h = headLocal(MOUTH.x, MOUTH.y, out);
-      return toWorld(h.x, h.y, out);
+      ensureIndividual();
+      rig.mouth(0, tmp2);
+      return toWorld(tmp2.x, tmp2.y, out);
     },
-    bounds(out: Rect) {
-      const L = scene.game.state.dragon.size;
-      out.x = CLASH_X - 0.02 * L;
-      out.y = -0.6 * L;
-      out.w = 1.14 * L;
-      out.h = 0.6 * L;
+    tailPoint(out) {
+      ensureIndividual();
+      return toWorld(rig.x[rig.n - 1]!, rig.y[rig.n - 1]!, out);
+    },
+    breathReachX() {
+      ensureIndividual();
+      const l = L();
+      const ax = fireAimX(l);
+      rig.mouth(0, tmp2);
+      toWorld(tmp2.x, tmp2.y, tmp2);
+      const dist = Math.hypot(ax - tmp2.x, tmp2.y);
+      const w = fireWidth(dist, l, 1 / Math.max(1e-6, scene.camera.zoomEff));
+      // Particles overshoot the aim by ~12% and grow to ~3.6 widths across; the soft edge sits
+      // about 2.5 widths past the overshoot.
+      return tmp2.x + (ax - tmp2.x) * 1.12 - w * 2.5;
+    },
+    bounds(out) {
+      ensureIndividual();
+      const l = L();
+      out.x = CLASH_X + rig.restMinX * l;
+      out.y = rig.restMinY * l;
+      out.w = (rig.restMaxX - rig.restMinX) * l;
+      out.h = (rig.restMaxY - rig.restMinY) * l;
       return out;
     },
   };
 
-  const layer: Layer = {
-    name: 'dragon',
-    visible: true,
-    update(v: View) {
-      ensureSprites();
-      const d = v.state.dragon;
-      if (d.id !== curId) {
-        curId = d.id;
-        flinch = flinchV = 0;
-        hot = 0;
-      }
-      const L = d.size;
-      const t = Math.min(d.phaseT + v.alpha * TICK_DT, d.phaseDur);
-      const k = d.phaseDur > 0 ? clamp01(t / d.phaseDur) : 1;
-      const time = v.time;
-      pose.L = L;
-      pose.ox = CLASH_X;
-      pose.oy = 0;
-      pose.rot = 0;
-      pose.puff = 0.02 * Math.sin(time * 2.4);
-      pose.headRot = 0.05 * Math.sin(time * 1.3);
-      pose.tailRot = 0.12 * Math.sin(time * 1.9);
-      pose.alpha = 1;
-      pose.glow = 0.75 + 0.25 * Math.sin(time * 5);
-      pose.weakOn = true;
+  // ---- per frame ----
 
-      switch (d.phase) {
-        case 'enter':
-          pose.ox += L * 1.8 * (1 - outCubic(k));
-          pose.oy = -Math.abs(Math.sin(time * 16)) * 0.03 * L * (1 - k);
-          pose.weakOn = k > 0.6;
-          break;
-        case 'windup': {
-          const w = inOutSine(k);
-          pose.puff += 0.14 * w;
-          pose.headRot += (d.attack === 'breath' ? 0.35 : 0.1) * outCubic(k);
-          pose.tailRot += d.attack === 'swipe' ? -0.6 * w : 0;
-          pose.glow = 1 + 1.8 * w * (0.8 + 0.2 * Math.sin(time * 30));
-          break;
+  const update = (v: View): void => {
+    const t0 = performance.now();
+    ensureIndividual();
+    ensureRes(v.palette);
+    const d = v.state.dragon;
+    const l = d.size;
+    const dt = v.dt;
+    const cam = v.camera;
+    rig.pxPerU = cam.zoomEff * l;
+    const t = Math.min(d.phaseT + v.alpha * TICK_DT, d.phaseDur);
+    const k = d.phaseDur > 0 ? clamp01(t / d.phaseDur) : 1;
+
+    if (d.phase !== lastPhase || phaseEvents !== seenEvents) {
+      seenEvents = phaseEvents;
+      lastPhase = d.phase;
+      onPhaseStart(d.phase);
+      lastK = 0;
+    }
+
+    env.phase = d.phase;
+    env.attack = d.attack;
+    env.k = k;
+    env.t = t;
+    env.dt = dt;
+    env.time = v.time;
+
+    // What to look at: the cursor when it's over the stage, else the hero.
+    const ptr = scene.input.pointer;
+    if (ptr.x >= 0) {
+      cam.screenToWorld(ptr.x, ptr.y, tmp);
+      toU(tmp.x, tmp.y, tmp);
+      env.lookPull = 1;
+    } else {
+      scene.crowd.heroPoint(tmp);
+      toU(tmp.x, tmp.y, tmp);
+      env.lookPull = 0.55;
+    }
+    env.lookX = tmp.x;
+    env.lookY = tmp.y;
+    st.lookX = tmp.x;
+    st.lookY = tmp.y;
+
+    // Fire aim: the ground in front of the army, further out for bigger dragons (a newt's flame
+    // licks the front rank; a wyrm's torrent pours down across the field).
+    const aimW = fireAimX(l);
+    toU(aimW, 0, tmp);
+    env.aimX = tmp.x;
+    env.aimY = 0;
+
+    choreo.apply(rig, env);
+    if (needSnap) {
+      rig.ch.set(rig.target);
+      rig.solveTargets();
+      rig.snap();
+      needSnap = false;
+      prevAir = rig.ch[C_AIR]!;
+    }
+    rig.update(dt);
+    choreo.post(rig, env);
+
+    // ---- reactions & effects ----
+    hot = Math.max(0, hot - v.realDt * 9);
+    const world = scene.particles.world;
+    const f = fx!;
+    const zoom = cam.zoomEff;
+    const px = 1 / zoom; // meters per CSS px
+
+    // Weak spot: the loose scale, or the throat / tail base during windups (weakspot.ts).
+    const prevIdx = weak.idx;
+    const prevMode = weak.mode;
+    weak.update(dt, d.phase, d.attack, k, weakCandidates());
+    if (weak.mode === WEAK_SCALE && prevMode === WEAK_SCALE && weak.idx !== prevIdx && weak.vis > 0.3) {
+      // The scale shook loose and moved: a little cyan burst where it was.
+      weak.pos(rig, sp, tmp2, weakAng, WEAK_SCALE, prevIdx);
+      toWorld(tmp2.x, tmp2.y, tmp2);
+      world.burst(f.spark, tmp2.x, tmp2.y, 8, -Math.PI / 2, 60 * px);
+    }
+    const baseR = Math.max(WEAK_DRAW_FRAC, WEAK_DRAW_MIN_PX / Math.max(1e-6, rig.pxPerU));
+    weakPos(tmp2);
+    st.weakOn = weak.vis * sstep(0, 1, weak.fadeIn);
+    st.weakX = tmp2.x;
+    st.weakY = tmp2.y;
+    st.weakA = weakAng.a;
+    st.weakR = baseR * (weak.mode === WEAK_THROAT ? 1.15 : 1);
+    if (weak.prevFade > 0.01) {
+      weak.pos(rig, sp, tmp2, weakAng, weak.prevMode, weak.prevIdx);
+      st.weak2On = weak.vis * weak.prevFade;
+      st.weak2X = tmp2.x;
+      st.weak2Y = tmp2.y;
+      st.weak2A = weakAng.a;
+    } else st.weak2On = 0;
+
+    // Hover.
+    let hv = 0;
+    let hb = 0;
+    if (ptr.x >= 0) {
+      cam.screenToWorld(ptr.x, ptr.y, tmp);
+      const h = view.hitTest(tmp.x, tmp.y);
+      hv = h === 'weak' ? 1 : 0;
+      hb = h === 'body' ? 1 : 0;
+    }
+    st.hover += (hv - st.hover) * (1 - Math.exp(-14 * v.realDt));
+    st.hoverBody += (hb - st.hoverBody) * (1 - Math.exp(-10 * v.realDt));
+
+    // Nostril puffs (dark and ember-flecked before a breath).
+    if (choreo.puff && rig.dissolve > 0.5) {
+      const hs = rig.head;
+      rig.headToU(0, hs.nostrilX, hs.nostrilY, tmp2);
+      toWorld(tmp2.x, tmp2.y, tmp2);
+      const s = Math.max(l * rig.headLen * 0.35, 5 * px);
+      const dark = d.phase === 'windup';
+      world.burst(dark ? f.puffDark : f.puff, tmp2.x, tmp2.y, dark ? 3 : 2, -Math.PI / 2 - 0.6, s);
+      if (dark) world.burst(f.ember, tmp2.x, tmp2.y, 2, -Math.PI / 2, s * 0.8);
+    }
+
+    // Fire breath.
+    const fireOn = d.phase === 'breath' ? sstep(0.04, 0.12, k) * (1 - sstep(0.72, 0.92, k)) : 0;
+    st.fire += (fireOn - st.fire) * (1 - Math.exp(-10 * dt));
+    if (fireOn > 0.01 && dt > 0) {
+      rig.mouth(0, tmp2);
+      toWorld(tmp2.x, tmp2.y, tmp2);
+      const mx = tmp2.x;
+      const my = tmp2.y;
+      const ax = aimW;
+      const ay = 0;
+      const dist = Math.hypot(ax - mx, ay - my);
+      const width = fireWidth(dist, l, px);
+      fireAcc += dt * 230 * fireOn;
+      const n = Math.floor(fireAcc);
+      fireAcc -= n;
+      if (n > 0) emitFire(world, f, mx, my, ax, ay, n, width, 0.6 + 0.4 * fireOn, dt);
+      // Smoke billows where it lands.
+      if (Math.random() < dt * 14 * fireOn) world.burst(f.smoke, ax + (Math.random() - 0.3) * width * 3, -width * 0.5, 1, -Math.PI / 2, width);
+      st.fireX = (ax - CLASH_X) / l;
+      st.fireY = 0;
+      st.fireR = (width * 5) / l;
+    }
+    // Smoke curling from the mouth after the breath.
+    if (d.phase === 'breath' && k > 0.8 && Math.random() < dt * 10) {
+      rig.mouth(0, tmp2);
+      toWorld(tmp2.x, tmp2.y, tmp2);
+      world.burst(f.puffDark, tmp2.x, tmp2.y, 1, -Math.PI / 2 - 0.4, Math.max(l * rig.headLen * 0.4, 6 * px));
+    }
+
+    // Landing dust (the flutter-in touchdown and the pounce).
+    const air = rig.ch[C_AIR]!;
+    if (prevAir > 0.5 && air < 0.5) dustAtFeet(1);
+    prevAir = air;
+
+    // Swipe: the tail slaps down in front mid-flip (or on landing at the latest), and a dust
+    // shockwave rolls out through the front ranks, near to far, as the crowd goes flying.
+    if (d.phase === 'swipe' && !slamDone && k > 0.1) {
+      const tip = rig.n - 1;
+      const mid = rig.iS + (BODY_N >> 1);
+      const tipX = rig.placeX(rig.x[tip]!);
+      const down = rig.y[tip]! > -0.06 && tipX < rig.placeX(rig.x[mid]!);
+      if (down || k > 0.3) {
+        slamDone = true;
+        toWorld(rig.x[tip]!, 0, tmp2);
+        const s = Math.max(l * 0.07, 9 * px);
+        world.burst(f.dust, tmp2.x, 0, 16, -Math.PI / 2, s * 1.2);
+        world.burst(f.clod, tmp2.x, -s * 0.2, 10, f.clod.angle, s * 0.6);
+        cam.addTrauma(0.14 + 0.3 * Math.min(1, l / 25));
+        // A gust carries the impact a little past the tail tip into the ranks.
+        waveX0 = tmp2.x;
+        waveX1 = tmp2.x - Math.max(0.8, 0.35 * l);
+        waveDur = 0.34;
+        waveT = 0;
+        waveAcc = 0;
+      }
+    }
+    if (d.phase !== 'swipe') slamDone = false;
+    // Record the tail tip while it lashes (world space, so the trail stays where the air was cut).
+    const lashing = d.phase === 'swipe' && k > 0.03 && k < 0.5;
+    trailA += ((lashing ? 1 : 0) - trailA) * (1 - Math.exp(-(lashing ? 30 : 8) * dt));
+    if (dt > 0) {
+      if (trailA > 0.01) {
+        for (let q = TRAIL - 1; q > 0; q--) {
+          trailX[q] = trailX[q - 1]!;
+          trailY[q] = trailY[q - 1]!;
         }
-        case 'breath':
-          pose.puff += 0.14 * (1 - k);
-          pose.headRot -= 0.18 * pulse(Math.min(1, k * 1.3));
-          pose.glow = 1.3;
-          break;
-        case 'swipe':
-          pose.rot = -0.12 * pulse(k);
-          pose.tailRot += 1.1 * pulse(k) - 0.6 * (1 - k) * (1 - k);
-          break;
-        case 'stagger':
-          pose.rot = 0.09 * Math.sin(t * 17) * (1 - k);
-          pose.headRot -= 0.25 * (1 - k);
-          pose.glow = 0.5;
-          break;
-        case 'dying':
-          pose.rot = 0.45 * outCubic(k);
-          pose.oy = 0.22 * L * inQuad(k);
-          pose.headRot -= 0.5 * outCubic(k);
-          pose.alpha = 1 - inQuad(clamp01((k - 0.35) / 0.65));
-          pose.weakOn = false;
-          break;
-        default:
-          break;
+        toWorld(rig.x[rig.n - 1]!, rig.y[rig.n - 1]!, tmp2);
+        trailX[0] = tmp2.x;
+        trailY[0] = tmp2.y;
+        if (trailN < TRAIL) trailN++;
+      } else trailN = 0;
+    }
+    if (waveT >= 0 && dt > 0) {
+      waveT += dt;
+      const u = Math.min(1, waveT / waveDur);
+      const e = 1 - (1 - u) * (1 - u);
+      const wx = waveX0 + (waveX1 - waveX0) * e;
+      waveAcc += dt * 90;
+      const n = Math.floor(waveAcc);
+      waveAcc -= n;
+      const s = Math.max(l * 0.06, 9 * px) * (1 - 0.35 * u);
+      for (let q = 0; q < n; q++) {
+        const jx = wx + (Math.random() - 0.5) * s * 2;
+        world.burst(f.dust, jx, 0, 1, -Math.PI / 2 - 0.5, s * 1.3);
+        if (q % 2 === 0) world.burst(f.streak, jx, -Math.random() * s * 1.2, 1, Math.PI, s * 0.8);
+        if (q % 3 === 0) world.burst(f.clod, jx, 0, 1, f.clod.angle, s * 0.45);
       }
+      if (u >= 1) waveT = -1;
+    }
+    lastK = k;
 
-      // Flinch spring (omega 11/s, zeta 0.7), in body lengths.
-      const dt = v.dt;
-      if (dt > 0) {
-        flinchV += (-121 * flinch - 15.4 * flinchV) * dt;
-        flinch += flinchV * dt;
-        hot = Math.max(0, hot - dt * 5);
+    // Heavy footsteps for big dragons.
+    if (l >= 5) {
+      for (let q = 0; q < 4; q++) {
+        if (!rig.landed[q]) continue;
+        toWorld(rig.footX[q]!, 0, tmp2);
+        world.burst(f.dust, tmp2.x, 0, 4, -Math.PI / 2, Math.max(l * 0.03, 6 * px));
+        cam.addTrauma(0.05 * Math.min(1, l / 30));
       }
+    }
 
-      // Fire from the mouth during breath; embers rising off the corpse while dying.
-      const world = scene.particles.world;
-      if (d.phase === 'breath' && dt > 0 && fireSpec) {
-        fireAcc += dt * 90;
-        const n = Math.floor(fireAcc);
-        fireAcc -= n;
-        if (n > 0) {
-          const m = view.headPoint(tmp);
-          world.burst(fireSpec, m.x, m.y, n, Math.PI + 0.25, L);
+    // Dying: the burn front throws embers and ash; the rim catches fire.
+    st.burn = d.phase === 'dying' ? sstep(0.15, 0.5, k) : 0;
+    if (d.phase === 'dying' && dt > 0) {
+      const front = rig.dissolve;
+      if (front < 0.999) {
+        const cut = rig.indexOfS(front);
+        rig.spineAt(cut, sp);
+        const w = sp.back + sp.belly;
+        deathAcc += dt * (90 + 240 * w);
+        const n = Math.min(12, Math.floor(deathAcc));
+        deathAcc -= n;
+        for (let q = 0; q < n; q++) {
+          const side = (Math.random() * 2 - 1) * 0.9;
+          const o = side >= 0 ? side * sp.back : side * sp.belly;
+          toWorld(sp.x + sp.nx * o, sp.y + sp.ny * o, tmp2);
+          const s = Math.max(l * 0.12, 8 * px);
+          world.burst(q % 3 === 0 ? f.ash : f.ember, tmp2.x, tmp2.y, 1, -Math.PI / 2, s);
+        }
+        // Limbs flare as the burn passes them.
+        for (let q = 0; q < 4; q++) {
+          if (!rig.legOn[q]) continue;
+          const s = rig.s[Math.round(rig.iS + rig.legAt[q]! * BODY_N)]!;
+          if (s <= lastDissolve && s > front) {
+            toWorld(rig.kneeX[q]!, rig.kneeY[q]!, tmp2);
+            world.burst(f.ember, tmp2.x, tmp2.y, 10, -Math.PI / 2, Math.max(l * 0.1, 8 * px));
+          }
+        }
+        if (lastDissolve > 0.02 && front <= 0.02) {
+          // The head goes last, in a puff.
+          rig.mouth(0, tmp2);
+          toWorld(tmp2.x, tmp2.y, tmp2);
+          world.burst(f.ember, tmp2.x, tmp2.y, 18, -Math.PI / 2, Math.max(l * 0.14, 10 * px));
+          world.burst(f.ash, tmp2.x, tmp2.y, 8, -Math.PI / 2, Math.max(l * 0.12, 8 * px));
         }
       }
-      if (d.phase === 'dying' && dt > 0 && emberSpec) {
-        emberAcc += dt * 45 * (1 - k);
-        const n = Math.floor(emberAcc);
-        emberAcc -= n;
-        if (n > 0) {
-          view.impactPoint(tmp);
-          world.burst(emberSpec, tmp.x, tmp.y, n, -Math.PI / 2, L);
-        }
-      }
-    },
-    draw(ctx: CanvasRenderingContext2D, v: View) {
-      const cam = v.camera;
-      const p = v.palette;
-      const L = pose.L;
-      if (pose.alpha <= 0.01) return;
-      ctx.globalAlpha = pose.alpha;
-      cam.apply(ctx);
-      ctx.translate(pose.ox + flinch * L, pose.oy);
-      ctx.scale(L, L);
-      // Rotate about the body center.
-      ctx.translate(BODY.cx, BODY.cy);
-      ctx.rotate(pose.rot);
-      ctx.translate(-BODY.cx, -BODY.cy);
+      lastDissolve = front;
+    }
+    if (d.phase !== 'dying') rig.dissolve = 1;
+    st.alpha = d.phase === 'dying' ? 1 - sstep(0.985, 1, k) : 1;
 
-      // Rim offset: light direction in body units (screen px / px-per-unit).
-      const ppu = cam.zoomEff * L;
-      const rimPx = p.rimWidth * (1 + hot * 1.5);
-      const rx = (p.light.x * rimPx) / ppu;
-      const ry = (p.light.y * rimPx) / ppu;
+    st.hot = hot;
+    st.tongue = rig.ch[C_TONGUE]!;
+    st.time = v.time;
+    st.L = l;
+    st.originX = CLASH_X;
 
-      for (let pass = 0; pass < 2; pass++) {
-        const ox = pass === 0 ? rx : 0;
-        const oy = pass === 0 ? ry : 0;
-        ctx.fillStyle = pass === 0 ? p.rim : p.silhouette;
-        // Tail.
-        ctx.save();
-        ctx.translate(TAIL_PIVOT.x + ox, TAIL_PIVOT.y + oy);
-        ctx.rotate(pose.tailRot);
-        ctx.fill(tail);
-        ctx.restore();
-        // Body (puffs about its center).
-        ctx.save();
-        ctx.translate(BODY.cx + ox, BODY.cy + oy);
-        ctx.scale(1 + pose.puff, 1 + pose.puff * 1.3);
-        ctx.translate(-BODY.cx, -BODY.cy);
-        ctx.fill(body);
-        ctx.restore();
-        // Head.
-        ctx.save();
-        ctx.translate(HEAD_PIVOT.x + ox, HEAD_PIVOT.y + oy);
-        ctx.rotate(pose.headRot);
-        ctx.fill(head);
-        if (pass === 1) {
-          // Eye.
-          ctx.globalCompositeOperation = 'lighter';
-          const es = Math.max(0.035, 7 / ppu);
-          ctx.drawImage(scene.atlas.canvases[eyeSprite]!, -0.13 - es / 2, -0.07 - es / 2, es, es);
-          ctx.globalCompositeOperation = 'source-over';
-        }
-        ctx.restore();
-      }
-
-      // Weak spot: a pulsing glow (never smaller than ~22 px so it stays clickable-looking).
-      if (pose.weakOn) {
-        ctx.globalCompositeOperation = 'lighter';
-        const s = Math.max(WEAK.r * 3.2, 24 / ppu) * pose.glow;
-        ctx.globalAlpha = pose.alpha * Math.min(1, 0.55 + 0.25 * pose.glow);
-        ctx.drawImage(scene.atlas.canvases[weakSprite]!, WEAK.x - s / 2, WEAK.y - s / 2, s, s);
-        ctx.globalCompositeOperation = 'source-over';
-      }
-    },
+    const t1 = performance.now();
+    perfAcc += t1 - t0;
   };
 
-  return { layer, view };
+  const dustAtFeet = (scale: number): void => {
+    if (!fx) return;
+    const l = L();
+    const px = 1 / scene.camera.zoomEff;
+    for (let q = 0; q < 4; q++) {
+      if (!rig.legOn[q]) continue;
+      toWorld(rig.footX[q]!, 0, tmp2);
+      scene.particles.world.burst(fx.dust, tmp2.x, 0, 3, -Math.PI / 2, Math.max(l * 0.05, 6 * px) * scale);
+    }
+  };
+
+  const draw = (ctx: CanvasRenderingContext2D, v: View): void => {
+    const t0 = performance.now();
+    const res = ensureRes(v.palette);
+    paintDragon(ctx, rig, st, res, v.camera, v.palette.light, v.palette.rimWidth);
+    if (trailN > 2 && trailA > 0.02) drawTrail(ctx, v, res);
+    if (showBones) drawBones(ctx, v);
+    perfAcc += performance.now() - t0;
+    perfN++;
+    if (perfN >= 60) {
+      perfShow = (perfAcc / perfN) * 1000;
+      perfAcc = 0;
+      perfN = 0;
+    }
+  };
+
+  /** The swoosh: a tapering bright ribbon along the tail tip's recent path. */
+  const drawTrail = (ctx: CanvasRenderingContext2D, v: View, res: PaintRes): void => {
+    const cam = v.camera;
+    ctx.save();
+    cam.apply(ctx);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = res.rim;
+    const w0 = Math.max(rig.back[rig.n - 4]! * L() * 2.2, 3 / cam.zoomEff);
+    for (let q = 0; q < trailN - 1; q++) {
+      const f = 1 - q / (trailN - 1);
+      ctx.globalAlpha = trailA * 0.55 * f * f;
+      ctx.lineWidth = w0 * (0.3 + 0.7 * f);
+      ctx.beginPath();
+      ctx.moveTo(trailX[q]!, trailY[q]!);
+      ctx.lineTo(trailX[q + 1]!, trailY[q + 1]!);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  const drawBones = (ctx: CanvasRenderingContext2D, v: View): void => {
+    const l = L();
+    ctx.save();
+    v.camera.apply(ctx);
+    ctx.translate(CLASH_X, 0);
+    ctx.scale(l, l);
+    const lw = 1.2 / (v.camera.zoomEff * l);
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = 'rgba(80,255,160,0.9)';
+    ctx.beginPath();
+    for (let i = 0; i < rig.n; i++) {
+      if (i === 0) ctx.moveTo(rig.x[i]!, rig.y[i]!);
+      else ctx.lineTo(rig.x[i]!, rig.y[i]!);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,90,200,0.8)';
+    ctx.beginPath();
+    for (let i = 0; i < rig.n; i++) {
+      if (i === 0) ctx.moveTo(rig.tx[i]!, rig.ty[i]!);
+      else ctx.lineTo(rig.tx[i]!, rig.ty[i]!);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(120,200,255,0.9)';
+    for (let q = 0; q < 4; q++) {
+      if (!rig.legOn[q]) continue;
+      ctx.beginPath();
+      ctx.moveTo(rig.hipX[q]!, rig.hipY[q]!);
+      ctx.lineTo(rig.kneeX[q]!, rig.kneeY[q]!);
+      ctx.lineTo(rig.ankX[q]!, rig.ankY[q]!);
+      ctx.stroke();
+    }
+    // Bounds.
+    ctx.strokeStyle = 'rgba(255,255,0,0.6)';
+    ctx.strokeRect(rig.restMinX, rig.restMinY, rig.restMaxX - rig.restMinX, rig.restMaxY - rig.restMinY);
+    ctx.restore();
+  };
+
+  const layer: Layer = { name: 'dragon', visible: true, update, draw };
+
+  // ---- debug ----
+  const dbg = scene.debug;
+  if (dbg.enabled) (window as unknown as { __dragon: unknown }).__dragon = { rig, choreo, st, env };
+  dbg.section('Dragon rig');
+  dbg.watch('rig', () => `${perfShow.toFixed(0)} us/frame  ${rig.pxPerU.toFixed(0)} px/L  m${rig.ind ? rig.ind.maturity.toFixed(2) : '-'}`);
+  dbg.toggle('show bones', () => showBones, (v) => (showBones = v));
+  dbg.toggle('three heads', () => over?.heads === 3, (v) => {
+    over = v ? { heads: 3 } : undefined;
+    curId = -1;
+  });
+  dbg.button('shift weak spot', () => weak.shiftSoon(0));
+
+  const setOverride = (o: Partial<Morph> | undefined): void => {
+    over = o;
+    curId = -1;
+  };
+
+  return { layer, view, setOverride };
 }
