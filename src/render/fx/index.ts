@@ -56,6 +56,7 @@ import type { Palette } from '../palette';
 import { createPost, type PostLayer } from '../post';
 import { PF_HOMING, type ParticleSpec, type ParticleSystem } from '../particles';
 import { rect, vec2 } from '../../lib/vec';
+import { KNIGHT_HEIGHT } from '../world';
 import { buildPresets, type Presets } from './presets';
 import { fxSprites } from './sprites';
 import { NK_ARMY, NK_CALLOUT, NK_CLICK, NK_CRIT, NK_GOLD, NK_REWARD, NumberPool } from './numbers';
@@ -308,7 +309,12 @@ export function createFx(scene: Scene): FxRender {
       const a = -0.6 + (Math.random() - 0.5) * 0.3;
       slash(e.x, e.y, a, k, 1.35);
       slash(e.x, e.y, a + 1.25 + Math.PI, k, 1.2);
-      numberAnchor(e.x, e.y, 36);
+      // Crits start in a higher band than clicks (70 vs 30 px), so a click landing right after a
+      // crit rises underneath it instead of into it.
+      numberAnchor(e.x, e.y, 70);
+      tmp2.x += 16 / camera.zoomEff;
+      // The crit owns the space: live click numbers (mid-rise, right where it slams) fade out.
+      numbers.dismiss(NK_CLICK, 0.12);
       numbers.crit(tmp2.x, tmp2.y, e.damage);
       const damp = critDamp(critHeat);
       critHeat = heatAfterCrit(critHeat);
@@ -333,8 +339,9 @@ export function createFx(scene: Scene): FxRender {
     if (e.stagger) {
       if (!scene.dragon.weakSpot(tmp)) scene.dragon.headPoint(tmp);
       scene.dragon.bounds(box);
-      // Above the dragon, clear of the crit number rising from the weak spot.
-      numbers.spawn(NK_CALLOUT, box.x + box.w * 0.5, Math.min(tmp.y - 110 * k, box.y - 70 * k), null, 'STAGGERED!');
+      // Above the dragon and above the crit number's final height (it rises 90 px from tmp2),
+      // so the two never overlap while both rise.
+      numbers.spawn(NK_CALLOUT, box.x + box.w * 0.5, Math.min(tmp.y - 110 * k, box.y - 70 * k, tmp2.y - 140 * k), null, 'STAGGERED!');
       ring(tmp.x, tmp.y, k, 2.6, 0.6);
       w.burst(p.ember, tmp.x, tmp.y, 24, -Math.PI / 2, k * 1.3);
       w.burst(p.glint, tmp.x, tmp.y, 1, 0, k * 2.2);
@@ -354,9 +361,14 @@ export function createFx(scene: Scene): FxRender {
       scene.dragon.impactPoint(tmp);
       w.burst(p.sparkSmall, tmp.x, tmp.y, melee ? 3 : 2, -Math.PI / 2, k);
     }
-    // Army numbers float above the dragon's back, apart from the click numbers at the cursor.
+    // Army numbers get their own band so click, army and reward numbers never stack: over a big
+    // dragon's back, or (small dragons, where the space above is taken by clicks and rewards)
+    // above the army's front rank.
     scene.dragon.bounds(box);
-    numbers.army(0, box.x + box.w * (0.3 + 0.4 * Math.random()), box.y - 14 * k, e.damage);
+    if (box.h * camera.zoomEff < 140) {
+      // Just above the front rank's heads (crowd bounds include banner poles, too high).
+      numbers.army(0, scene.crowd.frontX() - 30 * k, -KNIGHT_HEIGHT * 1.15 - 12 * k, e.damage);
+    } else numbers.army(0, box.x + box.w * (0.3 + 0.4 * Math.random()), box.y - 14 * k, e.damage);
     const f = frac(e.damage);
     shake(hitTrauma(f, 'army'), 0.35);
     if (f > 0.08) camera.punchZoom(0.008);
@@ -398,6 +410,10 @@ export function createFx(scene: Scene): FxRender {
     // The body smolders while it collapses (the dying phase), in slow-mo.
     emit(p.ember, EM_BODY, 0, 0, 0, 0, 20 + 20 * m, 1.5, 1.1);
 
+    // The +N owns the space above the corpse: clear the risen click/crit numbers (incl. the
+    // killing blow's) within 0.12 s.
+    numbers.dismiss(NK_CLICK, 0.12);
+    numbers.dismiss(NK_CRIT, 0.12);
     // Above the coin fountain (numbers draw under particles.screen), clear of small corpses.
     numbers.spawn(NK_REWARD, cx, box.y - Math.max(20, 110 - box.h * camera.zoomEff) * k, e.gold);
 
@@ -419,7 +435,8 @@ export function createFx(scene: Scene): FxRender {
     if (!scene.dragon.weakSpot(tmp)) scene.dragon.headPoint(tmp);
     const wx = tmp.x;
     const wy = tmp.y;
-    numbers.spawn(NK_GOLD, wx, wy - 50 / camera.zoomEff, e.amount);
+    // Low and to the left: the crit number (70 px up) and STAGGERED! own the space above.
+    numbers.spawn(NK_GOLD, wx - 56 / camera.zoomEff, wy - 20 / camera.zoomEff, e.amount);
     camera.worldToScreen(wx, wy, tmp);
     coins(tmp.x, tmp.y, 6, 20, e.amount);
   });

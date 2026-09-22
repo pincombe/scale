@@ -93,6 +93,8 @@ export class NumberPool {
   private readonly vx = new Float32Array(MAX);
   private readonly bump = new Float32Array(MAX);
   private readonly spin = new Float32Array(MAX);
+  /** Fade duration override (0 = style default), set by dismiss(). */
+  private readonly fadeShort = new Float32Array(MAX);
   /** Army unit key (0 footman, 1 archer...) for merging; 255 = none. */
   private readonly group = new Uint8Array(MAX);
   private readonly amount: (Decimal | null)[] = new Array<Decimal | null>(MAX).fill(null);
@@ -164,6 +166,24 @@ export class NumberPool {
     this.active.fill(0);
   }
 
+  /**
+   * Fade out every live number of `kind` within `seconds` and stop it merging (a kill hands the
+   * space above the corpse to the +N reward).
+   */
+  dismiss(kind: number, seconds: number): void {
+    for (let i = 0; i < MAX; i++) {
+      if (!this.active[i] || this.kind[i] !== kind) continue;
+      const a = this.age[i]!;
+      const end = a + seconds;
+      if (this.life[i]! > end) {
+        // Start the fade from full now: shorten life so the remaining fade takes `seconds`.
+        this.life[i] = end;
+        this.fadeShort[i] = seconds;
+      }
+      this.bump[i] = 1e3;
+    }
+  }
+
   /** Spawn a number (or a text callout when `text` is given). Returns the slot. */
   spawn(kind: number, wx: number, wy: number, amount: Decimal | null, text: string | null = null, group = 255): number {
     const i = this.alloc();
@@ -178,6 +198,7 @@ export class NumberPool {
     this.group[i] = group;
     this.amount[i] = amount;
     this.spin[i] = 0;
+    this.fadeShort[i] = 0;
     this.ox[i] = 0;
     this.oy[i] = 0;
     this.vx[i] = (Math.random() - 0.5) * 40;
@@ -254,7 +275,8 @@ export class NumberPool {
         if (!cv) continue;
         const age = this.age[i]!;
         const left = this.life[i]! - age;
-        const fade = left < st.fadeT ? left / st.fadeT : 1;
+        const fadeT = this.fadeShort[i]! > 0 ? this.fadeShort[i]! : st.fadeT;
+        const fade = left < fadeT ? left / fadeT : 1;
         let s: number;
         let rot = 0;
         let jx = 0;
