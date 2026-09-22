@@ -51,6 +51,11 @@ export interface Palette {
   };
   /** Tint for ambient drifting particles (fireflies, dust motes). */
   ambient: string;
+  /**
+   * Optional mid-distance tint: atmospheric perspective runs haze -> depthTint -> silhouette
+   * (far -> near), so middle layers pick up a hue instead of a muddy linear mix.
+   */
+  depthTint?: string;
 }
 
 function unit(x: number, y: number): { x: number; y: number } {
@@ -60,21 +65,26 @@ function unit(x: number, y: number): { x: number; y: number } {
 
 export const MEADOW: Palette = {
   name: 'meadow',
+  // Golden hour: deep violet-indigo overhead, rose, ember orange, pale gold at the horizon.
   sky: [
-    { at: 0, color: '#241a36' },
-    { at: 0.3, color: '#5a3354' },
-    { at: 0.58, color: '#c0613f' },
-    { at: 0.82, color: '#f0a656' },
-    { at: 1, color: '#ffd98f' },
+    { at: 0, color: '#1b1333' },
+    { at: 0.24, color: '#3a2253' },
+    { at: 0.47, color: '#8a3a5e' },
+    { at: 0.69, color: '#d9683f' },
+    { at: 0.86, color: '#f5a453' },
+    { at: 1, color: '#ffe2a3' },
   ],
   horizon: 0.66,
-  sun: { x: 0.74, y: 0.6, radius: 0.055, color: '#fff2c9', glow: '#ffb45a', glowRadius: 0.55 },
-  haze: '#e89a5c',
-  silhouette: '#150d0b',
+  // The backdrop places the sun at stageCX + 0.27 * viewH, 0.56 * viewH (x here is that point on
+  // a 1440 x 900 viewport with the panel closed). `light` points from the stage toward it.
+  sun: { x: 0.67, y: 0.56, radius: 0.062, color: '#fff4d6', glow: '#ffb259', glowRadius: 0.6 },
+  haze: '#ec9d6b',
+  depthTint: '#7c3d5b',
+  silhouette: '#170d10',
   rim: '#ffcf85',
-  rimWidth: 1.6,
-  light: unit(0.85, -0.52),
-  ground: '#2a1a12',
+  rimWidth: 1.8,
+  light: unit(0.85, -0.53),
+  ground: '#24130f',
   vignette: '#140805',
   vignetteStrength: 0.55,
   accent: {
