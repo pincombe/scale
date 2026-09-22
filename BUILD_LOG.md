@@ -10,16 +10,15 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - Build: 416 KB raw / 188 KB gzip, incl. uncommitted in-flight work (fonts are 98 KB of it).
 - **Done and committed:**
   - 0.1, 0.2, 0.3.
-  - 1.1 backdrop, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
+  - 1.1 backdrop, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
 - **In flight (uncommitted in the working tree):**
   - 1.2 dragon rig (also told: the weak spot must move to the throat during a breath windup; see Open issue 6).
-  - 1.3 knight crowd.
-  - Reviews of 1.1 and 1.9.
+  - Reviews of 1.1, 1.3 and 1.9.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
-  1. Run `git status`. Uncommitted files belong to the in-flight WPs, by folder: `src/render/dragon/` = 1.2, `src/render/crowd/` = 1.3.
+  1. Run `git status`. Uncommitted files belong to the in-flight WP: `src/render/dragon/` = 1.2.
   2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
   3. If the WP is complete per its brief summary below, commit it. If not, re-launch it with that brief summary and tell the agent to continue from the files on disk.
-  4. The 1.1 and 1.9 reviews must be re-run if their results are lost (reviewer agent; commits aeeee92 and bfd6db1).
+  4. The 1.1, 1.3 and 1.9 reviews must be re-run if their results are lost (reviewer agent; commits aeeee92, 7376082, bfd6db1).
 
 ## In flight: brief summaries (enough to re-launch)
 - **1.2 Dragon rig v1 + newt** (builder-max, owns `src/render/dragon/**`)
@@ -37,7 +36,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - **Weak spot:** a loose scale with a white-hot core and cyan halo. It moves to the throat during a breath windup. Because of a late note (juice finding), its minimum hit radius is ~10–12 px (a named constant) and it sits off-center, so clicking the middle of a newt is not a crit.
   - **Contract and budget:** implement `DragonView` (ARCHITECTURE §9) with stable `bounds`. At most 1 ms per dragon per frame, with no per-frame allocations.
   - **Dev pages:** the agent added `lab.html`/`lab.ts` as a dev-only rig lab.
-- **1.3 Knight crowd** (builder-high, owns `src/render/crowd/**`)
+- **1.3 Knight crowd** (builder-high, owns `src/render/crowd/**`). ✅ Landed in 7376082 (0.5–0.8 ms/frame at 300 knights; ~60 MB of baked sprite canvases across 4 LODs); kept here as reference.
   - **Sprites:** procedural silhouettes with a baked rim light, pre-rendered into sprite sheets at 2–3 LODs (180 px down to 15 px). Types are the hero (plume, cape), footman (helm, sword, shield) and archer (hood, longbow).
   - **Animations:** idle, march, strike, loose, flung, get-up, cheer and scatter.
   - **Banners:** every 6–10 knights carries a banner. The emblem is drawn by one function that takes a heraldry description (M2 Heraldry swaps it in).
@@ -69,7 +68,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 
 ## Open issues and risks
 1. **Performance is unverified end to end.** Each WP measured itself (skeleton 1.2–1.5 ms CPU with 300 stub knights + 1,500 particles; juice stress 60 fps; backdrop ~2 ms back + 1.2 ms front CPU+GPU at DPR 2), but nobody has measured the full stack with the real dragon and crowd. The backdrop agent saw one ~30 fps sample pulled back. Do a clean check on a static build (see Process).
-2. **Canvas memory:** backdrop caches 60–80 MB at DPR 2, number canvases capped at 8 MB. Watch Safari.
+2. **Canvas memory:** backdrop caches 60–80 MB at DPR 2, crowd sprite sheets ~60 MB (4 LODs), number canvases capped at 8 MB: ~130–150 MB total. Set a budget and check Safari in the perf pass.
 3. **Size:** 416 KB raw now, against a ~400 KB target and the 1 MB hard fail. M2 adds the zoom, Mountain tier, heraldry and music. If it trends past ~700 KB, look for bloated tables and consider subsetting fonts further.
 4. **Weak spot too generous on small newts:** almost every click crits. The fix was sent to the dragon agent (min radius ~10–12 px, off-center). Verify when 1.2 lands.
 5. **First framing:** the director's base framing puts the hero at 20% of stage height, which makes the first newt only ~50 px on screen. Judge it at the integration pass. The option is a tighter opening framing (`director.heroFrac`) for the first few dragons.
@@ -199,7 +198,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 |---|---|---|---|---|
 | 1.1 Meadow backdrop, palette, eye in the hills | builder-high | `src/render/backdrop/**`, MEADOW values | ✅ committed; **review in flight** | aeeee92 |
 | 1.2 Dragon rig v1 + newt, weak spot, hit test | builder-max | `src/render/dragon/**` | ⏳ **in flight** (uncommitted) | — |
-| 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ⏳ **in flight** (uncommitted) | — |
+| 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ✅ committed; **review in flight** | 7376082 |
 | 1.4 Juice: presets, numbers, hit-stop, shake, coins, post FX | builder-high | `src/render/fx/**`, `post.ts` | ✅ accepted after review (1 high + 9 fixed) | fd76ef0, 82496a7 |
 | 1.5 Economy core | builder-high | `src/core/**` | ✅ committed; review done, 5 fixes handed to 1.9 | 255c39e |
 | 1.6 HUD, Army/Upgrades panels, title, progressive disclosure | builder-medium | `src/ui/**` | ✅ committed (no formal review) | 825e78f |
@@ -272,3 +271,4 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: 1.4 juice (fd76ef0). Review: crit spam was an earthquake and a flash hazard. Fixed with crit heat, merged numbers, capped canvas memory, exact coin values, compositor grain (82496a7); frozen frames at 8 crits/s down from 23% to 1.6%.
 - 2026-09-22: 1.8 text (f7d020d), 1.6 HUD (825e78f), 1.1 backdrop (aeeee92) committed. BUILD_LOG rewritten as a resume document (c6fab8c).
 - 2026-09-22: 1.9 sim (bfd6db1): 30/30 targets PASS on juiced runs over 20 seeds (engaged: first kill 2 s, archers 0:56, 1.0/2.3/8.4 m at 1/2/3 min, 29 kills by 3:15, 10.5 attacks seen, clicks 46% of damage; dilation 0.92). `npm test` green again.
+- 2026-09-22: 1.3 crowd (7376082): rim-lit knights at 4 LODs, live hero, march-ins, volleys, flee/ragdoll lanes, cheers, banners with `drawEmblem()` for M2 heraldry; 0.5–0.8 ms/frame at 300 knights.
