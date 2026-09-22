@@ -17,7 +17,17 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
     - Crowd: the army's front ranks trail ~8 m behind the hero at huge dragons, so close the gap.
     - HUD: toasts get a premium backing, max 2 visible, clear of the name/HP bar; re-check the Hire button against the bigger hero.
     - Sim/core: scale `enter`/`dying` durations with dragon size (newts ~1.0–1.1 s → 1.6 s by 4 m) for a snappier first minute, then retune.
-  - Review of 1.2 still in flight. Its findings go to the dragon agent together with the art notes (mid-size presence, big dragons hovering during idle).
+  - Dragon fix round (1.2 review + art notes), with the dragon agent:
+    1. **High:** the swipe-windup tail target sits on top of loose-scale candidate 0, so clicking the old scale staggers every swipe for the first ~10 dragons.
+    2. Footstep dust and shake repeat on frozen frames.
+    3. The flame is 24 px at every size.
+    4. Knees sink into the ground.
+    5. Wings and crest aren't clickable.
+    6. The throat marker covers the newt's eye; weak-spot candidates should use the target zoom.
+    7. Big dragons hover while idle.
+    8. More presence at 1–3 m.
+    9. Scale cues for huge dragons.
+  - Backdrop "clearing": the foreground grass hides the 0.5 m newt's legs and half its body. Keep grass low in the hero–dragon band.
   - ✅ Landed: WP 1.10 framing and composition (8086746).
     - Closer base framing: the hero at ≈ 28–34% of stage height, so the first newt reads at ≥ ~70 px.
     - Frame the dragon, the hero and the army's front, not the whole army. The army can run off-screen left; the clash point sits at ~40% of stage width.
@@ -80,9 +90,27 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 
 ## Art-pass notes not yet routed (lead)
 - **Engaged still staggers ~half its windups** at a 25% throat hit rate. Fine for skilled play; revisit if the playtest shows fire breath is rarely seen.
-- **Big dragons hover:** seen by 1.10 at dragon 36, hovering above the ground while in idle. Send to the dragon agent.
-- **Dragon, 1–3 m (minutes 1–2):** the newt species is very flat and low at these sizes (bounds h 0.34 m at 1.23 m). It needs more presence: raised head, taller posture, a readable silhouette. Send it with the 1.2 review findings.
 - **What already looks good:** the title screen is cinematic, the first-kill flow works end to end, and late game (12 m dragon flying in, banner host) looks premium.
+
+## M2 notes from M1 reviews (for the M2 planner)
+**Dragon rig extensibility** (from the 1.2 review)
+- Species are data-driven only for newt-like quadrupeds:
+  - legs can't be switched off, so no serpents;
+  - the ground is hard-wired (`rig.ts` ~810/949, fire aim), so no airborne cloud dragons;
+  - fixed node counts and no path targets, so no coiling leviathans;
+  - `behavior.enter`/`behavior.swipe` are declared but ignored (`choreo.ts` ~167);
+  - weak-spot candidates are hard-coded (`species.ts` ~387).
+- The Mountain wyvern needs wings as front legs, craggy plates, a glide-in entrance and clickable wings.
+
+**Zoom director (2.1) needs from the rig**
+- Giant background wyrms need a dragon instance not bound to game state (`createDragon` is one instance tied to `state.dragon`), a transform hook instead of `cam.apply` (`paint.ts` ~880) for parallax, and a scale pattern on the hide.
+- The dragon's resource cache is keyed by palette object (`index.ts` ~239), so blending palettes per frame during the zoom would grow the sprite atlas without bound. Key by tier, or quantize.
+
+**Crowd**
+- The hero buffer caps at 2048 px and upscales beyond it. The M2 fusion "boots fill the screen" shot should draw the hero vector-direct.
+
+**Heraldry**
+- The crowd's `drawEmblem()` in `banner.ts` takes a heraldry description (`Heraldry` type + optional `setHeraldry?` in `crowd/api.ts`).
 
 ## Open issues and risks
 1. **Performance is unverified end to end.** Each WP measured itself (skeleton 1.2–1.5 ms CPU with 300 stub knights + 1,500 particles; juice stress 60 fps; backdrop ~2 ms back + 1.2 ms front CPU+GPU at DPR 2), but nobody has measured the full stack with the real dragon and crowd. The backdrop agent saw one ~30 fps sample pulled back. Do a clean check on a static build (see Process).
@@ -326,3 +354,4 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: Crowd review fixes landed (04598dd): memory 60 → 27 MB typical, no squad teleport, visible recruits, hero contact 72 ms, rig-synced flings. Lead art pass on a static build: title great, first-kill flow works, late game premium; the dragon is too small at the start and in minutes 1–2 (framing). WP 1.10 framing launched; kill-blob/number-glyph notes to juice; mountain polish to backdrop.
 - 2026-09-22: Backdrop polish (b550de5): painterly receding mountains; layers sized from screen height so the closer framing doesn't rescale them. Juice polish (b6f9d4f): kill burst scales with dragon size (no white blob); numbers crisp and above the sparks (the "broken glyphs" were spark streaks). WP 1.9b (551f104): weak-spot liveness in core, 35/35 sim targets.
 - 2026-09-22: WP 1.10 framing (8086746): hero 29% of stage height, clash point ~40%, dragon share of width 25% → 44% from 1 m to 10 m (capped by the base framing until ~3 m), crowd LODs raised. Polish round sent: crowd gap, HUD toasts, size-scaled enter/dying.
+- 2026-09-22: 1.2 review: good shape, within budget (draw 0.06–0.11 ms); 1 high (swipe tail target on top of the scale) + 5 lower. Fix round sent with art notes; grass clearing sent to backdrop. M2 extensibility notes recorded.
