@@ -5,14 +5,22 @@ import './styles.css';
 import type { Camera } from '../render/camera';
 import type { Vec2 } from '../lib/vec';
 import type { Ui, UiRegions } from './api';
+import { toastIcon } from './icons';
 
 /** Must match .ui-panel width in styles.css. */
 export const PANEL_WIDTH = 340;
 const REFRESH_INTERVAL = 0.1;
-/** Must match the `toast` animation length in styles.css. */
-const TOAST_SECONDS = 3.6;
-/** Oldest toasts leave early when more than this many are on screen. */
-const TOAST_MAX = 3;
+/** How long a toast stays up (a waiting queue shortens it). */
+const TOAST_SECONDS = 3.4;
+const TOAST_SECONDS_BUSY = 2.2;
+/** Must match the `toast-leave` animation length in styles.css. */
+const TOAST_LEAVE_MS = 380;
+/** At most this many on screen; the rest wait their turn. */
+const TOAST_MAX = 2;
+/** Longest queue; the oldest waiting toast is dropped beyond it. */
+const TOAST_QUEUE = 4;
+
+type ToastKind = 'unlock' | 'upgrade' | 'milestone' | 'info';
 
 interface Anchor {
   el: HTMLElement;
@@ -34,6 +42,8 @@ export class UiRoot implements Ui {
   readonly stage: HTMLElement;
   private refreshAcc = 0;
   private open = false;
+  private toastQueue: { text: string; kind: ToastKind }[] = [];
+  private toastsLive = 0;
   private readonly observer: ResizeObserver | null;
 
   constructor(
@@ -110,33 +120,55 @@ export class UiRoot implements Ui {
     this.dirty = true;
   }
 
-  toast(text: string, kind: 'unlock' | 'milestone' | 'info' = 'info'): void {
+  toast(text: string, kind: ToastKind = 'info'): void {
     if (!text) return;
-    const box = this.regions.toasts;
-    // Newest on top; drop the oldest beyond the cap (they fade quickly instead of popping).
-    const live = box.querySelectorAll('.ui-toast:not(.leaving)');
-    for (let i = live.length - TOAST_MAX; i >= 0; i--) this.dismiss(live[live.length - 1 - i] as HTMLElement);
+    this.toastQueue.push({ text, kind });
+    if (this.toastQueue.length > TOAST_QUEUE) this.toastQueue.shift();
+    this.pumpToasts();
+  }
+
+  private pumpToasts(): void {
+    while (this.toastsLive < TOAST_MAX && this.toastQueue.length > 0) {
+      const { text, kind } = this.toastQueue.shift()!;
+      this.showToast(text, kind);
+    }
+  }
+
+  private showToast(text: string, kind: ToastKind): void {
+    this.toastsLive++;
     const el = document.createElement('div');
     el.className = `ui-toast ui-toast-${kind}`;
+    if (kind !== 'info') el.appendChild(toastIcon(kind));
+    const body = document.createElement('span');
+    body.className = 'ui-toast-body';
     const inner = document.createElement('span');
     inner.className = 'ui-toast-text';
     inner.textContent = text;
-    el.appendChild(inner);
+    body.appendChild(inner);
     if (kind !== 'info') {
       // A clipped highlight sweeps across the letters (the base keeps its legibility shadow).
       const shine = document.createElement('span');
       shine.className = 'ui-toast-shine';
       shine.textContent = text;
       shine.setAttribute('aria-hidden', 'true');
-      el.appendChild(shine);
+      body.appendChild(shine);
     }
-    box.prepend(el);
-    window.setTimeout(() => el.remove(), TOAST_SECONDS * 1000);
-  }
-
-  private dismiss(el: HTMLElement): void {
-    el.classList.add('leaving');
-    window.setTimeout(() => el.remove(), 320);
+    el.appendChild(body);
+    this.regions.toasts.appendChild(el);
+    const start = performance.now();
+    // Stay the full time, unless others are waiting (then leave after the shorter time).
+    const check = (): void => {
+      const age = (performance.now() - start) / 1000;
+      if (age >= TOAST_SECONDS || (this.toastQueue.length > 0 && age >= TOAST_SECONDS_BUSY)) {
+        el.classList.add('leaving');
+        window.setTimeout(() => {
+          el.remove();
+          this.toastsLive--;
+          this.pumpToasts();
+        }, TOAST_LEAVE_MS);
+      } else window.setTimeout(check, 200);
+    };
+    window.setTimeout(check, TOAST_SECONDS_BUSY * 1000);
   }
 
   onRefresh(fn: () => void): void {

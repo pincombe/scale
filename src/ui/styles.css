@@ -400,11 +400,11 @@
   }
 }
 
-/* First-minute hints, above the bottom of the stage */
+/* First-minute hints: a caption under the Hire button, below the ground line (clear of the hero) */
 .hint {
   position: absolute;
   left: 50%;
-  bottom: calc(9% + 84px);
+  bottom: max(14px, calc(9% - 52px));
   width: min(560px, 80%);
   margin-left: calc(min(560px, 80%) / -2);
   text-align: center;
@@ -424,51 +424,104 @@
 }
 
 /* ---------- Toasts ---------- */
+/* A dark vellum band with gold hairlines (top and bottom, fading at the ends), an emblem per kind
+   and a shimmer across the letters. At most two on screen, below the dragon name + HP bar. */
 .ui-toasts {
-  top: 124px;
+  top: 118px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
 }
 .ui-toast {
   position: relative;
-  max-width: calc(100% - 140px);
-  padding: 4px 48px;
-  text-align: center;
-  background: radial-gradient(closest-side, rgba(14, 7, 5, 0.42), rgba(14, 7, 5, 0));
-  animation: toast 3.6s var(--ease-out) forwards;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(640px, calc(100% - 80px));
+  padding: 9px 44px 10px 36px;
+  background: linear-gradient(90deg, rgba(16, 9, 6, 0) 0%, rgba(16, 9, 6, 0.74) 18%, rgba(16, 9, 6, 0.74) 82%, rgba(16, 9, 6, 0) 100%);
+  animation: toast-in 0.55s var(--ease-out) both;
+}
+.ui-toast::before,
+.ui-toast::after {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-line) 25%, rgba(255, 220, 150, 0.6) 50%, var(--gold-line) 75%, transparent);
+}
+.ui-toast::before {
+  top: 0;
+}
+.ui-toast::after {
+  bottom: 0;
+}
+.ui-toast-info::before,
+.ui-toast-info::after {
+  opacity: 0.4;
 }
 .ui-toast.leaving {
-  animation: toast-leave 0.3s var(--ease-out) forwards;
+  animation: toast-leave 0.38s var(--ease-out) forwards;
+}
+.ui-toast-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  box-sizing: border-box;
+  fill: var(--gold);
+  border-radius: 2px;
+  box-shadow:
+    inset 0 0 0 1px var(--gold-line),
+    0 0 10px rgba(255, 190, 80, 0.25);
+  background: rgba(40, 24, 12, 0.6);
+  filter: drop-shadow(0 0 3px rgba(255, 200, 110, 0.5));
+}
+.ui-toast-milestone .ui-toast-icon {
+  fill: var(--gold-hi);
+}
+.ui-toast-body {
+  position: relative;
+  min-width: 0;
 }
 .ui-toast-text,
 .ui-toast-shine {
   display: block;
   font-style: italic;
-  font-size: 23px;
+  font-size: 21px;
   line-height: 1.25;
 }
 .ui-toast-text {
   color: var(--parchment);
-  text-shadow: var(--shadow);
+  text-shadow: 0 1px 2px rgba(10, 4, 2, 0.9);
 }
 .ui-toast-unlock .ui-toast-text,
+.ui-toast-upgrade .ui-toast-text,
 .ui-toast-milestone .ui-toast-text {
   color: var(--gold);
 }
 .ui-toast-shine {
   position: absolute;
-  top: 4px;
-  left: 48px;
-  right: 48px;
+  inset: 0;
   color: transparent;
   background: linear-gradient(100deg, transparent 0%, transparent 40%, rgba(255, 252, 235, 0.95) 50%, transparent 60%, transparent 100%);
   background-size: 300% 100%;
   background-position: 100% 0;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: shimmer 1.5s ease-in-out 0.2s 2 both;
+  animation: shimmer 1.5s ease-in-out 0.25s 2 both;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 @keyframes shimmer {
   from {
@@ -476,24 +529,6 @@
   }
   to {
     background-position: 0% 0;
-  }
-}
-@keyframes toast {
-  0% {
-    opacity: 0;
-    transform: translateY(-10px) scale(0.96);
-  }
-  8% {
-    opacity: 1;
-    transform: none;
-  }
-  82% {
-    opacity: 1;
-    transform: none;
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-6px);
   }
 }
 @keyframes toast-leave {

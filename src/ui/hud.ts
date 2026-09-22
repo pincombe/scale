@@ -342,7 +342,7 @@ function createToasts(scene: Scene, ui: UiRoot): void {
   const { game } = scene;
   game.on('unlock', (e) => {
     const text = copy(`unlock.${e.kind}.${e.id}`) ?? (e.kind === 'upgrade' ? copy('unlock.upgrade') : undefined);
-    if (text) ui.toast(text, 'unlock');
+    if (text) ui.toast(text, e.kind === 'upgrade' ? 'upgrade' : 'unlock');
   });
   game.on('milestone', (e) => {
     const vars = { unit: UNITS[e.unit].name, plural: UNITS[e.unit].plural, owned: String(e.owned), mult: String(e.mult) };

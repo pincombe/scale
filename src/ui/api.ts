@@ -33,8 +33,8 @@ export interface Ui extends UiAnchors {
   readonly panelOpen: boolean;
   /** Show/hide the right panel; the camera re-frames the stage into the uncovered area. */
   setPanelOpen(open: boolean): void;
-  /** Short message under the HUD. */
-  toast(text: string, kind?: 'unlock' | 'milestone' | 'info'): void;
+  /** Short message under the HUD (at most 2 on screen; the rest queue). */
+  toast(text: string, kind?: 'unlock' | 'upgrade' | 'milestone' | 'info'): void;
   /** Run fn ~10 times per second (wall clock): the place for DOM text updates. */
   onRefresh(fn: () => void): void;
 }

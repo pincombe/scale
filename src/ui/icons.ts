@@ -65,3 +65,18 @@ export function speakerIcon(): SVGSVGElement {
       '<path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></g>',
   );
 }
+
+// Toast emblems (gold line art in a small diamond frame drawn by CSS).
+const TOAST_PATHS: Record<'unlock' | 'upgrade' | 'milestone', string> = {
+  // Four-point star: something new.
+  unlock: '<path d="M12 3l1.9 7.1L21 12l-7.1 1.9L12 21l-1.9-7.1L3 12l7.1-1.9z"/>',
+  // Upright sword: an upgrade.
+  upgrade:
+    '<path d="M11.2 2.5h1.6l.6 11.5h-2.8z"/><path d="M7.5 14h9v1.6h-9z"/><path d="M11.1 15.6h1.8v3.4h-1.8z"/><circle cx="12" cy="20.3" r="1.4"/>',
+  // Pennant banner: a milestone.
+  milestone: '<path d="M6 2.5h1.5v19H6z"/><path d="M7.5 3.5H19l-3 4 3 4H7.5z"/>',
+};
+
+export function toastIcon(kind: 'unlock' | 'upgrade' | 'milestone'): SVGSVGElement {
+  return svg('0 0 24 24', 'ui-toast-icon', TOAST_PATHS[kind]);
+}
