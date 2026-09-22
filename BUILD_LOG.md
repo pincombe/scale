@@ -4,23 +4,22 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 
 ## Resume here
 - **Milestone:** M1 First Blood ★. We are **not yet at the ★ playtest**. The user has not played anything yet. Stop at the M1 playtest and wait for feedback before starting M2 (KICKOFF).
-- **Snapshot (2026-09-22, HEAD c0b831b):**
-  - Tests: 190 of 193 pass. The 3 failures are expected: `src/core/pacing.test.ts` newt→barn checks, while the sim agent retunes (see In flight).
+- **Snapshot (2026-09-22, HEAD bfd6db1):**
+  - Tests: all pass (`npm test` green again since 1.9 landed). `npm run sim`: 30/30 targets PASS.
   - Typecheck: clean.
   - Build: 416 KB raw / 188 KB gzip, incl. uncommitted in-flight work (fonts are 98 KB of it).
 - **Done and committed:**
   - 0.1, 0.2, 0.3.
-  - 1.1 backdrop, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text.
+  - 1.1 backdrop, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
 - **In flight (uncommitted in the working tree):**
-  - 1.2 dragon rig.
+  - 1.2 dragon rig (also told: the weak spot must move to the throat during a breath windup; see Open issue 6).
   - 1.3 knight crowd.
-  - 1.9 balance sim, which also carries five core logic fixes.
-  - A review of 1.1.
+  - Reviews of 1.1 and 1.9.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
-  1. Run `git status`. Uncommitted files belong to the in-flight WPs, by folder: `src/render/dragon/` = 1.2, `src/render/crowd/` = 1.3, `src/sim/` plus the modified `src/core/` files = 1.9.
+  1. Run `git status`. Uncommitted files belong to the in-flight WPs, by folder: `src/render/dragon/` = 1.2, `src/render/crowd/` = 1.3.
   2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
   3. If the WP is complete per its brief summary below, commit it. If not, re-launch it with that brief summary and tell the agent to continue from the files on disk.
-  4. The 1.1 review must be re-run (reviewer agent, commit aeeee92).
+  4. The 1.1 and 1.9 reviews must be re-run if their results are lost (reviewer agent; commits aeeee92 and bfd6db1).
 
 ## In flight: brief summaries (enough to re-launch)
 - **1.2 Dragon rig v1 + newt** (builder-max, owns `src/render/dragon/**`)
@@ -53,7 +52,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
     - milestone → weapons raised
   - **Squads and contract:** past 300 knights, one sprite stands for a squad. Implement `CrowdView`.
   - **Budget:** at most 2 ms per frame at 300 knights. `gallery.html` is a dev-only sprite gallery.
-- **1.9 Balance sim v0** (builder-high, owns `src/sim/**` + `BALANCE` in `src/core/content/balance.ts`)
+- **1.9 Balance sim v0** (builder-high, owns `src/sim/**` + `BALANCE` in `src/core/content/balance.ts`). ✅ Landed in bfd6db1; kept here as the reference for what it does.
   - **Bots:** casual (3 clicks/s, 10% weak-spot hits, buys every 10 s), engaged (6 clicks/s, 30% weak-spot hits, better during windups, buys greedily) and idle (clicks only for the first kill, buys once a minute). Each runs over ~20 seeds.
   - **Output:** a median/worst-case timeline table and PASS/FAIL against the M1 targets (below). It exits non-zero on failure, because CI runs `npm run sim`. `--profile/--seed/--verbose` flags give a single run.
   - **Dilation model:** it models juice time dilation in `src/sim/juice.ts`, mirroring `src/render/fx/tuning.ts`: crit hit-stop 0.07 s (0.08 on a stagger), only after ≥ 0.6 s without crits; kill hit-stop 0.08 s + `slowMo(0.25, 0.55)`; TimeDirector cooldown 0.3 s, cap 0.12 s.
@@ -78,7 +77,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 7. **Tail-swipe thumps aren't synced:** the SFX thumps are timed 0.45–1.15 s after the swipe, not to the crowd's actual ragdoll landings. If it feels off, add a crowd→audio landing hook.
 8. **Unreviewed WPs:** the HUD (1.6, medium) and text (1.8, writer) had no reviewer pass. They're covered by the lead's integration pass and the M1 milestone review. The HUD reads MICROCOPY keys `panel.armyEmpty`, `panel.upgradesEmpty` and `tier.<n>`; confirm it picks up the writer's strings rather than its fallbacks.
 9. **Juice costs logic time** by design (a consistent freeze). If juice tuning changes, update `src/sim/juice.ts` to match `src/render/fx/tuning.ts`.
-10. **Saves:** there's no save loader yet (M3). Saves are schema v2 (1.9 may bump it); v1 is rejected.
+10. **Saves:** there's no save loader yet (M3). Saves are schema v3 (per-dragon stagger count); older versions are rejected.
 11. **GitHub:** nothing has been pushed and the repo `pincombe/scale` doesn't exist yet. The user chose a single public repo. Ask before creating it. After creating it: Settings > Pages > Source = "GitHub Actions".
 12. **Dev pages:** `src/render/dragon/lab.html` and `src/render/crowd/gallery.html` are dev-only. They're not in the build (the build only uses the root `index.html`). Keep or delete at M4.
 
@@ -239,7 +238,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 ## Next steps
 **Finish M1**
 1. Land 1.2 and 1.3. For each: typecheck and tests for the folder, a browser check, commit, then a `reviewer` pass (the dragon is max, the crowd high). Route findings back.
-2. Land 1.9. `npm run sim` must PASS, and `npm test` must be green, including `pacing.test.ts`. Commit, then review. Confirm the five core fixes, and that dragons now attack visibly.
+2. ✅ 1.9 landed (bfd6db1). Pending: its review, and an ARCHITECTURE §4 refresh (click formula, stagger gold, `DragonState.staggers`, save v3).
 3. Route the 1.1 review findings to a builder.
 4. **Integration and art-direction pass (lead):**
    - Build statically and play the first 3–4 minutes at 1440×900 against the §2 beats.
