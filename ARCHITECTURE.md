@@ -75,7 +75,7 @@ type UpgradeId = 'pointySwords'|'keenEye'|'drillSergeant'|'bounty'|'fletching'|'
   | `unit.footman` | 1 kill | the lone pulsing "Hire a Footman" button |
   | `upgrade.<id>` | its `unlock` requirement (e.g. `pointySwords`: 1 footman) | the upgrade is offered |
   | `feature.panel` | 2+ units/upgrades revealed (right after the first footman) | the Army/Upgrades panel opens |
-  | `unit.archer` | 10 kills (~1:00) | archers can be hired |
+  | `unit.archer` | 12 kills (~1:00 engaged) | archers can be hired |
 
   Requirements are data (`UNITS[id].unlock`, `UPGRADES[i].unlock`: `{stat: 'kills'|UnitId, at}`); `UNLOCK_FLAGS` lists every flag. Debug: `debug.loopPhase` (repeat the current phase), `debug.immortal`.
 - Saves: schema v3 (`STATE_VERSION`; bumped for `DragonState.staggers`, older saves are rejected until the M3 loader migrates them). `serialize(state)` / `deserialize(text)` (JSON, Decimals exact as `{"$d":[m,e]}`; `toJSON`/`fromJSON` for any value).
