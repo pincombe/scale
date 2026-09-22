@@ -13,7 +13,8 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - 1.1 backdrop, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
 - **In flight (uncommitted in the working tree):**
   - 1.2 dragon rig (also told: the weak spot must move to the throat during a breath windup; see Open issue 6).
-  - Reviews of 1.1, 1.3 and 1.9.
+  - Backdrop review fixes (1.1).
+  - Review of 1.3.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
   1. Run `git status`. Uncommitted files belong to the in-flight WP: `src/render/dragon/` = 1.2.
   2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
@@ -250,7 +251,12 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
    - **Casual pacing:** apply the reviewer's recommendation (`hpBase` 20 → 14, heroicExample share 0.015 → 0.0175), then retune to all-PASS.
    - **UI fix:** `ui/effectText.ts:23` rounds 1.5% to "2%"; use `Math.round(share*1000)/10`.
    - **Docs:** ARCHITECTURE §4 refresh (save v3, `DragonState.staggers`, `idleAfterEnter` 1.0, click formula, stagger gold 50% then 10%).
-3. Route the 1.1 review findings to a builder.
+3. ⏳ 1.1 review done; the backdrop agent is fixing it:
+   - **High:** the eye was hidden behind the army and too small. Move it to 35–45% of screen height, center-right, 1.5–2× bigger.
+   - **Medium:** Safari fill (bake the sun glow into the sky, clip the rays, drop the second ray pass).
+   - **Medium:** memory ~128 MB → ≤ 60 MB.
+   - **Low:** stale lighting when the panel opens, the eye schedule not resetting, resize debounce, "saucer" clouds.
+   - **Measured in Chrome:** back layer 0.17 ms CPU + ~1.2 ms GPU; front 0.12 ms + < 0.5 ms. The ~30 fps sample was not the backdrop. **Safari is still unmeasured.**
 4. **Integration and art-direction pass (lead):**
    - Build statically and play the first 3–4 minutes at 1440×900 against the §2 beats.
    - Take screenshots of each beat.
