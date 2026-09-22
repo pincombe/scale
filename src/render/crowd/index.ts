@@ -10,6 +10,7 @@
 import type { Scene } from '../../app/scene';
 import type { Layer, View } from '../types';
 import type { CrowdView, Heraldry } from './api';
+import type { DragonView } from '../dragon/api';
 import type { Rect, Vec2 } from '../../lib/vec';
 import { rect, vec2 } from '../../lib/vec';
 import { mixHex } from '../../lib/color';
@@ -37,11 +38,19 @@ import {
   animDuration,
   oneShotFrame,
 } from './anims';
-import { KnightSheets, lodFor } from './sheets';
+import { KnightSheets, LOD_COUNT, lodFor } from './sheets';
 import { Hero } from './hero';
 import { Arrows } from './arrows';
 import { BannerArt, CountLabels, FLAG_H, FLAG_SMALL, FLAG_W, POLE_DOWN, POLE_UP, defaultHeraldry, drawFinial, drawFlag } from './banner';
 import { HERO_GAP, ROW_SCALE, ROW_Y, SPRITE_CAP, archerSlot, footSlot, isBearer, shownCount, squadSize, type Slot } from './formation';
+
+/** DragonView plus the optional live queries the dragon rig may add (used when present). */
+type LiveDragon = DragonView & {
+  /** Live tail-tip world position. */
+  tailPoint?(out: Vec2): Vec2;
+  /** World x of the far end of the flame at full extent. */
+  breathReachX?(): number;
+};
 
 export interface CrowdRender {
   layer: Layer;
@@ -50,7 +59,8 @@ export interface CrowdRender {
 
 /** Meters per figure unit for a full-size knight. */
 const UNIT = KNIGHT_HEIGHT / 100;
-const MAXK = SPRITE_CAP + 16;
+/** Records: the sprite cap plus room for the surplus knights still merging after a squad change. */
+const MAXK = SPRITE_CAP * 2 + 16;
 
 // Knight modes.
 const M_IDLE = 0;
@@ -63,6 +73,8 @@ const M_FLEE = 6;
 const M_FLUNG = 7;
 const M_DOWN = 8;
 const M_GETUP = 9;
+/** Squad change: a surplus sprite runs into a neighbour and vanishes in a puff of dust. */
+const M_MERGE = 10;
 const M_NONE = 255;
 
 const SK_FOOT = 0;
@@ -121,10 +133,18 @@ export function createCrowd(scene: Scene): CrowdRender {
   const size = new Float32Array(MAXK);
   const style = new Uint8Array(MAXK);
   const bounces = new Uint8Array(MAXK);
+  /** Surplus after a squad change (no longer in the formation), and the record it runs into. */
+  const merge = new Uint8Array(MAXK);
+  const mergeTo = new Int16Array(MAXK);
   /** Marched in from the edge (hops in salute on arrival). */
   const recruit = new Uint8Array(MAXK);
   /** Extra depth (m, +down = toward the viewer): flung and fleeing knights spill in front of the ranks. */
   const lane = new Float32Array(MAXK);
+  const laneMax = new Float32Array(MAXK);
+  /** Where a fleeing knight runs to (m). */
+  const fleeTo = new Float32Array(MAXK);
+  /** Already thrown by the current swipe. */
+  const swept = new Uint8Array(MAXK);
   const pend = new Uint8Array(MAXK).fill(M_NONE);
   const pendT = new Float64Array(MAXK);
   const footRec = new Int16Array(MAXK).fill(-1);
@@ -143,17 +163,22 @@ export function createCrowd(scene: Scene): CrowdRender {
   let now = 0;
   let heroX = -HERO_GAP;
   let lastLod = 0;
+  let prevZoom = 0;
+  let pullT = -10;
   let pal: Palette | null = null;
   let heraldry: Heraldry | null = null;
   let customHeraldry = false;
   let dustSpec: ParticleSpec | null = null;
-  let dustKey = '';
+  let dustPal: Palette | null = null;
   let glintSprite = -1;
   let breathOn = false;
+  let swipeUntil = -1;
+  let flungN = 0;
   let rr = 0x9e3779b9;
   const slot: Slot = { x: 0, row: 0, col: 0 };
   const tmp: Vec2 = vec2();
   const tmpR: Rect = rect();
+  const tmpH: Vec2 = vec2();
   const vis: Rect = rect();
   // CPU timing (debug).
   let cpuAcc = 0;
@@ -169,6 +194,14 @@ export function createCrowd(scene: Scene): CrowdRender {
 
   const alloc = (): number => {
     for (let k = 0; k < MAXK; k++) if (!used[k]) return k;
+    // Full (only possible mid-regroup): retire a merging knight early.
+    for (let k = 0; k < MAXK; k++) {
+      if (used[k] && merge[k]) {
+        used[k] = 0;
+        orderDirty = true;
+        return k;
+      }
+    }
     return -1;
   };
 
@@ -199,6 +232,7 @@ export function createCrowd(scene: Scene): CrowdRender {
     run[k] = seed[k]! * 4;
     pend[k] = M_NONE;
     bounces[k] = 0;
+    merge[k] = 0;
     const sx = slotX(k);
     if (marchIn) {
       scene.camera.visibleRect(vis, 0);
@@ -225,6 +259,37 @@ export function createCrowd(scene: Scene): CrowdRender {
     orderDirty = true;
   };
 
+  /**
+   * Squad size changed (one sprite now stands for more knights): the sprites past the new count
+   * leave the formation and each runs into a neighbour that stays, vanishing in a puff of dust.
+   * Everyone else keeps their slot (slots are index-stable), the hero and the arrows are untouched.
+   */
+  const regroup = (isArcher: boolean, from: number, to: number): void => {
+    if (to >= from) return;
+    const map = isArcher ? archRec : footRec;
+    for (let i = to; i < from; i++) {
+      const k = map[i]!;
+      map[i] = -1;
+      if (k < 0) continue;
+      merge[k] = 1;
+      pend[k] = M_NONE;
+      recruit[k] = 0;
+      // The neighbour: the kept knight at the proportional spot near the back of the new ranks.
+      const j = to > 0 ? Math.min(to - 1, Math.floor((i * to) / from)) : -1;
+      mergeTo[k] = j >= 0 ? map[j]! : -1;
+      if (grounded(mode[k]!)) startMerge(k);
+    }
+  };
+
+  const startMerge = (k: number): void => {
+    const t = mergeTo[k]!;
+    const tx = t >= 0 && used[t] ? kx[t]! : heroX - 1;
+    mode[k] = M_MERGE;
+    t0[k] = now;
+    // Everyone arrives within ~1.8 s, however far back they stood.
+    aux[k] = Math.max(RUN * 1.2, Math.abs(tx - kx[k]!) / 1.8);
+  };
+
   const resortOrder = (): void => {
     // Back rows first; within a row right to left, so every knight's sunlit (right) edge stays
     // visible over its neighbour. Insertion sort on a small key, allocation-free.
@@ -247,6 +312,7 @@ export function createCrowd(scene: Scene): CrowdRender {
 
   /** Pending one-shot: `m` starts at time `at` (a later schedule replaces an earlier one). */
   const schedule = (k: number, m: number, at: number): void => {
+    if (merge[k]) return;
     pend[k] = m;
     pendT[k] = at;
   };
@@ -272,8 +338,8 @@ export function createCrowd(scene: Scene): CrowdRender {
         break;
       case M_FLEE: {
         if (!grounded(cur)) return;
-        const s = Math.sqrt(Math.max(1, dragonSize() / 1.5));
-        aux[k] = kx[k]! - (1.7 + rand() * 1.6) * s;
+        aux[k] = fleeTo[k]!;
+        laneMax[k] = LANE * (0.5 + 0.6 * rand());
         break;
       }
       case M_FLUNG: {
@@ -281,8 +347,10 @@ export function createCrowd(scene: Scene): CrowdRender {
         const f = Math.sqrt(Math.max(1, dragonSize() / 1.5));
         // Wide spread so each ragdoll reads on its own: some skim low, some sail.
         const r1 = rand();
-        vx[k] = -(0.8 + 5.2 * r1) * f;
-        vy[k] = -(3.4 + 6 * rand() * (1 - 0.4 * r1)) * f;
+        vx[k] = -(0.6 + 6.4 * r1) * f;
+        vy[k] = -(3.2 + 6.4 * rand() * (1 - 0.4 * r1)) * f;
+        // Each lands at its own depth in front of the ranks, so the pile spreads out.
+        laneMax[k] = LANE * (0.45 + 1.1 * rand());
         grav[k] = 15 * f;
         spin[k] = (rand() < 0.3 ? 1 : -1) * (8 + 7 * rand());
         rot[k] = 0;
@@ -356,6 +424,9 @@ export function createCrowd(scene: Scene): CrowdRender {
       schedule(k, M_STRIKE, now + seed[k]! * 0.18);
     }
     const looseDef = sheets.frames[sheets.frameIndex(SK_ARCHER, A_STRIKE, 3)]!.anchor;
+    scene.dragon.headPoint(tmp);
+    const headX = tmp.x;
+    const headY = tmp.y;
     const n = e.arrows;
     for (let a = 0; a < n; a++) {
       const i = Math.min(shownA - 1, Math.floor(((a + 0.5) * shownA) / n));
@@ -367,7 +438,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       const y0 = ROW_Y[row[k]!]! + looseDef.launchY * sc;
       scene.dragon.impactPoint(tmp);
       const dist = Math.abs(tmp.x - x0);
-      arrows.fire(x0, y0, tmp.x, tmp.y, now + lead, e.flight - lead, 1.3 + dist * 0.32 + seed[k]! * 0.5 + (a % 3) * 0.3);
+      arrows.fire(x0, y0, tmp.x, tmp.y, now + lead, e.flight - lead, 1.3 + dist * 0.32 + seed[k]! * 0.5 + (a % 3) * 0.3, headX, headY);
     }
   });
 
@@ -381,37 +452,81 @@ export function createCrowd(scene: Scene): CrowdRender {
     }
   };
 
-  /** Fire: knights in its path scatter back; the next ranks crouch; the hero leans into it. */
+  /** Optional live queries the dragon rig may provide (DragonView extensions, coded defensively). */
+  const live = (): LiveDragon => scene.dragon as LiveDragon;
+
+  /** How many knights a swipe may throw: a handful for a newt, a crowd for a barn-sized dragon. */
+  const flingCap = (): number => Math.min(20, Math.max(6, Math.round(4 + dragonSize())));
+
+  /**
+   * Fire: knights in its path scatter back; the next ranks crouch; the hero leans into it. The path
+   * is the rig's flame reach when it tells us (breathReachX), else an estimate from the head.
+   */
   const onBreath = (): void => {
     breathOn = true;
     hero.brace(true);
+    const dv = live();
     scene.dragon.headPoint(tmp);
-    const fireX = tmp.x - Math.max(2.1, 1.5 * dragonSize());
+    const reachX = dv.breathReachX ? dv.breathReachX() : tmp.x - Math.max(2.1, 1.5 * dragonSize());
+    const s = Math.sqrt(Math.max(1, dragonSize() / 1.5));
     for (let k = 0; k < MAXK; k++) {
       if (!used[k]) continue;
       const x = kx[k]!;
-      if (x > fireX) schedule(k, M_FLEE, now + Math.max(0, (tmp.x - x) * 0.02) + rand() * 0.12);
-      else if (x > fireX - 2.5) schedule(k, M_BRACE, now + rand() * 0.25);
+      if (x > reachX) {
+        schedule(k, M_FLEE, now + Math.max(0, (tmp.x - x) * 0.015) + rand() * 0.12);
+        fleeTo[k] = Math.min(x - 1.2 * s, reachX - (0.4 + rand() * 1.4) * s);
+      } else if (x > reachX - 2.5) schedule(k, M_BRACE, now + rand() * 0.25);
     }
   };
 
-  /** Tail swipe: the front of the line goes flying, nearest first as the tail sweeps along. */
+  /**
+   * Tail swipe. With the rig's live tail tip (tailPoint), knights fly exactly when the tail sweeps
+   * through them (see sweepTail, per frame). Without it, the front of the line goes flying on a
+   * timed sweep, nearest first.
+   */
   const onSwipe = (dur: number): void => {
     hero.brace(true);
+    swept.fill(0);
+    flungN = 0;
+    if (live().tailPoint) {
+      swipeUntil = now + dur + 0.25;
+      return;
+    }
     const reach = 1.5 + 0.32 * dragonSize();
     const front = heroX + 0.2;
-    let n = 0;
-    for (let k = 0; k < MAXK && n < 20; k++) {
-      if (!used[k]) continue;
+    const cap = flingCap();
+    for (let k = 0; k < MAXK && flungN < cap; k++) {
+      if (!used[k] || merge[k]) continue;
       const dx = front - kx[k]!;
       if (dx > reach || !grounded(mode[k]!)) continue;
       // Not everyone in reach goes flying: some just get bowled over into a crouch.
-      if (n > 3 && rand() < 0.3) {
-        schedule(k, M_BRACE, now + dur * 0.3);
+      if (flungN > 2 && rand() < 0.3) {
+        schedule(k, M_BRACE, now + dur * 0.15);
         continue;
       }
-      schedule(k, M_FLUNG, now + dur * (0.2 + 0.45 * (dx / reach)) + rand() * 0.08);
-      n++;
+      schedule(k, M_FLUNG, now + dur * (0.05 + 0.2 * (dx / reach)) + rand() * 0.04);
+      flungN++;
+    }
+  };
+
+  /** Per frame during a swipe: throw the grounded knights the live tail tip passes through. */
+  const sweepTail = (): void => {
+    const dv = live();
+    if (now > swipeUntil || !dv.tailPoint) return;
+    dv.tailPoint(tmp);
+    const size = dragonSize();
+    // Only when the tip is down among the knights, not whipping overhead.
+    if (tmp.y < -(KNIGHT_HEIGHT * 1.1 + 0.12 * size)) return;
+    // Generous "near": the whoosh bowls over the rank next to the tip too (a newt's tail only
+    // reaches the hero's shins, but the first footmen should still go tumbling).
+    const r = 1.1 + 0.1 * size;
+    const cap = flingCap();
+    for (let k = 0; k < MAXK && flungN < cap; k++) {
+      if (!used[k] || swept[k] || merge[k] || !grounded(mode[k]!)) continue;
+      if (Math.abs(kx[k]! - tmp.x) > r) continue;
+      swept[k] = 1;
+      enter(k, M_FLUNG);
+      flungN++;
     }
   };
 
@@ -441,8 +556,14 @@ export function createCrowd(scene: Scene): CrowdRender {
     else if (e.phase === 'swipe') onSwipe(e.dur);
     else release();
   });
-  game.on('dragonSpawn', () => release());
-  game.on('dragonDeath', () => onCheer());
+  game.on('dragonSpawn', () => {
+    release();
+    arrows.fadeAll(now);
+  });
+  game.on('dragonDeath', () => {
+    arrows.fadeAll(now);
+    onCheer();
+  });
   game.on('milestone', (e) => onRaise(e.unit === 'archer'));
 
   // ---- view (director + other modules) ----
@@ -488,9 +609,30 @@ export function createCrowd(scene: Scene): CrowdRender {
       enter(k, m);
     }
     const sx = slotX(k);
-    const m = mode[k]!;
+    let m = mode[k]!;
+    if (merge[k] && m !== M_MERGE && grounded(m) && m !== M_FLEE) {
+      startMerge(k);
+      m = M_MERGE;
+    }
     const el = now - t0[k]!;
     switch (m) {
+      case M_MERGE: {
+        const t = mergeTo[k]!;
+        const tx = t >= 0 && used[t] && !merge[t] ? kx[t]! : heroX - 1;
+        const d = tx - kx[k]!;
+        const sp = aux[k]! * dt;
+        if (Math.abs(d) <= Math.max(sp, 0.05)) {
+          puff(kx[k]!, ROW_Y[row[k]!]!, 4, 0.9);
+          used[k] = 0;
+          merge[k] = 0;
+          orderDirty = true;
+        } else {
+          kx[k] = kx[k]! + (d > 0 ? sp : -sp);
+          face[k] = d > 0 ? 1 : -1;
+          run[k] = run[k]! + (dt * Math.min(aux[k]!, 5)) / 1.3;
+        }
+        break;
+      }
       case M_IDLE: {
         if (lane[k]! > 0) lane[k] = Math.max(0, lane[k]! - dt * 0.8);
         const d = sx - kx[k]!;
@@ -502,7 +644,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       case M_MOVE: {
         const d = sx - kx[k]!;
         const sp = aux[k]! * dt;
-        if (lane[k]! > 0) lane[k] = Math.min(lane[k]!, LANE * Math.min(1, Math.abs(d) / 1.6)) - dt * 0.05;
+        if (lane[k]! > 0) lane[k] = Math.min(lane[k]!, laneMax[k]! * Math.min(1, Math.abs(d) / 1.6)) - dt * 0.05;
         if (lane[k]! < 0) lane[k] = 0;
         if (Math.abs(d) <= sp) {
           kx[k] = sx;
@@ -538,7 +680,7 @@ export function createCrowd(scene: Scene): CrowdRender {
         if (el > 6) release();
         break;
       case M_FLEE: {
-        lane[k] = Math.min(LANE * 0.8, lane[k]! + dt * 1.2);
+        lane[k] = Math.min(laneMax[k]!, lane[k]! + dt * 1.2);
         const d = aux[k]! - kx[k]!;
         const sp = RUN * 1.45 * Math.sqrt(Math.max(1, dragonSize() / 1.5)) * dt;
         if (Math.abs(d) <= sp) {
@@ -553,7 +695,7 @@ export function createCrowd(scene: Scene): CrowdRender {
         break;
       }
       case M_FLUNG: {
-        lane[k] = Math.min(LANE, lane[k]! + dt * 0.7);
+        lane[k] = Math.min(laneMax[k]!, lane[k]! + dt * 0.9);
         vy[k] = vy[k]! + grav[k]! * dt;
         kx[k] = kx[k]! + vx[k]! * dt;
         ky[k] = ky[k]! + vy[k]! * dt;
@@ -594,9 +736,8 @@ export function createCrowd(scene: Scene): CrowdRender {
     if (!heraldry || (!customHeraldry && pal !== p)) heraldry = defaultHeraldry(p);
     pal = p;
     bannerArt.update(heraldry, p);
-    const dk = p.haze + p.rim;
-    if (dk !== dustKey) {
-      dustKey = dk;
+    if (p !== dustPal) {
+      dustPal = p;
       const id = scene.atlas.tint(scene.sprites.dust, mixHex(p.haze, p.rim, 0.25));
       dustSpec = particleSpec({ sprite: id, life: 0.85, lifeVar: 0.35, speed: 1.1, speedVar: 0.6, angle: -Math.PI / 2, spread: 1.3, radius: 0.12, gravity: -0.5, drag: 2.6, size: 0.5, sizeEnd: 1.25, sizeVar: 0.35, alpha: 0.42, curve: CURVE_FADE });
     }
@@ -668,7 +809,8 @@ export function createCrowd(scene: Scene): CrowdRender {
     const b = bandCtx!;
     b.setTransform(1, 0, 0, 1, 0, 0);
     b.globalCompositeOperation = 'source-atop';
-    b.globalAlpha = BAND_HAZE[band]!;
+    // Less haze when pulled back: tiny far knights need contrast against the dusk hills.
+    b.globalAlpha = BAND_HAZE[band]! * Math.min(1, Math.max(0.3, fPxu / 1.7));
     b.fillStyle = fPal!.haze;
     b.fillRect(0, 0, bandW, bandH);
     b.globalAlpha = 1;
@@ -700,6 +842,7 @@ export function createCrowd(scene: Scene): CrowdRender {
         sh = 0.022 * Math.sin(now * 0.6 + sd * 70);
         break;
       case M_MOVE:
+      case M_MERGE:
         anim = A_MARCH;
         fi = ((run[k]! * MARCH_FRAMES) | 0) % MARCH_FRAMES;
         fc = face[k]!;
@@ -842,15 +985,22 @@ export function createCrowd(scene: Scene): CrowdRender {
       const nf = s.units.footman;
       const na = s.units.archer;
       const k = squadSize(nf, na);
-      if (k !== squad) {
-        squad = k;
-        snap = true;
-      }
       const tf = Math.min(SPRITE_CAP, shownCount(nf, k));
       const ta = Math.min(SPRITE_CAP, shownCount(na, k));
+      if (k !== squad) {
+        squad = k;
+        if (!snap) {
+          regroup(false, shownF, tf);
+          regroup(true, shownA, ta);
+          shownF = Math.min(shownF, tf);
+          shownA = Math.min(shownA, ta);
+        }
+      }
       if (snap) {
-        for (let i = shownF - 1; i >= 0; i--) deactivate(false, i);
-        for (let i = shownA - 1; i >= 0; i--) deactivate(true, i);
+        for (let k2 = 0; k2 < MAXK; k2++) used[k2] = 0;
+        footRec.fill(-1);
+        archRec.fill(-1);
+        orderDirty = true;
         shownF = shownA = 0;
         arrows.clear();
         hero.snap();
@@ -865,15 +1015,24 @@ export function createCrowd(scene: Scene): CrowdRender {
       snap = false;
       if (orderDirty) resortOrder();
 
+      sweepTail();
       for (let i = 0; i < orderN; i++) updateKnight(order[i]!, dt);
-      hero.update(dt, now);
+      hero.update(dt, now, v.realDt);
       arrows.update(now);
 
-      // Bake upcoming frames at the LOD on screen, a little each frame.
+      // Sprite memory follows the camera: bake the LOD on screen a little each frame (and the next
+      // smaller one while the camera pulls back), release any LOD unused for 3 s.
       const pxu = v.camera.zoomEff * v.dpr * UNIT;
       lastLod = lodFor(pxu);
-      const mask = (shownF > 0 ? 1 : 0) | (shownF > 0 ? 2 : 0) | (shownA > 0 ? 4 : 0) | 1;
-      sheets.prewarm(lastLod, mask, 1.5);
+      const z = v.camera.zoom;
+      if (z < prevZoom * 0.9995) pullT = v.realTime;
+      prevZoom = z;
+      const pulling = v.realTime - pullT < 0.6;
+      sheets.touch(lastLod, v.realTime);
+      if (pulling && lastLod + 1 < LOD_COUNT) sheets.touch(lastLod + 1, v.realTime);
+      const mask = 1 | (shownF > 0 ? 2 : 0) | (shownA > 0 ? 4 : 0);
+      sheets.prewarm(lastLod, mask, 1.5, pulling);
+      sheets.evict(v.realTime, 3);
       cpuAcc += performance.now() - c0;
     },
 
@@ -900,7 +1059,8 @@ export function createCrowd(scene: Scene): CrowdRender {
       // Haze bands: back rows are painted into a strip buffer, pulled toward the haze color, then
       // composited, so overlapping silhouettes separate by depth like a painted host.
       view.bounds(tmpR);
-      const xl = Math.max(0, fA * (tmpR.x - 2.5) + fE);
+      // From the screen's left edge: recruits march in from there, in every row.
+      const xl = 0;
       const xr = Math.min(fW, fA * (heroX + 1.5) + fE);
       const yt = fB * tmpR.x + fD * BAND_TOP + fF;
       const yb = fB * tmpR.x + fD * BAND_BOT + fF;
@@ -962,7 +1122,8 @@ export function createCrowd(scene: Scene): CrowdRender {
         ctx.globalCompositeOperation = 'source-over';
       }
 
-      arrows.draw(ctx, v, now);
+      scene.dragon.headPoint(tmpH);
+      arrows.draw(ctx, v, now, tmpH.x, tmpH.y);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       cpuAcc += performance.now() - c0;
       if (++cpuN >= 30) {
@@ -981,7 +1142,7 @@ export function createCrowd(scene: Scene): CrowdRender {
   dbg.button('regroup', release);
   dbg.button('raise: footmen', () => onRaise(false));
   dbg.button('raise: archers', () => onRaise(true));
-  if (dbg.enabled) (window as unknown as { __crowd?: unknown }).__crowd = { hero, sheets, arrows, bannerArt };
+  if (dbg.enabled) (window as unknown as { __crowd?: unknown }).__crowd = { hero, sheets, arrows, bannerArt, flung: () => flungN };
   scene.debug.watch('crowd', () => `${orderN} spr ×${squad} lod ${lastLod} ${cpuAvg.toFixed(2)} ms ${(sheets.memory() / 1048576).toFixed(1)} MB`);
 
   return { layer, view };

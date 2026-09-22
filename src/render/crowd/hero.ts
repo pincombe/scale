@@ -16,8 +16,12 @@ export const HERO_SCALE = 1.1;
 const UNIT = (KNIGHT_HEIGHT / 100) * HERO_SCALE;
 /** Swing duration (s) and its phases as fractions: windup end, slash end. */
 const SWING = 0.36;
-const U_WIND = 0.2;
-const U_SLASH = 0.42;
+// The guard is already cocked, so the windup is a 20 ms snap and the blade lands ~70 ms after the
+// click, in step with the sparks and numbers.
+const U_WIND = 0.055;
+const U_SLASH = 0.2;
+/** Largest offscreen buffer side (px). Past it the hero renders at reduced resolution, upscaled. */
+const MAX_BUF = 2048;
 /** How long the arc lingers after the blade stops (s), and the smear window (s). */
 const ARC_LINGER = 0.09;
 const ARC_WINDOW = 0.1;
@@ -30,9 +34,10 @@ const BY1 = 12;
 const CAPE_N = 8;
 /** Plume spine (figure units from the helm peak) and half-widths: rises, curls back, droops. */
 const PLUME_N = 7;
-const PLUME_X = [3, -3, -11, -20, -29, -37, -44];
-const PLUME_Y = [-1, -8, -11, -10, -6, 0, 8];
-const PLUME_W = [4.5, 7, 8.5, 8.5, 7, 4.5, 1.2];
+// Rooted in the bascinet's peak, then trailing back and down past the nape.
+const PLUME_X = [1, -5, -12, -19, -25, -30, -33];
+const PLUME_Y = [4, -2, -4, -1, 5, 13, 22];
+const PLUME_W = [3.5, 6, 6.8, 6.2, 5, 3.2, 0.8];
 const CAPE_SEG = 7.4;
 
 const enum Mode {
@@ -53,7 +58,8 @@ function P(o: Partial<Pose>): Pose {
   return Object.assign(new Pose(), o);
 }
 
-const GUARD = P({ hipX: 0, hipY: -47, lean: 0.05, head: 0.0, aFootX: 11, bFootX: -10, nHandX: 12, nHandY: -62, shield: 0.06, fHandX: 6, fHandY: -58, weapon: -1.1 });
+// Guard: sword cocked high over the shoulder, ready to fall.
+const GUARD = P({ hipX: 0, hipY: -47, lean: 0.05, head: 0.0, aFootX: 11, bFootX: -10, nHandX: 12, nHandY: -62, shield: 0.06, fHandX: 3, fHandY: -70, weapon: -1.85 });
 const BRACE = P({ hipX: -3, hipY: -39, lean: 0.42, head: 0.22, aFootX: 17, bFootX: -14, nHandX: 22, nHandY: -60, shield: -0.16, fHandX: -2, fHandY: -50, weapon: 2.2 });
 const CHEER = P({ hipX: 0, hipY: -47, lean: -0.06, head: -0.3, aFootX: 9, bFootX: -8, nHandX: 6, nHandY: -66, shield: -0.2, fHandX: 8, fHandY: -114, weapon: -1.57 });
 // Forehand: cock the sword high behind the helm, smash it down and forward.
@@ -102,8 +108,9 @@ export class Hero {
   private buf: HTMLCanvasElement | null = null;
   private bctx: CanvasRenderingContext2D | null = null;
   private shieldFace: HTMLCanvasElement | null = null;
-  private shieldKey = '';
-  private colorsKey = '';
+  private artPal: Palette | null = null;
+  private artHer: Heraldry | null = null;
+  private bufSmallT = 0;
   private mid = '#888';
   private plumeHi = '#f88';
   private plumeLo = '#800';
@@ -212,9 +219,15 @@ export class Hero {
     return this.y + this.hop(this.now);
   }
 
-  update(dt: number, now: number): void {
+  update(dt: number, now: number, realDt: number): void {
     this.now = now;
     if (this.pendingStrike >= 0 && now >= this.pendingStrike) this.start(now);
+    // Hit-stop / pause freezes the clock right after a click: freeze the hero AT contact (blade
+    // through the target, smear drawn), never in the windup.
+    if (dt === 0 && realDt > 0) {
+      const u = (now - this.strikeT0) / SWING;
+      if (u >= 0 && u < U_SLASH) this.strikeT0 = now - SWING * U_SLASH;
+    }
     const target = this.mode === Mode.Brace ? 1 : 0;
     this.braceW += (target - this.braceW) * (1 - Math.exp(-12 * dt));
     this.poseAt(now, this.pose);
@@ -299,18 +312,16 @@ export class Hero {
   }
 
   private ensureArt(p: Palette, h: Heraldry): void {
-    const ck = p.rim + p.silhouette + p.accent.banner + p.accent.glow;
-    if (ck !== this.colorsKey) {
-      this.colorsKey = ck;
+    if (p === this.artPal && h === this.artHer) return;
+    if (p !== this.artPal) {
       this.mid = mixHex(p.rim, p.silhouette, 0.58);
       this.plumeHi = mixHex(p.accent.banner, p.rim, 0.55);
       this.plumeLo = mixHex(p.accent.banner, p.silhouette, 0.45);
       this.arcBand = new AlphaRamp(p.accent.glow);
       this.arcEdge = new AlphaRamp('#ffffff');
     }
-    const sk = h.field + h.tincture + h.charge + p.silhouette + p.rim;
-    if (sk === this.shieldKey) return;
-    this.shieldKey = sk;
+    this.artPal = p;
+    this.artHer = h;
     // Shield face: the coat of arms in the kite, turned away from the sun (so in shade).
     const s = 4;
     const c = makeCanvas(30 * s, 54 * s);
@@ -457,15 +468,31 @@ export class Hero {
     this.plumeFill = p.accent.banner;
     const cam = v.camera;
     const dpr = v.dpr;
-    const pxu = cam.zoomEff * dpr * UNIT;
     const pad = 2;
+    // Render scale (device px per figure unit), capped so the buffer never exceeds MAX_BUF: a
+    // hero bigger than that (M2 close-ups) is upscaled a little rather than vanishing.
+    let pxu = cam.zoomEff * dpr * UNIT;
+    const big = Math.max(BX1 - BX0, BY1 - BY0) * pxu + pad * 2;
+    if (big > MAX_BUF) pxu *= MAX_BUF / big;
     const bw = Math.ceil((BX1 - BX0) * pxu + pad * 2);
     const bh = Math.ceil((BY1 - BY0) * pxu + pad * 2);
-    if (bw > 4096 || bh > 4096 || bw < 2) return;
-    if (!this.buf || this.buf.width < bw || this.buf.height < bh) {
-      this.buf = makeCanvas(Math.max(bw, this.buf?.width ?? 0), Math.max(bh, this.buf?.height ?? 0));
+    if (bw < 2) return;
+    const buf = this.buf;
+    if (!buf || buf.width < bw || buf.height < bh) {
+      this.buf = makeCanvas(Math.max(bw, buf?.width ?? 0), Math.max(bh, buf?.height ?? 0));
       this.bctx = context2d(this.buf);
-    }
+      this.bufSmallT = 0;
+    } else if (buf.width * buf.height > 2.5 * bw * bh) {
+      // Shrink after the camera has pulled back for a while (don't thrash on zoom punches).
+      if (this.bufSmallT === 0) this.bufSmallT = v.realTime;
+      else if (v.realTime - this.bufSmallT > 2) {
+        buf.width = 0;
+        buf.height = 0;
+        this.buf = makeCanvas(bw, bh);
+        this.bctx = context2d(this.buf);
+        this.bufSmallT = 0;
+      }
+    } else this.bufSmallT = 0;
     const b = this.bctx!;
     b.setTransform(1, 0, 0, 1, 0, 0);
     b.globalCompositeOperation = 'source-over';

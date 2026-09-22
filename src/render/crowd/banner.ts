@@ -8,6 +8,7 @@ import { context2d, makeCanvas } from '../atlas';
 import { mixHex } from '../../lib/color';
 import type { Palette } from '../palette';
 import type { Heraldry } from './api';
+import { fmt } from '../../core/format';
 
 export type { Heraldry } from './api';
 
@@ -59,13 +60,14 @@ export class BannerArt {
   readonly tex: HTMLCanvasElement[][] = [];
   /** Device px per figure unit each size was baked at. */
   static readonly SCALE = [3.2, 0.9] as const;
-  private key = '';
+  private her: Heraldry | null = null;
+  private pal: Palette | null = null;
 
-  /** (Re)bake if the heraldry or palette changed. */
+  /** (Re)bake if the heraldry or palette object changed (compared by identity: no per-frame work). */
   update(h: Heraldry, p: Palette): void {
-    const key = h.field + h.tincture + h.charge + p.rim + p.silhouette;
-    if (key === this.key) return;
-    this.key = key;
+    if (h === this.her && p === this.pal) return;
+    this.her = h;
+    this.pal = p;
     this.tex.length = 0;
     for (const s of BannerArt.SCALE) this.tex.push(bakeCloth(h, p, Math.ceil(FLAG_W * s), Math.ceil(FLAG_H * s)));
   }
@@ -206,14 +208,20 @@ export function drawFinial(ctx: CanvasRenderingContext2D, x: number, y: number, 
   ctx.fill();
 }
 
-/** Squad size plates ("x25") for banners once one sprite stands for many knights. Cached per count. */
+/** Squad size plates ("×25", "×2.50K") for banners once one sprite stands for many knights. */
 export class CountLabels {
   private readonly cache = new Map<number, HTMLCanvasElement>();
+  private pal: Palette | null = null;
 
+  /** Cached per count, for the current palette (a new palette clears the cache). */
   get(n: number, p: Palette): HTMLCanvasElement {
+    if (p !== this.pal) {
+      this.pal = p;
+      this.cache.clear();
+    }
     let c = this.cache.get(n);
     if (c) return c;
-    const text = '×' + (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n));
+    const text = '×' + fmt(n);
     const fs = 40;
     c = makeCanvas(fs * (0.8 + text.length * 0.62), fs * 1.3);
     const x = context2d(c);

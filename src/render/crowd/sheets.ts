@@ -10,8 +10,8 @@
 import { context2d, makeCanvas } from '../atlas';
 import { mixHex } from '../../lib/color';
 import type { Palette } from '../palette';
-import { ANIM_COUNT, A_BRACE, A_CHEER, A_DOWN, A_FLEE, A_FLUNG, A_GETUP, A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_RAISE, A_STRIKE, SHEET_KINDS, buildAnims, type AnimDef, type SheetKind } from './anims';
-import { Joints, anchors, drawDetails, drawFigure, figureBounds, solve, type Anchors, type FigureKind } from './rig';
+import { A_BRACE, A_CHEER, A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_RAISE, A_STRIKE, SHEET_KINDS, buildAnims, type AnimDef, type SheetKind } from './anims';
+import { Joints, anchors, drawDetails, drawFigure, figureBounds, solve, type Anchors, type FigureKind, type Pose } from './rig';
 
 export const LOD_SCALE = [3.4, 1.7, 0.85, 0.42] as const;
 export const LOD_COUNT = LOD_SCALE.length;
@@ -60,6 +60,12 @@ export class KnightSheets {
   private readonly j = new Joints();
   /** Prewarm cursor per LOD. */
   private readonly warm = new Array<number>(LOD_COUNT).fill(0);
+  /** Whether any canvas is held per LOD, and when each LOD was last on screen (wall s). */
+  private readonly held = new Uint8Array(LOD_COUNT);
+  private readonly lastUse = new Float64Array(LOD_COUNT);
+  private scratch: HTMLCanvasElement | null = null;
+  private sctx: CanvasRenderingContext2D | null = null;
+  private midFar = '#888';
 
   constructor() {
     const b = { x0: 0, y0: 0, x1: 0, y1: 0 };
@@ -113,12 +119,14 @@ export class KnightSheets {
     this.palette = p;
     this.rim = p.rim;
     this.mid = mixHex(p.rim, p.silhouette, 0.58);
+    this.midFar = mixHex(p.rim, p.silhouette, 0.4);
     this.sil = p.silhouette;
     this.lx = p.light.x;
     this.ly = p.light.y;
     if (!same) {
       for (const f of this.frames) f.canv.fill(null);
       this.warm.fill(0);
+      this.held.fill(0);
     }
   }
 
@@ -131,18 +139,44 @@ export class KnightSheets {
     const f = this.frames[fi]!;
     const c = f.canv[lod];
     if (c) return c;
+    this.held[lod] = 1;
     return this.bake(f, lod);
   }
 
+  /** Mark a LOD as in use at wall time `t` (seconds). */
+  touch(lod: number, t: number): void {
+    this.lastUse[lod] = t;
+  }
+
   /**
-   * Bake frames ahead of need within a time budget: the LOD on screen first, then the next smaller
-   * one (the camera mostly pulls back), most common animations first, so neither the first swing
-   * nor a zoom-out ever hitches.
+   * Release every LOD not used for `idle` seconds: sprite memory follows the camera instead of
+   * accumulating (the biggest LOD is only needed while the dragons are small).
    */
-  prewarm(lod: number, kindsMask: number, budgetMs: number): void {
+  evict(t: number, idle: number): void {
+    for (let l = 0; l < LOD_COUNT; l++) {
+      if (!this.held[l] || t - this.lastUse[l]! < idle) continue;
+      for (const f of this.frames) {
+        const c = f.canv[l];
+        if (!c) continue;
+        // Zero-size first so the backing store is released now, not at the next GC.
+        c.width = 0;
+        c.height = 0;
+        f.canv[l] = null;
+      }
+      this.held[l] = 0;
+      this.warm[l] = 0;
+    }
+  }
+
+  /**
+   * Bake the common frames ahead of need within a time budget: the LOD on screen, and (while the
+   * camera pulls back) the next smaller one, so neither the first swing nor a zoom-out hitches.
+   * Rare poses (flung, fleeing, getting up) bake on first use.
+   */
+  prewarm(lod: number, kindsMask: number, budgetMs: number, lookahead: boolean): void {
     const t0 = performance.now();
     if (!this.warmLod1(lod, kindsMask, t0, budgetMs)) return;
-    if (lod + 1 < LOD_COUNT) this.warmLod1(lod + 1, kindsMask, t0, budgetMs);
+    if (lookahead && lod + 1 < LOD_COUNT) this.warmLod1(lod + 1, kindsMask, t0, budgetMs);
   }
 
   /** Returns true when this LOD is fully warm (for the kinds in the mask). */
@@ -163,6 +197,7 @@ export class KnightSheets {
             this.warm[lod] = cur;
             return false;
           }
+          this.held[lod] = 1;
           this.bake(f, lod);
         }
       } else complete = false;
@@ -177,40 +212,76 @@ export class KnightSheets {
     const s = LOD_SCALE[lod]!;
     const w = Math.ceil((f.x1 - f.x0) * s + PAD * 2);
     const h = Math.ceil((f.y1 - f.y0) * s + PAD * 2);
-    const c = makeCanvas(w, h);
-    const ctx = context2d(c);
+    // Paint into a shared scratch canvas at the conservative size, then crop to the pixels
+    // actually drawn (the pose bounds are generous; cropping saves about a quarter of the memory).
+    if (!this.scratch || this.scratch.width < w || this.scratch.height < h) {
+      this.scratch = makeCanvas(Math.max(w, this.scratch?.width ?? 0), Math.max(h, this.scratch?.height ?? 0));
+      this.sctx = this.scratch.getContext('2d', { willReadFrequently: true });
+      if (!this.sctx) throw new Error('Canvas 2D is not available');
+    }
+    const ctx = this.sctx!;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, w, h);
     const pose = this.sets[SHEET_KINDS.indexOf(f.kind)]!.defs[f.anim]!.poses[f.poseIndex]!;
     const j = solve(pose, this.j);
     const kind: FigureKind = f.kind;
-    // Rim thickness in figure units: ~1.6 CSS px at the base framing, never under ~1.4 device px.
-    const rimU = Math.max(0.95, 1.45 / s);
+    // Rim thickness in figure units: ~1.6 CSS px at the base framing; thicker at the small LODs so
+    // a far host still separates from the dusk hills.
+    const rimU = Math.max(0.95, (lod >= 2 ? 2.1 : 1.45) / s);
     const minW = 1.25 / s;
     const mx = f.mirror ? -s : s;
     // Canvas x = (x' - x0) * s + PAD, where x' = -x for mirrored frames (x0 is already mirrored).
     const e0 = PAD - f.x0 * s;
     const f0 = PAD - f.y0 * s;
-    const pass = (color: string, off: number): void => {
-      ctx.fillStyle = color;
-      ctx.strokeStyle = color;
-      ctx.setTransform(mx, 0, 0, s, e0 - this.lx * off * s, f0 - this.ly * off * s);
-      drawFigure(ctx, kind, pose, j, minW);
-    };
-    pass(this.rim, 0);
+    this.pass(ctx, kind, pose, j, minW, this.rim, 0, mx, s, e0, f0);
     ctx.globalCompositeOperation = 'source-atop';
-    pass(this.mid, rimU * 0.5);
-    pass(this.sil, rimU * 1.05);
+    this.pass(ctx, kind, pose, j, minW, lod >= 2 ? this.midFar : this.mid, rimU * 0.5, mx, s, e0, f0);
+    this.pass(ctx, kind, pose, j, minW, this.sil, rimU * 1.05, mx, s, e0, f0);
     ctx.setTransform(mx, 0, 0, s, e0, f0);
     drawDetails(ctx, kind, j, this.rim);
     ctx.globalCompositeOperation = 'source-over';
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
+    // Crop to the alpha bounds.
+    const data = ctx.getImageData(0, 0, w, h).data;
+    let cx0 = w;
+    let cy0 = h;
+    let cx1 = -1;
+    let cy1 = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w * 4 + 3;
+      for (let x = 0; x < w; x++) {
+        if (data[row + x * 4]! === 0) continue;
+        if (x < cx0) cx0 = x;
+        if (x > cx1) cx1 = x;
+        if (y < cy0) cy0 = y;
+        cy1 = y;
+      }
+    }
+    if (cx1 < 0) {
+      cx0 = cy0 = 0;
+      cx1 = cy1 = 0;
+    }
+    const cw = cx1 - cx0 + 1;
+    const ch = cy1 - cy0 + 1;
+    const c = makeCanvas(cw, ch);
+    context2d(c).drawImage(this.scratch!, cx0, cy0, cw, ch, 0, 0, cw, ch);
+
     f.canv[lod] = c;
     const o = lod * 4;
-    f.dest[o] = f.x0 - PAD / s;
-    f.dest[o + 1] = f.y0 - PAD / s;
-    f.dest[o + 2] = w / s;
-    f.dest[o + 3] = h / s;
+    f.dest[o] = f.x0 + (cx0 - PAD) / s;
+    f.dest[o + 1] = f.y0 + (cy0 - PAD) / s;
+    f.dest[o + 2] = cw / s;
+    f.dest[o + 3] = ch / s;
     return c;
+  }
+
+  private pass(ctx: CanvasRenderingContext2D, kind: FigureKind, pose: Pose, j: Joints, minW: number, color: string, off: number, mx: number, s: number, e0: number, f0: number): void {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.setTransform(mx, 0, 0, s, e0 - this.lx * off * s, f0 - this.ly * off * s);
+    drawFigure(ctx, kind, pose, j, minW);
   }
 
   /** Bytes held by baked canvases (debug watch). */
@@ -221,5 +292,5 @@ export class KnightSheets {
   }
 }
 
-const WARM_ORDER = [A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_STRIKE, A_CHEER, A_BRACE, A_DOWN, A_FLUNG, A_GETUP, A_RAISE, A_FLEE];
-if (WARM_ORDER.length !== ANIM_COUNT) throw new Error('crowd: WARM_ORDER must list every animation');
+/** Frames baked ahead of need (everything the army does every minute); the rest bake on first use. */
+const WARM_ORDER = [A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_STRIKE, A_CHEER, A_BRACE, A_RAISE];

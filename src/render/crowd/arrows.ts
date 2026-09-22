@@ -9,6 +9,8 @@ import type { Palette } from '../palette';
 const CAP = 256;
 /** Seconds an arrow stays stuck in its target after landing, fading. */
 const STICK = 0.32;
+/** Fade time (s) for arrows whose target died. */
+const FADE = 0.25;
 /** Arrow length in meters, and minimum on-screen length in CSS px. */
 const ARROW_M = 0.82;
 const ARROW_MIN_PX = 11;
@@ -22,17 +24,22 @@ export class Arrows {
   private readonly t0 = new Float64Array(CAP);
   private readonly T = new Float32Array(CAP);
   private readonly live = new Uint8Array(CAP);
+  /** Live-target anchor at fire time (the dragon's head): arrows follow it as the dragon moves. */
+  private readonly ax = new Float32Array(CAP);
+  private readonly ay = new Float32Array(CAP);
+  /** Time the arrow started fading (target gone), or Infinity. */
+  private readonly dieAt = new Float64Array(CAP).fill(Infinity);
   private head = 0;
   count = 0;
   private sprite: HTMLCanvasElement | null = null;
   private trail: HTMLCanvasElement | null = null;
-  private key = '';
+  private pal: Palette | null = null;
 
   /**
    * Schedule an arrow: leaves (x, y) at time `launch`, lands on (tx, ty) at `launch + T`.
    * The arc peaks roughly `lift` m above the higher end.
    */
-  fire(x: number, y: number, tx: number, ty: number, launch: number, T: number, lift: number): void {
+  fire(x: number, y: number, tx: number, ty: number, launch: number, T: number, lift: number, anchorX: number, anchorY: number): void {
     let i = this.head;
     for (let k = 0; k < CAP; k++) {
       const j = (this.head + k) % CAP;
@@ -53,6 +60,20 @@ export class Arrows {
     this.t0[i] = launch;
     this.T[i] = t;
     this.live[i] = 1;
+    this.ax[i] = anchorX;
+    this.ay[i] = anchorY;
+    this.dieAt[i] = Infinity;
+  }
+
+  /** The target is gone (dragon died / despawned): arrows in the air fade, unlaunched ones vanish. */
+  fadeAll(now: number): void {
+    for (let i = 0; i < CAP; i++) {
+      if (!this.live[i]) continue;
+      if (now < this.t0[i]!) {
+        this.live[i] = 0;
+        this.count--;
+      } else if (this.dieAt[i] === Infinity) this.dieAt[i] = now;
+    }
   }
 
   clear(): void {
@@ -63,7 +84,7 @@ export class Arrows {
   update(now: number): void {
     if (this.count === 0) return;
     for (let i = 0; i < CAP; i++) {
-      if (this.live[i] && now > this.t0[i]! + this.T[i]! + STICK) {
+      if (this.live[i] && (now > this.t0[i]! + this.T[i]! + STICK || now > this.dieAt[i]! + FADE)) {
         this.live[i] = 0;
         this.count--;
       }
@@ -71,9 +92,8 @@ export class Arrows {
   }
 
   private bake(p: Palette): void {
-    const key = p.silhouette + p.rim + p.accent.glow;
-    if (key === this.key) return;
-    this.key = key;
+    if (p === this.pal) return;
+    this.pal = p;
     // Shaft, head and fletching pointing along +x; a lit top edge.
     const w = 96;
     const h = 14;
@@ -127,8 +147,11 @@ export class Arrows {
     this.trail = t;
   }
 
-  /** Draw live arrows. Leaves ctx transform at identity * dpr is NOT restored: caller resets. */
-  draw(ctx: CanvasRenderingContext2D, v: View, now: number): void {
+  /**
+   * Draw live arrows (the caller resets the transform afterwards). (hx, hy) is the live anchor:
+   * each arrow's arc bends smoothly toward where its target has moved since it was loosed.
+   */
+  draw(ctx: CanvasRenderingContext2D, v: View, now: number, hx: number, hy: number): void {
     if (this.count === 0) return;
     this.bake(v.palette);
     const spr = this.sprite!;
@@ -157,11 +180,23 @@ export class Arrows {
           alpha = 1 - (tau - T) / STICK;
           tau = T;
         }
+        const dAt = this.dieAt[i]!;
+        if (now > dAt) {
+          alpha *= 1 - (now - dAt) / FADE;
+          if (alpha <= 0.01) continue;
+        }
         const g = this.g[i]!;
-        const vx = this.vx[i]!;
-        const vy = this.vy[i]! + g * tau;
-        const wx = this.x0[i]! + vx * tau;
-        const wy = this.y0[i]! + this.vy[i]! * tau + 0.5 * g * tau * tau;
+        // Retarget: blend in the anchor's motion with a smoothstep over the flight (velocity
+        // stays tangent: the added term's slope is 0 at launch and at landing).
+        const u = tau / T;
+        const bl = u * u * (3 - 2 * u);
+        const dbl = (6 * u * (1 - u)) / T;
+        const offX = hx - this.ax[i]!;
+        const offY = hy - this.ay[i]!;
+        const vx = this.vx[i]! + offX * dbl;
+        const vy = this.vy[i]! + g * tau + offY * dbl;
+        const wx = this.x0[i]! + this.vx[i]! * tau + offX * bl;
+        const wy = this.y0[i]! + this.vy[i]! * tau + 0.5 * g * tau * tau + offY * bl;
         const sx = A * wx + C * wy + E;
         const sy = B * wx + D * wy + F;
         // Screen-space direction of travel.
