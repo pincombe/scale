@@ -8,7 +8,13 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 - **Done and committed:**
   - 0.1, 0.2, 0.3.
   - 1.1 backdrop (+ review fixes), 1.2 dragon rig, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
-- **In flight:** the **M1 milestone review** (reviewer, whole build; brief in the lead's scratchpad `brief-m1-review.md`). It checks the first 3–4 minutes as a judge, integration bugs, end-to-end performance at 1440×900 DPR 2, size and constraints, and gives a blunt feel verdict. After it: fix any blockers, then the ★ playtest handoff.
+- **In flight:** the pre-playtest fix round from the M1 milestone review (no blockers; five feel fixes):
+  1. Sim/core: a faster early dragon size curve (engaged ~1.5–2 m at 1:00, ~4–5 m at 2:00, ~10–13 m at 3:00) and a non-aimer sim profile targeting ≤ ~9 s per kill in 0:40–2:00.
+  2. Juice: fade click/crit numbers on death so "+N" is clear; keep "STAGGERED!" above crit numbers; give army numbers their own band on small dragons.
+  3. Crowd: the hero's lunge scales with dragon size so he stops hiding the newt.
+  4. HUD: the first kill's gold counts up from 0.
+  
+  The inline SVG favicon is done. Then comes a final check, commit and the ★ playtest handoff.
 - **All M1 WPs have landed, been reviewed and been fixed:** 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 (+1.9b), 1.10 framing. HEAD 6544218. `npm run check` green (236 tests), sim 35/35, build 425 KB raw / 190 KB gzip.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
   1. Run `git status`. It should be clean. Everything is committed as of 6544218.
@@ -334,3 +340,4 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: WP 1.10 framing (8086746): hero 29% of stage height, clash point ~40%, dragon share of width 25% → 44% from 1 m to 10 m (capped by the base framing until ~3 m), crowd LODs raised. Polish round sent: crowd gap, HUD toasts, size-scaled enter/dying.
 - 2026-09-22: 1.2 review: good shape, within budget (draw 0.06–0.11 ms); 1 high (swipe tail target on top of the scale) + 5 lower. Fix round sent with art notes; grass clearing sent to backdrop. M2 extensibility notes recorded.
 - 2026-09-23: Polish round landed: crowd gap (c544733), grass clearing (ecfa2ff), premium toasts (d6ab8fc), size-scaled enter/dying (2925c0f), dragon fix round incl. presence at 1–3 m and big-dragon cues (6544218). Lead spot check on a static build: title, first kill, Hire button, dragon-12 composition and dragon-20 fire breath look good. M1 milestone review launched.
+- 2026-09-23: M1 milestone review: no blockers; console clean over 2.5 min of play; only one network request (the page); synthetic CPU 1.3–3.7 ms avg per frame (the pane was hidden, so no real FPS). Feel: minute one hooks (title, first strike, first kill); weakest stretch 0:40–2:00 for non-aimers (10–14 s per kill, small dragon, empty right half); most impressive: the eye opening in the hills at ~2:30, then the 41 m breath. The ?debug-only "Hire button and panel together" glitch can't happen in normal play. Fix round sent (sim, juice, crowd, HUD); favicon added.
