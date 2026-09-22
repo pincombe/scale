@@ -9,4 +9,19 @@ export interface CrowdView {
   frontX(): number;
   /** World AABB of the part of the army worth framing (hero + visible formation). */
   bounds(out: Rect): Rect;
+  /**
+   * Fly this coat of arms on every banner and the hero's shield (re-bakes the cloth once).
+   * Optional so null stand-ins stay valid; the real crowd always implements it.
+   */
+  setHeraldry?(h: Heraldry): void;
+}
+
+/** A coat of arms (M1: placeholder red field, gold sword; the M2 Heraldry WP extends it). */
+export interface Heraldry {
+  /** Field color (CSS hex). */
+  field: string;
+  /** Charge color (CSS hex). */
+  tincture: string;
+  /** Charge id: 'sword' | 'none' in M1. */
+  charge: string;
 }

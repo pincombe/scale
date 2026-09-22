@@ -1,0 +1,79 @@
+<!doctype html>
+<!-- Dev-only sprite gallery for the knight crowd (not part of the build). Open
+     /src/render/crowd/gallery.html?lod=0&zoom=1&kinds=0,1,2&anims=0,1,2 on the dev server. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>crowd gallery</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #222; }
+      canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <script type="module">
+      import { KnightSheets, LOD_SCALE } from './sheets.ts';
+      import { MEADOW } from '../palette.ts';
+      const q = new URLSearchParams(location.search);
+      if (q.has('view')) {
+        // Crop viewer: the game tab posts canvas crops here (BroadcastChannel 'crowd-crop').
+        const o = document.getElementById('c');
+        const d = devicePixelRatio;
+        o.width = innerWidth * d;
+        o.height = innerHeight * d;
+        const c = o.getContext('2d');
+        new BroadcastChannel('crowd-crop').onmessage = (e) => {
+          const bmp = e.data;
+          const k = Math.min(o.width / bmp.width, o.height / bmp.height);
+          c.fillStyle = '#000';
+          c.fillRect(0, 0, o.width, o.height);
+          c.drawImage(bmp, 0, 0, bmp.width * k, bmp.height * k);
+        };
+        throw new Error('viewer mode');
+      }
+      const lod = Number(q.get('lod') ?? 0);
+      const zoom = Number(q.get('zoom') ?? 1);
+      const kinds = (q.get('kinds') ?? '0,1,2').split(',').map(Number);
+      const anims = q.get('anims') ? q.get('anims').split(',').map(Number) : null;
+      const o = document.getElementById('c');
+      const d = devicePixelRatio;
+      o.width = innerWidth * d;
+      o.height = innerHeight * d;
+      const c = o.getContext('2d');
+      const g = c.createLinearGradient(0, 0, 0, o.height);
+      g.addColorStop(0, '#5a3354');
+      g.addColorStop(0.6, '#f0a656');
+      g.addColorStop(1, '#ffd98f');
+      c.fillStyle = g;
+      c.fillRect(0, 0, o.width, o.height);
+      const sh = new KnightSheets();
+      sh.setPalette(MEADOW);
+      const s = LOD_SCALE[lod] * zoom;
+      let x = 20, y = 10;
+      const rowH = 190 * s;
+      for (const k of kinds) {
+        const set = sh.sets[k];
+        for (let a = 0; a < set.defs.length; a++) {
+          if (anims && !anims.includes(a)) continue;
+          for (let i = 0; i < set.defs[a].poses.length; i++) {
+            const fi = set.first[a] + i;
+            const f = sh.frames[fi];
+            const cv = sh.canvas(fi, lod);
+            const dst = f.dest;
+            const w = (f.x1 - f.x0) * s;
+            if (x + w > o.width - 20) { x = 20; y += rowH; }
+            const ox = x - f.x0 * s;
+            const oy = y + 150 * s;
+            c.drawImage(cv, ox + dst[lod * 4] * s, oy + dst[lod * 4 + 1] * s, dst[lod * 4 + 2] * s, dst[lod * 4 + 3] * s);
+            x += w + 10;
+          }
+          x += 30;
+        }
+        x = 20;
+        y += rowH;
+      }
+      document.title = `crowd gallery ${sh.frames.length} frames ${(sh.memory() / 1048576).toFixed(1)} MB`;
+    </script>
+  </body>
+</html>
