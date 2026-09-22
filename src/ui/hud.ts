@@ -125,7 +125,14 @@ function createGold(scene: Scene, ui: UiRoot): void {
     const s = scene.game.state;
     const on = !!s.flags['feature.gold'];
     if (on && box.hidden) {
-      snap(s);
+      if (scene.input.hasStarted) {
+        // Revealed in play (the first kill): start at 0 so the count-up runs as the coins land.
+        shown = 0;
+        target = 0;
+        rate = 0;
+        hold = 0;
+        finite = true;
+      } else snap(s); // a loaded save: just be right
       show(shown);
       box.hidden = false;
       box.classList.add('enter');
