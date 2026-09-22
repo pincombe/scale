@@ -48,9 +48,11 @@ export interface VoiceCap {
 }
 
 /**
- * Per-category polyphony and rate limiter. `tryStart` is called with the audio clock; it accepts a
- * voice (recording when it ends) or rejects it when the category is full or the last voice started
- * inside the merge window. Allocation-free after construction.
+ * Per-category polyphony and rate limiter. `claim` is called with the voice's start time on the
+ * audio clock; it accepts a voice (recording when it ends) or rejects it when the category is full
+ * or another voice starts within the merge window (either side: voices may be scheduled ahead).
+ * `setEnd` re-times a claimed slot once the real end is known, or frees it early (a choked voice).
+ * Allocation-free after construction.
  */
 export class VoiceLimiter<K extends string> {
   private readonly ends = new Map<K, Float64Array>();
@@ -71,26 +73,58 @@ export class VoiceLimiter<K extends string> {
     return n;
   }
 
+  /** Is `now` inside the merge window of the category's last voice? */
+  inGap(cat: K, now: number): boolean {
+    return Math.abs(now - this.last.get(cat)!) < this.caps[cat].gap;
+  }
+
   /** Would a voice be accepted right now (without claiming it)? */
   canStart(cat: K, now: number): boolean {
     const cap = this.caps[cat];
-    if (now - this.last.get(cat)! < cap.gap) return false;
+    if (Math.abs(now - this.last.get(cat)!) < cap.gap) return false;
     return this.active(cat, now) < cap.max;
   }
 
-  /** Claim a slot for a voice lasting `dur` seconds. Returns false if it must be dropped. */
-  tryStart(cat: K, now: number, dur: number): boolean {
+  /** Claim a slot for a voice lasting `dur` seconds. Returns the slot, or -1 if it must be dropped. */
+  claim(cat: K, now: number, dur: number): number {
     const cap = this.caps[cat];
-    if (now - this.last.get(cat)! < cap.gap) return false;
+    if (Math.abs(now - this.last.get(cat)!) < cap.gap) return -1;
     const e = this.ends.get(cat)!;
     for (let i = 0; i < e.length; i++) {
       if (e[i]! <= now) {
         e[i] = now + dur;
         this.last.set(cat, now);
-        return true;
+        return i;
       }
     }
-    return false;
+    return -1;
+  }
+
+  /**
+   * Like `claim`, but when the category is full it takes over the slot that frees soonest (the
+   * most-decayed voice), so the newest hit is never silent. The caller fades out that slot's old
+   * voice. Still returns -1 inside the merge window.
+   */
+  claimOrSteal(cat: K, now: number, dur: number): number {
+    const free = this.claim(cat, now, dur);
+    if (free >= 0 || Math.abs(now - this.last.get(cat)!) < this.caps[cat].gap) return free;
+    const e = this.ends.get(cat)!;
+    let best = 0;
+    for (let i = 1; i < e.length; i++) if (e[i]! < e[best]!) best = i;
+    e[best] = now + dur;
+    this.last.set(cat, now);
+    return best;
+  }
+
+  /** `claim` as a boolean. */
+  tryStart(cat: K, now: number, dur: number): boolean {
+    return this.claim(cat, now, dur) >= 0;
+  }
+
+  /** Set when a claimed slot frees up (its real end, or now for a voice cut short). */
+  setEnd(cat: K, slot: number, end: number): void {
+    const e = this.ends.get(cat)!;
+    if (slot >= 0 && slot < e.length) e[slot] = end;
   }
 
   /** Forget everything (e.g. after the context was rebuilt). */
@@ -101,9 +135,10 @@ export class VoiceLimiter<K extends string> {
 }
 
 /**
- * The coin fountain's melody: each clink climbs one pentatonic step, so a flood of coins plays a
- * rising run. A pause longer than `resetAfter` starts over at the bottom; at the top it hovers
- * among the highest few notes instead of climbing out of range.
+ * A rising pentatonic ladder (coin fountains, buying sprees): each call climbs one step. A pause
+ * longer than `resetAfter` starts over at `lowStep`. Past `highStep` it either wraps down to
+ * `wrapStep` and climbs again (long coin floods become repeating cascades instead of parking on
+ * the shrill top notes), or, with `wrapStep` null, hovers among the top three notes.
  */
 export class CoinRun {
   private step = 0;
@@ -111,16 +146,23 @@ export class CoinRun {
 
   constructor(
     readonly lowStep = 5,
-    readonly highStep = 15,
+    readonly highStep = 13,
     readonly resetAfter = 0.6,
+    readonly wrapStep: number | null = null,
   ) {}
 
-  /** Scale step for a clink at time `now`; `rnd` in [0, 1) picks the hover note at the top. */
+  /** Scale step for a note at time `now`; `rnd` in [0, 1) picks the hover note at the top. */
   next(now: number, rnd: number): number {
     if (now - this.lastT > this.resetAfter) this.step = this.lowStep;
     else this.step++;
     this.lastT = now;
-    if (this.step > this.highStep) return this.highStep - Math.floor(rnd * 3);
+    if (this.step > this.highStep) {
+      if (this.wrapStep !== null) {
+        this.step = this.wrapStep;
+        return this.step;
+      }
+      return this.highStep - Math.floor(rnd * 3);
+    }
     return this.step;
   }
 }

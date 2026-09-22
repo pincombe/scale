@@ -12,8 +12,10 @@ export function purchase(o: Out, grand: boolean, step: number): number {
   const t = o.t;
   const out = gainNode(o, 0.2, o.dest);
   chunk(o, t, 1, out);
-  const bells = gainNode(o, grand ? 0.62 : 0.5, out);
-  toSend(o, bells);
+  const bells = gainNode(o, grand ? 0.62 : 0.5, null);
+  const lp = filterNode(o, 'lowpass', 6000, 0.5, out);
+  bells.connect(lp);
+  toSend(o, lp);
   const s = step;
   let end = bell(o, pentaHz(s), 1, t + 0.05, 0.9, bells);
   end = Math.max(end, bell(o, pentaHz(s + (grand ? 3 : 2)), 0.7, t + (grand ? 0.13 : 0.11), 1, bells));
@@ -115,9 +117,10 @@ export function bonusChime(o: Out): number {
   const t = o.t;
   const out = gainNode(o, 0.095, o.dest);
   toSend(o, out);
-  const s = pick([12, 13]);
+  const lp = filterNode(o, 'lowpass', 6000, 0.5, out);
+  const s = pick([10, 11]);
   let end = t;
-  for (let i = 0; i < 3; i++) end = Math.max(end, bell(o, pentaHz(s + i * 2), 1 - i * 0.15, t + i * 0.075, 0.7, out));
+  for (let i = 0; i < 3; i++) end = Math.max(end, bell(o, pentaHz(s + i * 2), 1 - i * 0.15, t + i * 0.075, 0.7, lp));
   return end;
 }
 
@@ -193,12 +196,13 @@ export function birdPhrase(o: Out, amp: number): number {
 export function meleeBeat(o: Out, n: number, spread: number, amp: number): number {
   const out = gainNode(o, amp, o.dest);
   toSend(o, out);
+  const lp = filterNode(o, 'lowpass', rand(4000, 5500), 0.5, out);
   let end = o.t;
   // Level per clank falls as 1/sqrt(n): more footmen = denser, not louder.
   const per = 0.11 / Math.sqrt(n);
   for (let i = 0; i < n; i++) {
     const at = o.t + (n === 1 ? 0 : Math.random() * spread);
-    end = Math.max(end, clank(o, at, rand(900, 1700), per * rand(0.6, 1.1), out));
+    end = Math.max(end, clank(o, at, rand(900, 1700), per * rand(0.6, 1.1), lp));
   }
   // A soft scuffle of boots and shields under the beat.
   noiseHit(o, o.t, 'lowpass', 500, 0.7, 0.05 * Math.min(1.5, 0.6 + n * 0.12), 0.01, 0.05, out);

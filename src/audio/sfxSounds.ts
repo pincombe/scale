@@ -2,7 +2,7 @@
 // reverb send, start time) and returns its end time. sfx.ts plays them live; sfxMeasure.ts renders
 // them offline to meter peak/RMS, so what is measured is exactly what is heard.
 import { expLerp, pentaHz } from './sfxMath';
-import { gainNode, pick, rand, type Out } from './synth/kit';
+import { gainNode, noiseHit, pick, rand, type Out } from './synth/kit';
 import { bell, clang, coin, ping, shimmer } from './synth/metal';
 import { arrowThud, boom, crumble, emberHiss, fireBreath, inhale, knightLand, twang, whoosh } from './synth/impact';
 import { dizzy, dragonVocal } from './synth/dragonVoice';
@@ -25,19 +25,41 @@ export function sStrike(o: Out): number {
   return clang(o, { f0: clangRoot(), bright: rand(0.2, 0.6), amp: rand(0.85, 1.05) });
 }
 
-/** A weak-spot crit: bright clang + ping + shimmer + low boom. */
-export function sCrit(o: Out): number {
-  let end = clang(o, { f0: clangRoot(), bright: 1, amp: 0.85 });
-  end = Math.max(end, ping(o, pentaHz(pick([13, 14, 15])), 1));
-  const base = pick([14, 15, 16]);
-  const notes = [base, base + 2, base + 1, base + 4, base + 3, base + 5].map((s) => pentaHz(s));
-  end = Math.max(end, shimmer(o, notes, 1));
+/** The crit's clang (played on the strike path, so a crit is never silent). */
+export function sCritClang(o: Out): number {
+  return clang(o, { f0: clangRoot(), bright: 1, amp: 0.85 });
+}
+
+/** The crit's extra layers: weak-spot ping + shimmer + low boom (capped separately). */
+export function sCritLayers(o: Out): number {
+  let end = ping(o, pentaHz(pick([13, 14, 15])), 1);
+  const base = pick([13, 14, 15]);
+  const notes = [base, base + 2, base + 1, base + 4, base + 3].map((s) => pentaHz(s));
+  end = Math.max(end, shimmer(o, notes, 1.1));
   return Math.max(end, boom(o, 0.42));
+}
+
+/** Degraded crit layer when the full layers are over their cap: just a lighter ping. */
+export function sPing(o: Out): number {
+  return ping(o, pentaHz(pick([13, 14, 15])), 0.7);
+}
+
+/** A whole crit (clang + layers), for the meter and debug. */
+export function sCrit(o: Out): number {
+  return Math.max(sCritClang(o), sCritLayers(o));
+}
+
+/** The wind-up choked off by a stagger: a short glottal "hk-k". */
+export function sChoke(o: Out, size: number): number {
+  const f = expLerp(1500, 420, size);
+  const g = gainNode(o, 1.8, o.dest);
+  noiseHit(o, o.t, 'bandpass', f, 3, 1, 0.002, 0.02, g);
+  return noiseHit(o, o.t + 0.06, 'bandpass', f * 0.8, 3, 0.6, 0.002, 0.025, g);
 }
 
 /** Footman melee beat: density (not loudness) scales with `hits` (≤ 24). */
 export function sMelee(o: Out, hits: number): number {
-  const n = Math.max(1, Math.min(7, Math.round(1 + Math.sqrt(Math.max(0, hits - 1)) * 1.3)));
+  const n = Math.max(1, Math.min(6, Math.round(1 + Math.sqrt(Math.max(0, hits - 1)) * 1.3)));
   const spread = 0.04 + 0.12 * Math.min(1, hits / 16);
   return meleeBeat(o, n, spread, 1);
 }

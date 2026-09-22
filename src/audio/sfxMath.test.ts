@@ -67,7 +67,45 @@ describe('VoiceLimiter', () => {
   });
 });
 
+describe('VoiceLimiter scheduling', () => {
+  it('a voice scheduled ahead still merges requests just before it', () => {
+    const l = new VoiceLimiter({ hit: { max: 4, gap: 0.04 } });
+    expect(l.tryStart('hit', 1.3, 0.2)).toBe(true);
+    expect(l.tryStart('hit', 1.28, 0.2)).toBe(false);
+    expect(l.tryStart('hit', 1.0, 0.2)).toBe(true);
+  });
+  it('setEnd re-times or frees a slot', () => {
+    const l = new VoiceLimiter({ hit: { max: 1, gap: 0 } });
+    const s = l.claim('hit', 0, 0.2);
+    expect(s).toBe(0);
+    l.setEnd('hit', s, 2);
+    expect(l.canStart('hit', 1)).toBe(false);
+    l.setEnd('hit', s, 1);
+    expect(l.canStart('hit', 1)).toBe(true);
+    expect(l.claim('hit', 1.5, 1)).toBe(0);
+    expect(l.claim('hit', 1.6, 1)).toBe(-1);
+  });
+});
+
+describe('VoiceLimiter stealing', () => {
+  it('takes over the slot that frees soonest when full, but still merges inside the gap', () => {
+    const l = new VoiceLimiter({ hit: { max: 2, gap: 0.04 } });
+    expect(l.claimOrSteal('hit', 0, 1)).toBe(0);
+    expect(l.claimOrSteal('hit', 0.1, 0.5)).toBe(1); // ends 0.6, sooner than slot 0
+    expect(l.claimOrSteal('hit', 0.2, 1)).toBe(1);
+    expect(l.claimOrSteal('hit', 0.21, 1)).toBe(-1);
+    expect(l.claimOrSteal('hit', 0.3, 1)).toBe(0);
+  });
+});
+
 describe('CoinRun', () => {
+  it('wraps into repeating cascades when given a wrap step', () => {
+    const r = new CoinRun(5, 8, 0.5, 6);
+    const got: number[] = [];
+    for (let i = 0; i < 9; i++) got.push(r.next(i * 0.05, 0.5));
+    expect(got).toEqual([5, 6, 7, 8, 6, 7, 8, 6, 7]);
+  });
+
   it('climbs one step per clink and restarts after a pause', () => {
     const r = new CoinRun(5, 8, 0.5);
     expect(r.next(0, 0)).toBe(5);

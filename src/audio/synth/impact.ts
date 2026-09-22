@@ -49,7 +49,7 @@ export function whoosh(
   const ctx = o.ctx;
   const g = ctx.createGain();
   let tail: AudioNode = g;
-  if (pan1 !== 0 || pan2 !== 0) {
+  if ((pan1 !== 0 || pan2 !== 0) && typeof ctx.createStereoPanner === 'function') {
     const p = ctx.createStereoPanner();
     p.pan.setValueAtTime(pan1, at);
     p.pan.linearRampToValueAtTime(pan2, at + dur);
@@ -85,10 +85,9 @@ export function twang(o: Out, at: number, f: number, amp: number, to: AudioNode)
   lp.frequency.setValueAtTime(rand(2600, 3600), at);
   lp.frequency.exponentialRampToValueAtTime(400, at + 0.12);
   const g = gainNode(o, 0, to);
-  perc(g.gain, at, amp, 0.002, 0.06);
+  const end = perc(g.gain, at, amp, 0.002, 0.06);
   osc.connect(lp);
   lp.connect(g);
-  const end = at + 0.45;
   osc.start(at);
   osc.stop(end);
   noiseHit(o, at, 'bandpass', 3200, 1.5, amp * 0.9, 0.0005, 0.004, to);
@@ -112,9 +111,8 @@ export function knightLand(o: Out, at: number, amp: number, to: AudioNode): numb
   osc.frequency.exponentialRampToValueAtTime(f * 0.9, at + 0.11);
   osc.frequency.exponentialRampToValueAtTime(f * 0.5, at + 0.2);
   const g = gainNode(o, 0, to);
-  perc(g.gain, at, amp, 0.003, 0.06);
+  const end = perc(g.gain, at, amp, 0.003, 0.06);
   osc.connect(g);
-  const end = at + 0.45;
   osc.start(at);
   osc.stop(end);
   noiseHit(o, at, 'lowpass', 700, 0.7, amp * 1.2, 0.002, 0.025, to);
@@ -215,7 +213,7 @@ export function emberHiss(o: Out, at: number, amp: number): number {
   toSend(o, g);
   ahr(g.gain, at, amp * 0.1, 0.45, 0.2, 0.45);
   const hp = filterNode(o, 'highpass', 4200, 0.6, g);
-  const dur = 0.65 + 0.45 * 5;
+  const dur = 0.65 + 0.45 * 4.5;
   noiseSrc(o, at, dur, hp);
   const cg = gainNode(o, 0, o.dest);
   ahr(cg.gain, at, amp * 0.3, 0.3, 0.4, 0.35);

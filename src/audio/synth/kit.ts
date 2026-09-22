@@ -57,11 +57,21 @@ export function toSend(o: Out, node: AudioNode): void {
   if (o.send) node.connect(o.send);
 }
 
-/** Percussive envelope: 0 → peak in `attack`, then exponential decay with time constant `tau`. */
-export function perc(p: AudioParam, t: number, peak: number, attack: number, tau: number): void {
+/** Decay length in time constants: 5τ ≈ -43 dB, then a 5 ms fade to true zero. */
+export const DECAY_TAUS = 5;
+
+/**
+ * Percussive envelope: 0 → peak in `attack`, exponential decay with time constant `tau` for 5τ,
+ * then a 5 ms linear fade to 0 so the source can stop without a click. Returns that end time.
+ */
+export function perc(p: AudioParam, t: number, peak: number, attack: number, tau: number): number {
+  const a = peak > 1e-6 ? peak : 1e-6;
+  const decayEnd = t + attack + tau * DECAY_TAUS;
   p.setValueAtTime(0, t);
-  p.linearRampToValueAtTime(peak, t + attack);
-  p.setTargetAtTime(0, t + attack, tau);
+  p.linearRampToValueAtTime(a, t + attack);
+  p.exponentialRampToValueAtTime(a * Math.exp(-DECAY_TAUS), decayEnd);
+  p.linearRampToValueAtTime(0, decayEnd + 0.005);
+  return decayEnd + 0.005;
 }
 
 /** Attack / hold / release envelope (linear attack, exponential release). Ends near silence at t+a+h+r*5. */
@@ -90,10 +100,9 @@ export function partial(
   osc.type = type;
   osc.frequency.value = freq;
   const g = o.ctx.createGain();
-  perc(g.gain, at, amp, attack, tau);
+  const end = perc(g.gain, at, amp, attack, tau);
   osc.connect(g);
   g.connect(to);
-  const end = at + attack + tau * 7;
   osc.start(at);
   osc.stop(end);
   return end;
@@ -124,9 +133,8 @@ export function noiseHit(
   to: AudioNode,
 ): number {
   const g = gainNode(o, 0, to);
-  perc(g.gain, at, amp, attack, tau);
+  const dur = perc(g.gain, at, amp, attack, tau) - at;
   const f = filterNode(o, type, freq, q, g);
-  const dur = attack + tau * 7;
   noiseSrc(o, at, dur, f);
   return at + dur;
 }
@@ -137,10 +145,9 @@ export function thump(o: Out, at: number, f1: number, f2: number, drop: number, 
   osc.frequency.setValueAtTime(f1, at);
   osc.frequency.exponentialRampToValueAtTime(f2, at + drop);
   const g = o.ctx.createGain();
-  perc(g.gain, at, amp, 0.003, tau);
+  const end = perc(g.gain, at, amp, 0.003, tau);
   osc.connect(g);
   g.connect(to);
-  const end = at + tau * 7 + 0.01;
   osc.start(at);
   osc.stop(end);
   return end;

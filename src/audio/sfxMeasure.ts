@@ -18,6 +18,8 @@ export interface SfxMeter {
   /** Mean sample value over the active region. */
   dc: number;
   nans: number;
+  /** Audio nodes the sound creates (max of the runs). */
+  nodes: number;
 }
 
 interface Def {
@@ -29,6 +31,9 @@ interface Def {
 const DEFS: Def[] = [
   { name: 'strike clang', secs: 1.5, play: S.sStrike },
   { name: 'crit', secs: 3, play: S.sCrit },
+  { name: 'crit layers', secs: 3, play: S.sCritLayers },
+  { name: 'ping (degraded)', secs: 2, play: S.sPing },
+  { name: 'choke', secs: 0.6, play: (o) => S.sChoke(o, 0.5) },
   { name: 'melee x1', secs: 1, play: (o) => S.sMelee(o, 1) },
   { name: 'melee x8', secs: 1, play: (o) => S.sMelee(o, 8) },
   { name: 'melee x24', secs: 1, play: (o) => S.sMelee(o, 24) },
@@ -125,7 +130,17 @@ async function renderOnce(def: Def): Promise<Omit<SfxMeter, 'name'>> {
   sum.connect(shelf);
   shelf.connect(hp);
   hp.connect(merger, 0, 1);
-  def.play({ ctx, dest: sum, send: null, noise: makeNoise(ctx), t: 0.01 });
+  let nodes = 0;
+  const c = ctx as unknown as Record<string, (...args: unknown[]) => unknown>;
+  for (const name of ['createGain', 'createOscillator', 'createBiquadFilter', 'createBufferSource', 'createStereoPanner', 'createWaveShaper']) {
+    const orig = c[name]!;
+    c[name] = (...args: unknown[]) => {
+      nodes++;
+      return orig.apply(ctx, args);
+    };
+  }
+  const noise = makeNoise(ctx);
+  def.play({ ctx, dest: sum, send: null, noise, t: 0.01 });
   const buf = await ctx.startRendering();
   const raw = buf.getChannelData(0);
   const kw = buf.getChannelData(1);
@@ -160,6 +175,7 @@ async function renderOnce(def: Def): Promise<Omit<SfxMeter, 'name'>> {
     len: (last + 1) / RATE,
     dc,
     nans,
+    nodes,
   };
 }
 
@@ -167,7 +183,7 @@ async function renderOnce(def: Def): Promise<Omit<SfxMeter, 'name'>> {
 export async function measureSfx(runs = 3): Promise<SfxMeter[]> {
   const rows: SfxMeter[] = [];
   for (const def of DEFS) {
-    const r: SfxMeter = { name: def.name, peak: -120, rms50: 0, lufs: 0, len: 0, dc: 0, nans: 0 };
+    const r: SfxMeter = { name: def.name, peak: -120, rms50: 0, lufs: 0, len: 0, dc: 0, nans: 0, nodes: 0 };
     for (let k = 0; k < runs; k++) {
       const m = await renderOnce(def);
       r.peak = Math.max(r.peak, m.peak);
@@ -176,6 +192,7 @@ export async function measureSfx(runs = 3): Promise<SfxMeter[]> {
       r.len = Math.max(r.len, m.len);
       r.dc = Math.abs(m.dc) > Math.abs(r.dc) ? m.dc : r.dc;
       r.nans += m.nans;
+      r.nodes = Math.max(r.nodes, m.nodes);
     }
     rows.push(r);
   }
@@ -188,6 +205,7 @@ export async function measureSfx(runs = 3): Promise<SfxMeter[]> {
       len: r.len.toFixed(2),
       dc: r.dc.toExponential(1),
       nans: r.nans,
+      nodes: r.nodes,
     })),
   );
   return rows;
