@@ -24,19 +24,19 @@ describe('pacing (engaged player)', () => {
     expect(r.firstBuyAt['archer']).toBeLessThanOrEqual(80);
   });
 
-  it.each(SEEDS.map((seed, i) => [seed, reports[i]!] as const))('seed %i grows newt → dog → horse → barn', (_seed, r) => {
+  it.each(SEEDS.map((seed, i) => [seed, reports[i]!] as const))('seed %i grows newt → pony → cottage → barn', (_seed, r) => {
     const [, m1, m2, m3] = r.sizeAtMinute;
-    expect(m1).toBeGreaterThanOrEqual(0.7);
-    expect(m1).toBeLessThanOrEqual(1.6);
-    expect(m2).toBeGreaterThanOrEqual(1.8);
-    expect(m2).toBeLessThanOrEqual(4);
-    expect(m3).toBeGreaterThanOrEqual(7);
-    expect(m3).toBeLessThanOrEqual(24);
-    expect(r.killsAt[195]).toBeGreaterThanOrEqual(25);
-    expect(r.killsAt[195]).toBeLessThanOrEqual(36);
+    expect(m1).toBeGreaterThanOrEqual(1.3);
+    expect(m1).toBeLessThanOrEqual(2.8);
+    expect(m2).toBeGreaterThanOrEqual(3.5);
+    expect(m2).toBeLessThanOrEqual(9);
+    expect(m3).toBeGreaterThanOrEqual(9);
+    expect(m3).toBeLessThanOrEqual(30);
+    expect(r.killsAt[195]).toBeGreaterThanOrEqual(27);
+    expect(r.killsAt[195]).toBeLessThanOrEqual(38);
     const size195 = r.state.dragon.size;
-    expect(size195).toBeGreaterThanOrEqual(8);
-    expect(size195).toBeLessThanOrEqual(32);
+    expect(size195).toBeGreaterThanOrEqual(10);
+    expect(size195).toBeLessThanOrEqual(40);
   });
 
   it.each(SEEDS.map((seed, i) => [seed, reports[i]!] as const))('seed %i never stalls and clicks stay relevant', (_seed, r) => {

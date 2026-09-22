@@ -10,7 +10,7 @@ import {
 } from '../core';
 import type { Action, Decimal, GameState, UnitId } from '../core';
 
-export type ProfileName = 'engaged' | 'casual' | 'idle';
+export type ProfileName = 'engaged' | 'casual' | 'nonAimer' | 'idle';
 
 export type ShopPolicy = 'greedy' | 'cheapest';
 
@@ -71,6 +71,21 @@ export const PROFILES: Record<ProfileName, Profile> = {
     shop: 'cheapest',
     seconds: 240,
   },
+  // Clicks a lot but never aims (ignores the glowing spot) and shops like the engaged player: the
+  // pacing must not depend on weak-spot skill.
+  nonAimer: {
+    name: 'nonAimer',
+    cps: 5,
+    weakRate: 0,
+    windupWeakRate: 0,
+    reactMin: 0,
+    reactMax: 0,
+    startDelay: 1,
+    clickUntilFirstKill: false,
+    shopEvery: 0.5,
+    shop: 'greedy',
+    seconds: 240,
+  },
   idle: {
     name: 'idle',
     cps: 3,
@@ -86,7 +101,7 @@ export const PROFILES: Record<ProfileName, Profile> = {
   },
 };
 
-export const PROFILE_NAMES: readonly ProfileName[] = ['engaged', 'casual', 'idle'];
+export const PROFILE_NAMES: readonly ProfileName[] = ['engaged', 'casual', 'nonAimer', 'idle'];
 
 // ---- Shopping ----
 

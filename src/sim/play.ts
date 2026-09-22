@@ -12,6 +12,9 @@ export const FRAME_DT = 1 / 60;
 /** Checkpoints (wall s): dragon size sampled at the minutes, kills at 3:15 (the M2 boss). */
 export const SIZE_AT = [60, 120, 180] as const;
 export const BOSS_AT = 195;
+/** Kill pace is measured over this wall window (s): the stretch after the tutorial newts. */
+export const PACE_FROM = 40;
+export const PACE_TO = 120;
 
 export interface RunOptions {
   /** Model hit-stop / slow-mo dilation (default true). */
@@ -43,6 +46,8 @@ export interface RunResult {
   killsAtBoss: number;
   /** Kills at the end of each wall minute (index 0 = 1:00). */
   killsByMinute: number[];
+  /** Mean wall seconds per kill between PACE_FROM and PACE_TO (Infinity: no kills). */
+  killPace: number;
   kills: number;
   /** Longest wall stretch with nothing affordable, from the first kill to the window end. */
   longestUnaffordable: number;
@@ -109,6 +114,7 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     sizeAt: [],
     killsAtBoss: 0,
     killsByMinute: [],
+    killPace: Infinity,
     kills: 0,
     longestUnaffordable: 0,
     longestNoveltyGap: 0,
@@ -279,6 +285,8 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
   let sizeIdx = 0;
   let bossDone = false;
   let minute = 1;
+  let paceFromKills = -1;
+  let paceDone = false;
 
   for (let f = 0; f < frames; f++) {
     // Input (between frames, in wall time).
@@ -332,6 +340,12 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     if (!bossDone && wall >= BOSS_AT - 1e-9) {
       r.killsAtBoss = s.kills;
       bossDone = true;
+    }
+    if (paceFromKills < 0 && wall >= PACE_FROM - 1e-9) paceFromKills = s.kills;
+    if (!paceDone && wall >= PACE_TO - 1e-9) {
+      const n = s.kills - paceFromKills;
+      r.killPace = n > 0 ? (PACE_TO - PACE_FROM) / n : Infinity;
+      paceDone = true;
     }
     if (wall >= minute * 60 - 1e-9) {
       r.killsByMinute.push(s.kills);

@@ -99,8 +99,9 @@ function main(): void {
   const juiced: Partial<Record<ProfileName, RunResult[]>> = {};
   for (const name of profiles) {
     const p = PROFILES[name];
-    // Idle never clicks after the first newt, so its 1× and juiced runs barely differ: juiced only.
-    const modes = name === 'idle' ? [true] : [false, true];
+    // Idle never clicks after the first newt, so its 1× and juiced runs barely differ, and the
+    // non-aimer never crits: juiced only for both.
+    const modes = name === 'idle' || name === 'nonAimer' ? [true] : [false, true];
     for (const juice of modes) {
       const runs = seeds.map((seed) => runGame(p, seed, { juice }));
       cols.push({ profile: name, juice, runs });

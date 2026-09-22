@@ -73,7 +73,7 @@ describe('dragon curves', () => {
     expect(ratio(200)).toBeCloseTo(BALANCE.dragon.hpGrowthLate, 3);
   });
 
-  it('size passes through the anchors: newt, dog, horse, barn', () => {
+  it('size passes through the anchors and starts at the 0.5 m newt', () => {
     for (const [i, m] of BALANCE.dragon.sizeAnchors) expect(dragonSize(0, i)).toBeCloseTo(m, 9);
     expect(dragonSize(0, 0)).toBe(0.5);
   });

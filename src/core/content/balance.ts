@@ -103,22 +103,18 @@ export const BALANCE: Balance = {
     hpGrowthLate: 1.23,
     hpGrowthFade: 8,
     /** Kill gold = HP × goldPerHp (× goldMult upgrades). */
-    goldPerHp: 0.9,
+    goldPerHp: 1.2,
     /** Tier t multiplies HP and gold by these to the power t (placeholder until M2 tunes tiers). */
     tierHpMult: 1000,
     tierGoldMult: 1000,
     /**
      * Body length in meters by dragon index: log-linear between anchors [index, meters], then
-     * × sizeGrowthAfter per dragon. Newt 0.5 m → dog ~1 m (~1:00) → horse ~2.5 m (~2:00) →
-     * barn ~10 m (~3:00) for an engaged player.
+     * × sizeGrowthAfter per dragon. A steady geometric climb from the 0.5 m newt, so the dragon
+     * visibly grows from the first minute: engaged ~1.7 m at 1:00, ~4.5 m at 2:00, ~12 m at 3:00;
+     * casual ~1 m at 1:00, ~2.5 m at 2:00.
      */
-    sizeAnchors: [
-      [0, 0.5],
-      [10, 1],
-      [19, 2.5],
-      [27, 10],
-    ],
-    sizeGrowthAfter: 1.17,
+    sizeAnchors: [[0, 0.5]],
+    sizeGrowthAfter: 1.12,
   },
 
   click: {
@@ -147,15 +143,16 @@ export const BALANCE: Balance = {
 
   units: {
     footman: { baseCost: 10, costGrowth: 1.12, damage: 1, interval: 1.0, flight: 0, unlock: { stat: 'kills', at: 1 } },
-    archer: { baseCost: 300, costGrowth: 1.13, damage: 15, interval: 2.5, flight: 0.9, unlock: { stat: 'kills', at: 10 } },
+    archer: { baseCost: 300, costGrowth: 1.13, damage: 15, interval: 2.5, flight: 0.9, unlock: { stat: 'kills', at: 12 } },
   },
 
   /**
    * Tuned by the balance sim (juiced engaged player, median of 20 seeds, bought at): pointySwords
-   * 0:10, keenEye 0:23, drillSergeant 0:37, bounty 1:00, fletching 1:28, heroicExample 1:33,
-   * warHorns 2:33, quickNock 2:45, grindstone 2:56 (the last push before the boss). A casual
-   * player (shops every 10 s) gets pointySwords ~0:25 and heroicExample ~2:35. Most unlock 10–30 s
-   * before they're affordable, so the panel usually has something to save for.
+   * 0:06, keenEye 0:18, drillSergeant 0:34, bounty 0:48, fletching 1:12, heroicExample 1:17,
+   * warHorns 1:52, quickNock 2:15, grindstone 2:48 (the last push before the boss). A casual
+   * player (shops every 10 s, never saves) gets pointySwords ~0:16, heroicExample ~2:06 and
+   * warHorns ~3:06. quickNock unlocks early (15 archers) so a casual player sees it by ~2:45. Most
+   * unlock 10–30 s before they're affordable, so the panel usually has something to save for.
    */
   upgrades: {
     pointySwords: { cost: 25, unlock: { stat: 'footman', at: 1 }, effect: { kind: 'clickMult', mult: 2 } },
@@ -163,10 +160,10 @@ export const BALANCE: Balance = {
     drillSergeant: { cost: 250, unlock: { stat: 'footman', at: 5 }, effect: { kind: 'unitMult', unit: 'footman', mult: 2 } },
     bounty: { cost: 600, unlock: { stat: 'kills', at: 6 }, effect: { kind: 'goldMult', mult: 1.5 } },
     fletching: { cost: 2500, unlock: { stat: 'archer', at: 3 }, effect: { kind: 'unitMult', unit: 'archer', mult: 2 } },
-    warHorns: { cost: 30000, unlock: { stat: 'footman', at: 40 }, effect: { kind: 'armyMult', mult: 1.5 } },
+    warHorns: { cost: 15000, unlock: { stat: 'footman', at: 40 }, effect: { kind: 'armyMult', mult: 1.5 } },
     heroicExample: { cost: 3000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.0175 } },
-    quickNock: { cost: 40000, unlock: { stat: 'archer', at: 20 }, effect: { kind: 'periodMult', unit: 'archer', mult: 0.7 } },
-    grindstone: { cost: 40000, unlock: { stat: 'kills', at: 25 }, effect: { kind: 'clickMult', mult: 3 } },
+    quickNock: { cost: 40000, unlock: { stat: 'archer', at: 15 }, effect: { kind: 'periodMult', unit: 'archer', mult: 0.7 } },
+    grindstone: { cost: 90000, unlock: { stat: 'kills', at: 27 }, effect: { kind: 'clickMult', mult: 3 } },
   },
 
   /** Dragon phase timings in seconds (the phase machine lives in core/dragon.ts). */
