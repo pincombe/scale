@@ -26,7 +26,10 @@ Use §14's assignments as the default. If a work package turns out harder than e
 5. **Keep your context lean.** Let subagents do the heavy reading and writing, and ask them for short reports. Keep BUILD_LOG.md current so you can recover after context compaction, and re-read this file if you lose track of the rules. If a background agent stalls on a permission prompt, re-run it in the foreground.
 6. **Commit locally** after each accepted WP. Subagents never commit.
 7. **Stop at each ★ milestone.** Give me a playable build, three lines on what to try, what changed and any known issues. Then wait for my feedback.
+8. **Hand off between milestones.** When my ★ feedback is dealt with, don't start the next milestone. Let running agents finish, then bring BUILD_LOG.md up to date so a fresh lead could take over from it alone. Include anything that only lives in your context: open issues, feedback not yet addressed, art-direction notes, approaches tried and dropped. Commit it, tell me it's ready, and stop. I'll continue in a new session.
 
 ## Start
+If BUILD_LOG.md already shows a finished milestone, you're taking over from a previous lead: skip these steps and carry on from its Status section.
+
 1. Ask me the open questions in PLAN.md §13 (repo visibility, repo name, deadline). Don't push anything to GitHub until I've answered.
 2. Run M0, then M1, and stop at the M1 ★ playtest.
