@@ -27,6 +27,8 @@ const TALL = 1.32;
 /** Bake heights (device px for TALL units) of the two levels of detail. */
 const LOD_HI = 440;
 const LOD_LO = 130;
+/** Width (px) over which the stage clearing blends back into full-height framing grass. */
+const CLEAR_FADE = 140;
 
 interface Clump {
   hi: HTMLCanvasElement;
@@ -142,7 +144,20 @@ export class Foreground {
     return b;
   }
 
-  draw(ctx: CanvasRenderingContext2D, view: View, glow: HTMLCanvasElement): void {
+  /**
+   * `clear0..clear1` (screen px) is the stage clearing where the hero and dragon stand; inside it
+   * clumps are capped so their tips stay below `groundY + toes` (the dragon's toes at most),
+   * fading back to full height over `CLEAR_FADE` px on each side.
+   */
+  draw(
+    ctx: CanvasRenderingContext2D,
+    view: View,
+    glow: HTMLCanvasElement,
+    clear0: number,
+    clear1: number,
+    groundY: number,
+    toes: number,
+  ): void {
     const pal = view.palette;
     if (this.palette !== pal) this.bake(pal);
     const cam = view.camera;
@@ -173,7 +188,13 @@ export class Foreground {
         // Edge weighting: tall at the screen edges, short in the middle.
         const u = Math.abs(cx - half) / half;
         const edge = 0.18 + 0.82 * Math.pow(smoothstep(0.18, 1.05, u), 1.3);
-        const sc = (0.8 + 1.7 * Math.pow(hash2f(i, 2), 1.3)) * edge * s;
+        let sc = (0.8 + 1.7 * Math.pow(hash2f(i, 2), 1.3)) * edge * s;
+        // Clearing: fade tall clumps down to below the stage line around the fight.
+        const inside = Math.min(smoothstep(clear0 - CLEAR_FADE, clear0, cx), 1 - smoothstep(clear1, clear1 + CLEAR_FADE, cx));
+        if (inside > 0) {
+          const cap = Math.max(0, (oy - groundY - toes) / (TALL * 1.05));
+          if (sc > cap) sc += (cap - sc) * inside;
+        }
         if (sc < 7) continue;
         const clump = this.clumps[(hash2f(i, 3) * VARIANTS) | 0]!;
         const w0 = wind((i + rx) * CELL * 0.7, t);

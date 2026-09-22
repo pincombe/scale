@@ -103,6 +103,8 @@ export function createBackdrop(scene: Scene): Backdrop {
   const origin: Vec2 = vec2();
   const tmp: Vec2 = vec2();
   const vis = rect();
+  const clearA: Vec2 = vec2();
+  const clearR = rect();
   const light: Light = { x: 0, y: 0 };
   const pose: EyePose = { open: 0, look: 0, pupil: 0.4, glow: 0 };
   const schedule = createEyeSchedule();
@@ -412,7 +414,16 @@ export function createBackdrop(scene: Scene): Backdrop {
       if (!flyGlow) return;
       ambient.drawFlies(ctx, flyGlow, flyCore!, 1.1, 99);
       ambient.drawMotes(ctx, moteCore!);
-      fg.draw(ctx, view, puffGlow!);
+      // Stage clearing: from just left of the hero to the dragon's right edge (read lazily).
+      const cam = view.camera;
+      scene.crowd.heroPoint(clearA);
+      scene.dragon.bounds(clearR);
+      cam.worldToScreen(Math.min(clearA.x - 0.6, clearR.x), 0, clearA);
+      const c0 = clearA.x;
+      const groundY = clearA.y;
+      cam.worldToScreen(clearR.x + clearR.w, 0, clearA);
+      const toes = Math.min(10, Math.max(2, 0.06 * clearR.h * cam.zoomEff));
+      fg.draw(ctx, view, puffGlow!, c0, clearA.x, groundY, toes);
       if (isMain(view)) stats.frontMs = stats.frontMs * 0.97 + (performance.now() - t0) * 0.03;
     },
   };
