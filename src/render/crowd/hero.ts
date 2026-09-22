@@ -65,6 +65,8 @@ const CHEER = P({ hipX: 0, hipY: -47, lean: -0.06, head: -0.3, aFootX: 9, bFootX
 // Forehand: cock the sword high behind the helm, smash it down and forward.
 const FORE_WIND = P({ hipX: -2, hipY: -47, lean: -0.08, head: -0.08, aFootX: 13, bFootX: -10, nHandX: 13, nHandY: -64, shield: 0.06, fHandX: -4, fHandY: -92, weapon: -2.6 });
 const FORE_HIT = P({ hipX: 8, hipY: -43, lean: 0.38, head: 0.12, aFootX: 23, bFootX: -9, nHandX: 6, nHandY: -60, shield: 0.3, fHandX: 28, fHandY: -56, weapon: 0.3 });
+// Against a tiny dragon: a short downward chop that ends on its nose instead of sailing past it.
+const FORE_HIT_LOW = P({ hipX: 4, hipY: -41, lean: 0.42, head: 0.3, aFootX: 17, bFootX: -10, nHandX: 5, nHandY: -58, shield: 0.3, fHandX: 18, fHandY: -48, weapon: 1.12 });
 // Backhand (quick follow-up click): drop the blade low, rip it up and over.
 const BACK_WIND = P({ hipX: 4, hipY: -44, lean: 0.25, head: 0.08, aFootX: 19, bFootX: -9, nHandX: 8, nHandY: -60, shield: 0.2, fHandX: 20, fHandY: -46, weapon: 0.9 });
 const BACK_HIT = P({ hipX: 3, hipY: -47, lean: -0.1, head: -0.2, aFootX: 17, bFootX: -10, nHandX: 12, nHandY: -64, shield: 0.0, fHandX: 12, fHandY: -96, weapon: -2.3 });
@@ -79,6 +81,11 @@ export class Hero {
   /** Pose at the moment the current swing started (so chained swings never pop). */
   private readonly from = new Pose();
   private lungeFrom = 0;
+  /** Swing scaled to the dragon: lunge length factor and the forehand's end pose. */
+  /** Forehand lunge (m): a dash just long enough for the blade tip to reach the dragon's front. */
+  private lungeM = 0.32;
+  private targetSize = -1;
+  private readonly foreHit = copyPose(new Pose(), FORE_HIT);
   private cheerT0 = -100;
   private mode = Mode.Idle;
   private braceW = 0;
@@ -119,7 +126,25 @@ export class Hero {
 
   constructor() {
     solve(GUARD, this.j);
-    this.restTipX = (this.j.fHX + Math.cos(GUARD.weapon) * (5 + bladeLength('hero'))) * UNIT;
+    // The front of the guard (m from the root): the sword is cocked back over the shoulder, so the
+    // shield rim or the blade tip, whichever is further forward. The dragon aims fire and tail here.
+    const tip = this.j.fHX + Math.cos(GUARD.weapon) * (5 + bladeLength('hero'));
+    const shield = this.j.nHX + 2 + 12 * SHIELD_SCALE;
+    this.restTipX = Math.max(tip, shield) * UNIT;
+  }
+
+  /**
+   * Fit the swing to the dragon's size (m): against small dragons the lunge is short and the blow
+   * chops down onto the dragon, so neither the hero nor his arc covers it.
+   */
+  setTarget(size: number, standOff: number): void {
+    if (size === this.targetSize) return;
+    this.targetSize = size;
+    const r = Math.min(1, Math.max(0, (size - 0.4) / 1.8));
+    lerpPose(this.foreHit, FORE_HIT_LOW, FORE_HIT, r);
+    const j = solve(this.foreHit, this.aj);
+    const reach = (j.fHX + Math.cos(this.foreHit.weapon) * (5 + bladeLength('hero'))) * UNIT;
+    this.lungeM = Math.min(1, Math.max(0.08, standOff - reach + 0.08));
   }
 
   /** A click landed: swing (alternating forehand / backhand when clicks come fast). */
@@ -163,7 +188,7 @@ export class Hero {
   private lunge(t: number): number {
     const u = (t - this.strikeT0) / SWING;
     if (u <= 0 || u >= 1) return 0;
-    const k = this.dir > 0 ? 0.32 : 0.2;
+    const k = this.dir > 0 ? this.lungeM : this.lungeM * 0.6;
     return u < U_SLASH ? this.lungeFrom + (k - this.lungeFrom) * smooth(u / U_SLASH) : k * (1 - smooth((u - U_SLASH) / (1 - U_SLASH)));
   }
 
@@ -199,7 +224,7 @@ export class Hero {
     const u = (t - this.strikeT0) / SWING;
     if (u <= 0 || u >= 1) return copyPose(out, this.tmp);
     const wind = this.dir > 0 ? FORE_WIND : BACK_WIND;
-    const hit = this.dir > 0 ? FORE_HIT : BACK_HIT;
+    const hit = this.dir > 0 ? this.foreHit : BACK_HIT;
     if (u < U_WIND) return lerpPose(out, this.from, wind, smooth(u / U_WIND));
     if (u < U_SLASH) return lerpPose(out, wind, hit, outCubic((u - U_WIND) / (U_SLASH - U_WIND)));
     return lerpPose(out, hit, this.tmp, smooth((u - U_SLASH) / (1 - U_SLASH)));

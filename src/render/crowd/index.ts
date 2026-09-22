@@ -42,7 +42,7 @@ import { KnightSheets, LOD_COUNT, lodFor } from './sheets';
 import { Hero } from './hero';
 import { Arrows } from './arrows';
 import { BannerArt, CountLabels, FLAG_H, FLAG_SMALL, FLAG_W, POLE_DOWN, POLE_UP, defaultHeraldry, drawFinial, drawFlag } from './banner';
-import { HERO_GAP, ROW_SCALE, ROW_Y, SPRITE_CAP, archerSlot, footSlot, isBearer, shownCount, squadSize, type Slot } from './formation';
+import { HERO_GAP, heroStandOff, ROW_SCALE, ROW_Y, SPRITE_CAP, archerSlot, footSlot, isBearer, shownCount, squadSize, type Slot } from './formation';
 
 /** DragonView plus the optional live queries the dragon rig may add (used when present). */
 type LiveDragon = DragonView & {
@@ -978,7 +978,9 @@ export function createCrowd(scene: Scene): CrowdRender {
       const s = v.state;
 
       // The front line tracks the dragon's front edge (big dragons keep the army in reach).
-      const front = scene.dragon.bounds(tmpR).x - HERO_GAP;
+      const standOff = heroStandOff(s.dragon.size);
+      const front = scene.dragon.bounds(tmpR).x - standOff;
+      hero.setTarget(s.dragon.size, standOff);
       heroX = snap ? front : heroX + (front - heroX) * (1 - Math.exp(-2.5 * dt));
       hero.x = heroX;
       hero.y = 0.12;

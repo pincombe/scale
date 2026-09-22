@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { archerSlot, footSlot, isBearer, shownCount, squadSize, SPRITE_CAP, ROWS, type Slot } from './formation';
+import { HERO_GAP, archerSlot, footSlot, heroStandOff, isBearer, shownCount, squadSize, SPRITE_CAP, ROWS, type Slot } from './formation';
 
 const slot = (): Slot => ({ x: 0, row: 0, col: 0 });
 
@@ -74,5 +74,12 @@ describe('crowd formation', () => {
     }
     // Sprites shrink monotonically as squads grow.
     expect(shownCount(1000, squadSize(1000, 0))).toBeLessThanOrEqual(SPRITE_CAP);
+  });
+
+  it('stands the hero off further from bigger dragons, but not forever', () => {
+    expect(heroStandOff(0.5)).toBeGreaterThanOrEqual(HERO_GAP);
+    expect(heroStandOff(1.2)).toBeGreaterThan(heroStandOff(0.5));
+    expect(heroStandOff(40)).toBe(heroStandOff(3));
+    expect(heroStandOff(40)).toBeLessThan(2.5);
   });
 });

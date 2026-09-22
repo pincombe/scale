@@ -22,8 +22,17 @@ export const ARCH_START = 1.35;
 const FOOT_ORDER = [2, 0, 1] as const;
 const FOOT_ROW_X = [0.0, 0.34, 0.2] as const;
 
-/** Where the hero stands relative to the dragon's front edge (m). */
+/** Where the hero stands relative to the dragon's front edge (m), for the smallest dragons. */
 export const HERO_GAP = 0.95;
+
+/**
+ * The hero's stand-off from the dragon's front edge (m): grows with the dragon so the whole
+ * silhouette (including a body that turns toward the army to swipe) stays clear of the hero, but
+ * saturates so a huge dragon is still fought up close.
+ */
+export function heroStandOff(dragonSize: number): number {
+  return HERO_GAP + 0.6 * Math.min(Math.max(dragonSize, 0), 2.5);
+}
 /** Sprites drawn at most; past this, each sprite stands for a squad. */
 export const SPRITE_CAP = 300;
 
