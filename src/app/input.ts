@@ -28,8 +28,12 @@ export class Input {
     canvas.addEventListener('pointermove', this.onStageMove);
     canvas.addEventListener('pointerleave', this.onStageLeave);
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-    // Capture phase on window: any gesture anywhere (UI included) unlocks audio.
+    // Capture phase on window: any gesture anywhere (UI included) unlocks audio. Safari only
+    // resumes an AudioContext from pointerup/click on touch and pen, so listen to all three;
+    // gesture() is idempotent and runs the first-gesture hooks exactly once.
     window.addEventListener('pointerdown', this.onAnyGesture, true);
+    window.addEventListener('pointerup', this.onAnyGesture, true);
+    window.addEventListener('click', this.onAnyGesture, true);
     window.addEventListener('keydown', this.onKeyDown);
   }
 

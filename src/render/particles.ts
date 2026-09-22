@@ -145,8 +145,24 @@ export class ParticleSystem {
   /** Free-form per-particle tag for onArrive (e.g. which counter to bump). */
   readonly tag: Uint8Array;
 
-  /** Called when a homing particle reaches its target (or its life runs out). No closures per call. */
-  onArrive: ((system: ParticleSystem, index: number) => void) | null = null;
+  private arriveFn: ((system: ParticleSystem, index: number) => void) | null = null;
+
+  /**
+   * Called when a homing particle reaches its target (or its life runs out). No closures per call.
+   * A SINGLE slot: `particles.screen` arrivals are owned by render/fx (everyone else subscribes via
+   * `scene.fx.onCoinLanded`). Overwriting it with a different function warns in dev; a new owner
+   * must chain the previous handler.
+   */
+  get onArrive(): ((system: ParticleSystem, index: number) => void) | null {
+    return this.arriveFn;
+  }
+
+  set onArrive(fn: ((system: ParticleSystem, index: number) => void) | null) {
+    if (import.meta.env?.DEV && this.arriveFn && fn && fn !== this.arriveFn) {
+      console.warn('ParticleSystem.onArrive overwritten: it is a single slot (render/fx owns particles.screen). Chain the previous handler.');
+    }
+    this.arriveFn = fn;
+  }
 
   private head = 0;
   /** One past the highest possibly-live index: loops stop here. */
@@ -207,7 +223,7 @@ export class ParticleSystem {
     }
     this.head = (i + 1) % cap;
     if (this.life[i] === 0) this.count++;
-    else if (this.flags[i]! & PF_HOMING && this.onArrive) this.onArrive(this, i);
+    else if (this.flags[i]! & PF_HOMING && this.arriveFn) this.arriveFn(this, i);
     if (i >= this.hi) this.hi = i + 1;
     return i;
   }
@@ -321,7 +337,7 @@ export class ParticleSystem {
       const fl = flags[i]!;
       const a = age[i]! + dt;
       if (a >= L) {
-        if (fl & PF_HOMING && this.onArrive) this.onArrive(this, i);
+        if (fl & PF_HOMING && this.arriveFn) this.arriveFn(this, i);
         this.kill(i);
         continue;
       }
@@ -338,7 +354,7 @@ export class ParticleSystem {
         const d = Math.sqrt(dx * dx + dy * dy) + 1e-6;
         const sp = 350 + h * 2800 * k;
         if (d < 12 || d < sp * dt * 1.25) {
-          if (this.onArrive) this.onArrive(this, i);
+          if (this.arriveFn) this.arriveFn(this, i);
           this.kill(i);
           continue;
         }

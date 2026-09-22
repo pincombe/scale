@@ -2,9 +2,21 @@
 //   scale = debugScale x slowMo (eases back to 1) x hitStop (0 while frozen), or 0 when paused.
 // Scaled dt drives ticks, animation and particles; realDt drives UI, grain, shake and the
 // timers of slowMo/hitStop themselves (so a 1 s slow-mo lasts 1 s of wall time).
+//
+// Juice costs logic time: the freeze scales the tick accumulator too (consistent world), so
+// hit-stops are rate-limited (a new one within HIT_STOP_COOLDOWN s of the last start is ignored)
+// and capped at HIT_STOP_MAX. `dilation` reports juice-scaled / wall time over ~30 s.
 import { clamp01, lerp } from '../lib/math';
 import { inQuad } from '../lib/ease';
 import { TICK_DT } from '../core/formulas';
+
+/** Longest single hit-stop (s). */
+export const HIT_STOP_MAX = 0.12;
+/** A hit-stop requested less than this (wall s) after the previous one started is ignored. */
+export const HIT_STOP_COOLDOWN = 0.3;
+/** Dilation window: DILATION_BUCKETS buckets of DILATION_BUCKET wall seconds. */
+const DILATION_BUCKETS = 30;
+const DILATION_BUCKET = 1;
 
 export class TimeDirector {
   /** Debug multiplier (0-20). */
@@ -26,6 +38,10 @@ export class TimeDirector {
   private slowDur = 0;
   private stopLeft = 0;
   private steps = 0;
+  private stopStart = -Infinity;
+  private readonly dilReal = new Float64Array(DILATION_BUCKETS);
+  private readonly dilScaled = new Float64Array(DILATION_BUCKETS);
+  private dilIdx = 0;
 
   /**
    * Slow time to `factor` (e.g. 0.3) and ease back to 1 over `seconds` of wall time.
@@ -41,9 +57,36 @@ export class TimeDirector {
     }
   }
 
-  /** Freeze time completely for `seconds` of wall time (max-merged with any freeze in progress). */
+  /**
+   * Freeze time completely for `seconds` (capped at HIT_STOP_MAX) of wall time. Ignored if another
+   * hit-stop started less than HIT_STOP_COOLDOWN wall seconds ago; requests in the same frame as
+   * the one that started are max-merged (a crit and a kill landing together).
+   */
   hitStop(seconds: number): void {
-    if (seconds > this.stopLeft) this.stopLeft = seconds;
+    const s = seconds < HIT_STOP_MAX ? seconds : HIT_STOP_MAX;
+    if (!(s > 0)) return;
+    const since = this.realTime - this.stopStart;
+    if (since === 0) {
+      if (s > this.stopLeft) this.stopLeft = s;
+      return;
+    }
+    if (since < HIT_STOP_COOLDOWN) return;
+    this.stopStart = this.realTime;
+    this.stopLeft = s;
+  }
+
+  /**
+   * Juice-scaled time / wall time over the last ~30 s (1 = juice cost nothing). Ignores the debug
+   * scale and pause: it measures what hit-stop and slow-mo take from the economy.
+   */
+  get dilation(): number {
+    let r = 0;
+    let sc = 0;
+    for (let i = 0; i < DILATION_BUCKETS; i++) {
+      r += this.dilReal[i]!;
+      sc += this.dilScaled[i]!;
+    }
+    return r > 0 ? sc / r : 1;
   }
 
   private static readonly EPS = 1e-6;
@@ -76,6 +119,7 @@ export class TimeDirector {
       stop = 0;
     }
     if (this.stopLeft <= TimeDirector.EPS) this.stopLeft = 0;
+    if (!this.paused) this.trackDilation(realDt, slow * stop);
     if (this.paused) {
       if (this.steps > 0) {
         this.steps--;
@@ -91,5 +135,16 @@ export class TimeDirector {
       this.dt = realDt * this.scale;
     }
     this.time += this.dt;
+  }
+
+  private trackDilation(realDt: number, juice: number): void {
+    let i = this.dilIdx;
+    if (this.dilReal[i]! >= DILATION_BUCKET) {
+      i = this.dilIdx = (i + 1) % DILATION_BUCKETS;
+      this.dilReal[i] = 0;
+      this.dilScaled[i] = 0;
+    }
+    this.dilReal[i]! += realDt;
+    this.dilScaled[i]! += realDt * juice;
   }
 }

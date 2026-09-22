@@ -20,6 +20,9 @@ export const LAYER_ORDER = [
   'particles.screen', // 7 coins flying to the HUD                               (render/particles)
 ] as const;
 
+/** Last world slot (backdrop.front): drawScene(ctx, view, 0, WORLD_LAST) skips text, post and HUD coins. */
+export const WORLD_LAST = 4;
+
 export type LayerName = (typeof LAYER_ORDER)[number];
 
 export class Renderer {
@@ -138,31 +141,37 @@ export class Renderer {
   }
 
   /**
-   * Paint every visible layer, in order, into ctx for this view. Re-entrant and side-effect free
-   * apart from drawing. Before each layer ctx is reset to scale(dpr), alpha 1, source-over.
+   * Paint the visible layers first..last (inclusive, LAYER_ORDER indices), in order, into ctx for
+   * this view. Re-entrant and side-effect free apart from drawing. Each layer draws inside its own
+   * save()/restore(), starting from scale(dpr), alpha 1, source-over, so clips, shadows, line
+   * dashes, smoothing etc. never leak into later layers or frames.
+   * The M2 zoom director snapshots only the world: drawScene(ctx, view, 0, WORLD_LAST).
    */
-  drawScene(ctx: CanvasRenderingContext2D, view: View): void {
+  drawScene(ctx: CanvasRenderingContext2D, view: View, first = 0, last = LAYER_ORDER.length - 1): void {
     const dpr = view.dpr;
     const layers = this.layers;
+    const end = last < layers.length - 1 ? last : layers.length - 1;
     // backdrop.back paints every pixel by contract; only clear when it's hidden (debug solo views,
-    // cleared to the haze color so silhouettes stay readable).
-    if (layers.length === 0 || !layers[0]!.visible) {
+    // cleared to the haze color so silhouettes stay readable). A range starting above slot 0
+    // composites onto whatever ctx already holds.
+    if (first === 0 && (layers.length === 0 || !layers[0]!.visible)) {
+      ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';
       ctx.fillStyle = view.palette.haze;
       ctx.fillRect(0, 0, view.width * dpr, view.height * dpr);
+      ctx.restore();
     }
-    for (let i = 0; i < layers.length; i++) {
+    for (let i = first; i <= end; i++) {
       const l = layers[i]!;
       if (!l.visible) continue;
+      ctx.save();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';
       l.draw(ctx, view);
+      ctx.restore();
     }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
   }
 }

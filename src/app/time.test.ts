@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TimeDirector } from './time';
+import { HIT_STOP_COOLDOWN, HIT_STOP_MAX, TimeDirector } from './time';
 import { TICK_DT } from '../core';
 
 const F = 1 / 60;
@@ -30,6 +30,45 @@ describe('TimeDirector', () => {
     expect(run(t, 0.1)).toBe(0);
     t.update(F);
     expect(t.dt).toBeCloseTo(F, 9);
+  });
+
+  it('caps a single hitStop at HIT_STOP_MAX', () => {
+    const t = new TimeDirector();
+    t.hitStop(1);
+    expect(run(t, HIT_STOP_MAX - F / 2)).toBe(0);
+    run(t, F);
+    t.update(F);
+    expect(t.dt).toBeCloseTo(F, 9);
+  });
+
+  it('ignores a hitStop requested within the cooldown of the last one', () => {
+    const t = new TimeDirector();
+    t.hitStop(0.05);
+    run(t, 0.1); // freeze over, but still inside the cooldown
+    t.hitStop(0.05);
+    expect(t.frozen).toBe(false);
+    run(t, HIT_STOP_COOLDOWN); // cooldown elapsed
+    t.hitStop(0.05);
+    expect(t.frozen).toBe(true);
+  });
+
+  it('crit spam freezes at most HIT_STOP_MAX per cooldown window', () => {
+    const t = new TimeDirector();
+    let scaled = 0;
+    for (let i = 0; i < 60 * 10; i++) {
+      t.hitStop(1); // every frame
+      t.update(F);
+      scaled += t.dt;
+    }
+    expect(scaled / t.realTime).toBeGreaterThan(1 - HIT_STOP_MAX / HIT_STOP_COOLDOWN - 0.05);
+    expect(t.dilation).toBeCloseTo(scaled / t.realTime, 6);
+  });
+
+  it('dilation is 1 when idle and ignores the debug scale', () => {
+    const t = new TimeDirector();
+    t.debugScale = 3;
+    run(t, 40);
+    expect(t.dilation).toBeCloseTo(1, 9);
   });
 
   it('slowMo starts slow and eases back to 1 over its duration', () => {

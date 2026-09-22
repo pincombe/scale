@@ -24,7 +24,7 @@ Each stub folder has an `api.ts` (the contract other folders use: extend it, nev
 
 Logic runs at a fixed **20 Hz** (`TICK_DT = 1/20`, core/formulas). Per rAF frame (`app/loop.ts`):
 
-1. wall dt, clamped to 0.1 s. A gap > 1 s (hidden tab, sleep) → `game.catchUp(gap)`: ticks silently (events dropped, cap 10 min) then queues one `resync`.
+1. wall dt, clamped to 0.1 s. A gap > 1 s **after the page was hidden/frozen** (`visibilitychange`, `freeze`/`resume`, `pagehide`), or any gap > 10 s (sleep) → `game.catchUp(gap)`: ticks silently (events dropped, cap 10 min) then queues one `resync`. A stall while visible just clamps dt (it must not silently eat a kill's effects).
 2. `time.update(realDt)` → `time.dt` (scaled) and `time.realDt`.
 3. `while (acc >= TICK_DT) game.tick()`; `alpha = acc / TICK_DT`.
 4. `game.drain()`: every queued event, in order, to subscribers.
@@ -33,7 +33,8 @@ Logic runs at a fixed **20 Hz** (`TICK_DT = 1/20`, core/formulas). Per rAF frame
 7. `ui.update(realDt)` (10 Hz refreshers), debug stats.
 
 `TimeDirector` (`scene.time`): `scale = debugScale × slowMo × hitStop` (0 when paused).
-- `hitStop(seconds)`: freeze everything (max-merged). `slowMo(factor, seconds)`: start at `factor`, ease back to 1 (overlaps keep the slower). Both count **wall** time.
+- `hitStop(seconds)`: freeze everything, capped at 0.12 s; ignored if another hit-stop started < 0.3 s ago (wall time; same-frame requests max-merge). `slowMo(factor, seconds)`: start at `factor`, ease back to 1 (overlaps keep the slower). Both count **wall** time.
+- **Juice costs logic time**: the scale also drives the tick accumulator, so a freeze is a real pause of the economy. Keep hit-stop ≤ 80 ms and only for crits/kills; slow-mo only for kills; the sim models the dilation. `time.dilation` (debug watch `dilation`) = juice-scaled / wall time over ~30 s, excluding debug scale and pause.
 - `dt`/`time` are scaled (freeze in hit-stop): use them for animation, particles, springs. `realDt`/`realTime`: UI, grain, shake, anything that must not freeze.
 - Smooth animation of tick-driven values: `phaseT + view.alpha * TICK_DT` (clamp to `phaseDur`).
 
@@ -92,7 +93,8 @@ interface View { state; alpha; dt; time; realDt; realTime; camera; palette; widt
 ```
 Order (names are checked by `renderer.setLayers`): **0** `backdrop.back` (must paint every pixel) · **1** `dragon` · **2** `crowd` · **3** `particles.world` · **4** `backdrop.front` · **5** `fx.text` · **6** `post` · **7** `particles.screen`.
 - `update(view)` runs once per frame for every layer (even hidden ones) before any draw; it's where state advances.
-- `draw(ctx, view)` must be **re-entrant and side-effect free**: M2 calls `renderer.drawScene(offscreenCtx, otherView)` to paint a second tier into a snapshot. Use only `ctx` and `view` (never the main canvas or a cached camera). Before each layer ctx is reset to `setTransform(dpr,0,0,dpr,0,0)`, alpha 1, `source-over`, so you draw in CSS px. `view.camera.apply(ctx)` switches to world meters.
+- `draw(ctx, view)` must be **re-entrant and side-effect free**. Use only `ctx` and `view` (never the main canvas or a cached camera). Each layer draws inside its own `save()`/`restore()`, starting from `setTransform(dpr,0,0,dpr,0,0)`, alpha 1, `source-over`, so you draw in CSS px and clips, shadows, dashes or smoothing never leak. `view.camera.apply(ctx)` switches to world meters.
+- `renderer.drawScene(ctx, view, first = 0, last = 7)` paints slots `first..last`. M2's zoom director snapshots only the world, `drawScene(snapCtx, renderer.view, 0, WORLD_LAST /*4*/)` (no `fx.text`, `post`, `particles.screen`), of the outgoing tier **before** switching state, at the main view size. A view whose `state` differs from the live one is not supported: layers keep per-tier animation state.
 - Offscreen buffers: `makeCanvas(w, h)` (`document.createElement`; no OffscreenCanvas). No `ctx.filter` or other Chrome-only canvas APIs. Cache static art on `resize` (or lazily, keyed by size + palette).
 
 ## 7. World and camera
@@ -120,6 +122,7 @@ ps.burst(SPARK, x, y, count, angle?, scale?)   // scale multiplies speed/size/gr
 const i = ps.spawn(SPEC, x, y, vx, vy)         // exact velocity; then tweak ps.life[i], ps.grav[i], ps.size0[i]...
 ps.homeTo(i, tx, ty, delay, strength?)         // fly to a screen point; ps.onArrive(sys, i) fires once (tag with ps.tag[i])
 ```
+`onArrive` is a **single slot**: `particles.screen` arrivals are owned by `render/fx`; everyone else uses `scene.fx.onCoinLanded`. Overwriting it with a different function warns in dev.
 Build specs **once** (module scope or lazily), never per frame. `align` rotates sprites (which point along +x) to their velocity; `ramp: n` steps through n consecutive tinted sprites over life.
 
 `scene.atlas` (`render/atlas.ts`): `register(name, w, h, (ctx, w, h) => void): id` (draw white art if it will be tinted), `id(name)`, `canvas(id)`, `canvases[id]` (hot loops), `tint(id, color, core?)`, `ramp(id, colors, steps, core?)`. Canvas can't tint per draw call, so tints are baked once and cached. Built-ins in `scene.sprites`: `glow, spark, ember, smoke, dust, coin, ring`.

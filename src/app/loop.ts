@@ -1,14 +1,18 @@
 // Fixed-step logic (20 Hz, accumulator) + requestAnimationFrame rendering with interpolation.
 // Per frame: clamp dt -> time.update -> ticks -> game.drain -> onFrame(alpha) (camera, render, UI).
-// A long gap (hidden tab, sleep) is caught up with events dropped, then one 'resync'.
+// A long gap after the page was hidden or frozen (tab switch, minimise, bfcache) is caught up with
+// events dropped, then one 'resync'. A stall while visible (GC, jank) just clamps dt, so a kill's
+// effects are never silently eaten.
 import { TICK_DT } from '../core/formulas';
 import type { Game } from './game';
 import type { TimeDirector } from './time';
 
 /** Longest frame delta fed to the simulation (s). Longer gaps are caught up instead. */
 export const MAX_FRAME_DT = 0.1;
-/** Frame gaps longer than this (s) count as "away" and trigger a silent catch-up. */
+/** Frame gaps longer than this (s) after the page was hidden/frozen trigger a silent catch-up. */
 export const GAP_THRESHOLD = 1.0;
+/** Gaps longer than this (s) catch up even without a hidden/frozen signal (sleep with the tab visible). */
+export const AWAY_THRESHOLD = 10;
 /** Safety valve for extreme debug time scales. */
 const MAX_TICKS_PER_FRAME = 400;
 
@@ -33,6 +37,14 @@ export class Loop {
   private last = -1;
   private raf = 0;
   private errors = 0;
+  /** The page was hidden, frozen or resumed since the last frame. */
+  private away = false;
+  private readonly markAway = (): void => {
+    this.away = true;
+  };
+  private readonly onVisibility = (): void => {
+    if (document.hidden) this.away = true;
+  };
 
   constructor(
     private readonly game: Game,
@@ -45,12 +57,25 @@ export class Loop {
     if (this.running) return;
     this.running = true;
     this.last = -1;
+    this.away = false;
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.onVisibility);
+      document.addEventListener('freeze', this.markAway);
+      document.addEventListener('resume', this.markAway);
+      window.addEventListener('pagehide', this.markAway);
+    }
     this.raf = requestAnimationFrame(this.frame);
   }
 
   stop(): void {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.onVisibility);
+      document.removeEventListener('freeze', this.markAway);
+      document.removeEventListener('resume', this.markAway);
+      window.removeEventListener('pagehide', this.markAway);
+    }
   }
 
   private readonly frame = (now: number): void => {
@@ -75,7 +100,9 @@ export class Loop {
     if (raw < 0) raw = 0;
     this.stats.frameMs = raw * 1000;
 
-    if (raw > GAP_THRESHOLD && !this.time.paused) {
+    const away = this.away;
+    this.away = false;
+    if (raw > (away ? GAP_THRESHOLD : AWAY_THRESHOLD) && !this.time.paused) {
       // Returning to the tab: simulate the gap silently, then rebuild visuals from state.
       this.stats.lastCatchUp = this.game.catchUp(raw - MAX_FRAME_DT);
       raw = MAX_FRAME_DT;

@@ -43,6 +43,7 @@ export function installDebugTools(scene: Scene, params: URLSearchParams, loop: (
   debug.watch('army', () => `${game.state.units.footman} foot / ${game.state.units.archer} arch`);
   debug.watch('camera', () => `${camera.zoom.toFixed(1)} px/m  x ${camera.x.toFixed(2)}`);
   debug.watch('time', () => `x${time.scale.toFixed(2)}  ticks ${loop().stats.ticks}`);
+  debug.watch('dilation', () => time.dilation.toFixed(2));
   debug.watch('events', () => String(game.delivered));
 
   debug.section('Time');
