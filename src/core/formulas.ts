@@ -198,11 +198,12 @@ export function armyDps(state: GameState): Decimal {
   return unitDps(state, 'footman').add(unitDps(state, 'archer'));
 }
 
-/** Damage of one click before the weak-spot multiplier: base × click upgrades + share × army DPS. */
+/** Damage of one click before the weak-spot multiplier: (base + share × army DPS) × click upgrades. */
 export function strikeDamage(state: GameState): Decimal {
-  const base = D(BALANCE.click.base * clickMult(state));
+  const mult = clickMult(state);
   const share = clickArmyShare(state);
-  return share > 0 ? base.add(armyDps(state).mul(share)) : base;
+  if (share <= 0) return D(BALANCE.click.base * mult);
+  return D(BALANCE.click.base).add(armyDps(state).mul(share)).mul(mult);
 }
 
 /** Damage of one click; `weak` = on the weak spot (crit). */
@@ -218,9 +219,13 @@ export function killGold(state: GameState): Decimal {
   return m === 1 ? g : wholeCeil(g.mul(m));
 }
 
-/** Gold bonus for staggering the current dragon. */
+/**
+ * Gold bonus for staggering the current dragon next: the full bonus on its first stagger, a small
+ * one on later staggers (so staggering stays a bonus on top of kills, never the main income).
+ */
 export function staggerGold(state: GameState): Decimal {
-  return wholeCeil(killGold(state).mul(BALANCE.stagger.goldFrac));
+  const b = BALANCE.stagger;
+  return wholeCeil(killGold(state).mul(state.dragon.staggers > 0 ? b.repeatGoldFrac : b.goldFrac));
 }
 
 // ---- Costs ----

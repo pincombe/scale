@@ -1,6 +1,8 @@
 // Pacing smoke test: a scripted engaged player (6 clicks/s, 30% weak-spot hits, buys whenever it
-// can) must roughly hit the M1 design targets. Loose on purpose: the balance sim (WP 1.9) owns the
-// precise tuning with more profiles and seeds. Runs at 1× logic time (no hit-stop dilation).
+// can) must roughly hit the M1 design targets. Loose on purpose: the balance sim (src/sim, `npm run
+// sim`) owns the precise targets, with juice time dilation, more profiles and 20 seeds. This bot
+// runs at 1× logic time, starts clicking at once and aims better, so it runs ~2–4 kills ahead of
+// the sim's juiced engaged player by 3:15.
 import { describe, expect, it } from 'vitest';
 import { serialize, toJSON } from './serialize';
 import { ENGAGED, runBot } from './testing/bot';
@@ -28,20 +30,20 @@ describe('pacing (engaged player)', () => {
     expect(m1).toBeLessThanOrEqual(1.6);
     expect(m2).toBeGreaterThanOrEqual(1.8);
     expect(m2).toBeLessThanOrEqual(4);
-    expect(m3).toBeGreaterThanOrEqual(6);
-    expect(m3).toBeLessThanOrEqual(14);
-    expect(r.killsAt[195]).toBeGreaterThanOrEqual(24);
-    expect(r.killsAt[195]).toBeLessThanOrEqual(32);
+    expect(m3).toBeGreaterThanOrEqual(7);
+    expect(m3).toBeLessThanOrEqual(24);
+    expect(r.killsAt[195]).toBeGreaterThanOrEqual(25);
+    expect(r.killsAt[195]).toBeLessThanOrEqual(36);
     const size195 = r.state.dragon.size;
-    expect(size195).toBeGreaterThanOrEqual(7);
-    expect(size195).toBeLessThanOrEqual(16);
+    expect(size195).toBeGreaterThanOrEqual(8);
+    expect(size195).toBeLessThanOrEqual(32);
   });
 
   it.each(SEEDS.map((seed, i) => [seed, reports[i]!] as const))('seed %i never stalls and clicks stay relevant', (_seed, r) => {
     expect(r.longestBuyGap).toBeLessThanOrEqual(30);
     expect(r.staggers).toBeGreaterThan(0);
     // Active-leaning: an engaged player's clicks keep doing a real share of the damage.
-    for (const share of r.clickShareByMinute) expect(share).toBeGreaterThan(0.25);
+    for (const share of r.clickShareByMinute) expect(share).toBeGreaterThan(0.2);
     // Every tier-0 upgrade gets bought before the boss (~3:15).
     for (const id of ['pointySwords', 'keenEye', 'drillSergeant', 'bounty', 'fletching', 'warHorns', 'heroicExample', 'quickNock', 'grindstone']) {
       expect(r.firstBuyAt[id], id).toBeLessThanOrEqual(195);

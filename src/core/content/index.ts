@@ -1,5 +1,6 @@
 // Content tables: the tunable numbers (./balance.ts) merged with player-facing text (./text.ts).
-// Other folders read UNITS / UNIT_IDS / UPGRADES / UPGRADE_IDS / MILESTONES / PHASE from here.
+// Other folders read UNITS / UNIT_IDS / UPGRADE_IDS / UPGRADES / PHASE from here (milestone and
+// weak-spot numbers: read BALANCE live, or formulas.milestoneAt / weakMult).
 // Getters read BALANCE live, so the sim can tweak BALANCE in-process between runs.
 import type { UnitId, UpgradeId } from '../types';
 import { BALANCE } from './balance';
@@ -18,8 +19,8 @@ export const UPGRADE_IDS: readonly UpgradeId[] = [
   'drillSergeant',
   'bounty',
   'fletching',
-  'warHorns',
   'heroicExample',
+  'warHorns',
   'quickNock',
   'grindstone',
 ];
@@ -131,15 +132,8 @@ export function upgradeDefOf(id: string): UpgradeDef | undefined {
   return UPGRADE_BY_ID.get(id);
 }
 
-/** Owned counts that multiply a unit type's damage by MILESTONE_MULT each. */
-export const MILESTONES: readonly number[] = BALANCE.milestones.at;
-export const MILESTONE_MULT = BALANCE.milestones.mult;
-
 /** Phase timings in seconds (live view of BALANCE.phase). */
 export const PHASE: Readonly<typeof BALANCE.phase> = BALANCE.phase;
-
-/** Base weak-spot crit multiplier (keenEye raises it: use formulas.weakMult(state)). */
-export const WEAK_MULT = BALANCE.click.weakMult;
 
 /** Dragon species per tier (render keys the rig on it). */
 export const TIER_SPECIES: readonly string[] = ['newt'];

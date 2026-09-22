@@ -13,13 +13,18 @@ export interface BotProfile {
   clicksPerSec: number;
   /** Fraction of clicks that land on the weak spot. */
   weakRate: number;
+  /**
+   * Fraction during a windup, when the weak spot is the throat (default weakRate). Lower than
+   * weakRate for players who don't retarget at once (the balance sim, src/sim, models this in detail).
+   */
+  windupWeakRate?: number;
   /** Seconds between shopping trips (0 = every tick). */
   buyEvery: number;
   /** Stop clicking after this many seconds (Infinity = never). */
   clickUntil?: number;
 }
 
-export const ENGAGED: BotProfile = { clicksPerSec: 6, weakRate: 0.3, buyEvery: 0 };
+export const ENGAGED: BotProfile = { clicksPerSec: 6, weakRate: 0.3, windupWeakRate: 0.15, buyEvery: 0 };
 
 export interface BotReport {
   state: GameState;
@@ -143,7 +148,8 @@ export function runBot(
       clickAcc += profile.clicksPerSec * TICK_DT;
       while (clickAcc >= 1) {
         clickAcc -= 1;
-        const weak = nextFloat(rng) < profile.weakRate;
+        const rate = s.dragon.phase === 'windup' ? (profile.windupWeakRate ?? profile.weakRate) : profile.weakRate;
+        const weak = nextFloat(rng) < rate;
         applyAction(s, { type: 'strike', weak, aimed: true, x: 0, y: 0 }, emit);
       }
     }

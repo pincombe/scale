@@ -33,7 +33,9 @@ function strike(state: GameState, a: Extract<Action, { type: 'strike' }>, emit: 
   if (d.phase === 'dying') return; // nothing to hit until the next dragon arrives
   const weak = a.weak === true;
   const damage = clickDamage(state, weak);
-  const lethal = d.hp.lte(damage) && !state.flags['debug.immortal'];
+  // Same test as damageDragon (hp - damage > 0), so a blow that kills is never also a stagger, even
+  // where break_infinity's compare and subtract round differently at huge HP.
+  const lethal = !d.hp.sub(damage).gt(0) && !state.flags['debug.immortal'];
   // A weak-spot hit during the windup (the glowing throat) staggers: stunned, extra army damage
   // and a gold bonus. A killing blow just kills.
   const stagger = weak && d.phase === 'windup' && !lethal;
@@ -41,9 +43,10 @@ function strike(state: GameState, a: Extract<Action, { type: 'strike' }>, emit: 
   if (weak) state.stats.crits++;
   emit({ type: 'strike', damage, crit: weak, weak, stagger, aimed: a.aimed === true, x: finite(a.x), y: finite(a.y) });
   damageDragon(state, damage, emit);
-  if (stagger) {
+  if (stagger && state.dragon.phase !== 'dying') {
     state.stats.staggers++;
     const bonus = staggerGold(state);
+    state.dragon.staggers++;
     addGold(state, bonus);
     emit({ type: 'goldGain', amount: bonus, source: 'stagger' });
     setPhase(state, 'stagger', PHASE.stagger, emit);

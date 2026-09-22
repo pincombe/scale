@@ -44,6 +44,8 @@ export interface DragonState {
   /** Planned duration of the current phase in seconds. */
   phaseDur: number;
   attack: DragonAttack;
+  /** Times this dragon has been staggered (the first stagger pays the full gold bonus). */
+  staggers: number;
 }
 
 /** An archer volley in flight (core-private; render learns about it from the 'volley' event). */

@@ -12,7 +12,7 @@ export interface Requirement {
 
 /** What an upgrade does. Kinds are fixed by design; magnitudes are tunable. */
 export type UpgradeEffect =
-  /** Click damage (the base part) × mult. */
+  /** Click damage × mult (the whole strike: base and the heroicExample share). */
   | { kind: 'clickMult'; mult: number }
   /** One unit type's damage × mult. */
   | { kind: 'unitMult'; unit: UnitId; mult: number }
@@ -61,7 +61,7 @@ export interface Balance {
     sizeGrowthAfter: number;
   };
   click: { base: number; weakMult: number; armyShare: number };
-  stagger: { armyMult: number; goldFrac: number };
+  stagger: { armyMult: number; goldFrac: number; repeatGoldFrac: number };
   milestones: { at: number[]; every: number; mult: number };
   units: Record<UnitId, UnitBalance>;
   upgrades: Record<UpgradeId, UpgradeBalance>;
@@ -69,6 +69,7 @@ export interface Balance {
     enter: number;
     idleMin: number;
     idleMax: number;
+    idleAfterEnter: number;
     firstIdle: number;
     windup: number;
     breath: number;
@@ -95,10 +96,10 @@ export const BALANCE: Balance = {
      */
     hpBase: 20,
     hpGrowthEarly: 1.8,
-    hpGrowthLate: 1.25,
-    hpGrowthFade: 8,
+    hpGrowthLate: 1.225,
+    hpGrowthFade: 5,
     /** Kill gold = HP × goldPerHp (× goldMult upgrades). */
-    goldPerHp: 1,
+    goldPerHp: 0.9,
     /** Tier t multiplies HP and gold by these to the power t (placeholder until M2 tunes tiers). */
     tierHpMult: 1000,
     tierGoldMult: 1000,
@@ -128,8 +129,10 @@ export const BALANCE: Balance = {
   stagger: {
     /** Army damage × this while the dragon is staggered. */
     armyMult: 2,
-    /** Gold bonus = kill reward × this. */
+    /** Gold bonus for the first stagger of a dragon = kill reward × this. */
     goldFrac: 0.5,
+    /** Later staggers of the same dragon pay kill reward × this (so staggering stays a bonus, not the income). */
+    repeatGoldFrac: 0.1,
   },
 
   /**
@@ -143,16 +146,22 @@ export const BALANCE: Balance = {
     archer: { baseCost: 300, costGrowth: 1.13, damage: 15, interval: 2.5, flight: 0.9, unlock: { stat: 'kills', at: 10 } },
   },
 
+  /**
+   * Tuned by the balance sim (juiced engaged player, median of 20 seeds, bought at): pointySwords
+   * 0:07, keenEye 0:22, drillSergeant 0:34, bounty 0:54, fletching 1:26, heroicExample 1:43,
+   * warHorns 2:34, quickNock 2:52, grindstone 3:06 (the last push before the boss). Most unlock
+   * 10–30 s before they're affordable, so the panel usually has something to save for.
+   */
   upgrades: {
     pointySwords: { cost: 25, unlock: { stat: 'footman', at: 1 }, effect: { kind: 'clickMult', mult: 2 } },
     keenEye: { cost: 100, unlock: { stat: 'kills', at: 3 }, effect: { kind: 'weakMult', value: 10 } },
     drillSergeant: { cost: 250, unlock: { stat: 'footman', at: 5 }, effect: { kind: 'unitMult', unit: 'footman', mult: 2 } },
     bounty: { cost: 600, unlock: { stat: 'kills', at: 6 }, effect: { kind: 'goldMult', mult: 1.5 } },
     fletching: { cost: 2500, unlock: { stat: 'archer', at: 3 }, effect: { kind: 'unitMult', unit: 'archer', mult: 2 } },
-    warHorns: { cost: 3000, unlock: { stat: 'footman', at: 20 }, effect: { kind: 'armyMult', mult: 1.5 } },
-    heroicExample: { cost: 6000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.05 } },
-    quickNock: { cost: 40000, unlock: { stat: 'archer', at: 15 }, effect: { kind: 'periodMult', unit: 'archer', mult: 0.7 } },
-    grindstone: { cost: 100000, unlock: { stat: 'kills', at: 22 }, effect: { kind: 'clickMult', mult: 3 } },
+    warHorns: { cost: 30000, unlock: { stat: 'footman', at: 40 }, effect: { kind: 'armyMult', mult: 1.5 } },
+    heroicExample: { cost: 4000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.015 } },
+    quickNock: { cost: 40000, unlock: { stat: 'archer', at: 20 }, effect: { kind: 'periodMult', unit: 'archer', mult: 0.7 } },
+    grindstone: { cost: 60000, unlock: { stat: 'kills', at: 25 }, effect: { kind: 'clickMult', mult: 3 } },
   },
 
   /** Dragon phase timings in seconds (the phase machine lives in core/dragon.ts). */
@@ -160,6 +169,8 @@ export const BALANCE: Balance = {
     enter: 1.6,
     idleMin: 3,
     idleMax: 6,
+    /** A fresh dragon idles only this long after its entrance, so every dragon telegraphs an attack early. */
+    idleAfterEnter: 1.0,
     /** The first newt idles this long under the title before its first windup. */
     firstIdle: 4,
     windup: 1.2,

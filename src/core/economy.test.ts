@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction } from './actions';
-import { BALANCE, MILESTONES, PHASE, UNITS, UPGRADES, UPGRADE_IDS } from './content';
+import { BALANCE, PHASE, UNITS, UPGRADES, UPGRADE_IDS } from './content';
 import { UPGRADE_TEXT } from './content/text';
-import { D } from './decimal';
+import { D, Decimal } from './decimal';
 import { fmt } from './format';
 import {
   BUY_MAX,
@@ -180,7 +180,7 @@ describe('milestones', () => {
     expect(mult(25)).toBe(4);
     expect(mult(50)).toBe(8);
     expect(mult(100)).toBe(16);
-    expect(MILESTONES.slice(0, 4)).toEqual([10, 25, 50, 100]);
+    expect(BALANCE.milestones.at.slice(0, 4)).toEqual([10, 25, 50, 100]);
     const s = createInitialState(1);
     s.units.footman = 24;
     const before = unitDamage(s, 'footman');
@@ -205,10 +205,11 @@ describe('milestones', () => {
 
 describe('huge numbers', () => {
   it('milestones keep stacking past the listed ones, in Decimal (no Infinity)', () => {
-    const last = MILESTONES[MILESTONES.length - 1]!;
-    expect(milestoneCount(last)).toBe(MILESTONES.length);
-    expect(milestoneCount(last + BALANCE.milestones.every)).toBe(MILESTONES.length + 1);
-    expect(milestoneAt(MILESTONES.length)).toBe(last + BALANCE.milestones.every);
+    const listed = BALANCE.milestones.at;
+    const last = listed[listed.length - 1]!;
+    expect(milestoneCount(last)).toBe(listed.length);
+    expect(milestoneCount(last + BALANCE.milestones.every)).toBe(listed.length + 1);
+    expect(milestoneAt(listed.length)).toBe(last + BALANCE.milestones.every);
     for (let k = 0; k < 30; k++) expect(milestoneCount(milestoneAt(k))).toBe(k + 1);
     const s = createInitialState(1);
     s.units.footman = 200_000; // ~2,000 milestones: 2^2000 overflows doubles
@@ -308,14 +309,30 @@ describe('upgrades', () => {
     expect(ofType(events, 'dragonDeath')[0]!.gold.eq(killGold(s))).toBe(true);
   });
 
-  it('heroicExample adds 5% of army DPS to every click, and the crit multiplies it', () => {
+  it('heroicExample adds a share of army DPS to every click, and the crit multiplies it', () => {
     const s = tank();
     s.units.footman = 40;
     s.units.archer = 12;
     const army = armyDps(s);
     own(s, 'heroicExample');
-    expect(clickDamage(s, false).toNumber()).toBeCloseTo(1 + army.toNumber() * 0.05, 6);
-    expect(clickDamage(s, true).toNumber()).toBeCloseTo((1 + army.toNumber() * 0.05) * 5, 6);
+    const e = BALANCE.upgrades.heroicExample.effect;
+    const share = e.kind === 'clickArmyShare' ? e.share : NaN;
+    expect(share).toBeGreaterThan(0);
+    expect(clickDamage(s, false).toNumber()).toBeCloseTo(1 + army.toNumber() * share, 6);
+    expect(clickDamage(s, true).toNumber()).toBeCloseTo((1 + army.toNumber() * share) * 5, 6);
+  });
+
+  it('click upgrades multiply the whole strike, heroicExample share included', () => {
+    const s = tank();
+    s.units.footman = 40;
+    s.units.archer = 12;
+    own(s, 'heroicExample');
+    const plain = clickDamage(s, false).toNumber();
+    own(s, 'pointySwords');
+    own(s, 'grindstone');
+    expect(clickDamage(s, false).toNumber()).toBeCloseTo(plain * 6, 6);
+    own(s, 'keenEye');
+    expect(clickDamage(s, true).toNumber()).toBeCloseTo(plain * 6 * 10, 6);
   });
 
   it('upgrades need their flag and the gold, and never double-buy', () => {
@@ -330,6 +347,23 @@ describe('upgrades', () => {
     expect(s.gold.eq(upgradeCost('keenEye')!.mul(2))).toBe(true);
     applyAction(s, { type: 'buyUpgrade', id: 'bogus' }, noop);
     expect(s.upgrades['bogus']).toBeUndefined();
+  });
+});
+
+describe('dragon phases', () => {
+  it('a fresh dragon idles only briefly after its entrance, then winds up', () => {
+    const s = createInitialState(1);
+    const { events, emit } = recorder();
+    applyAction(s, { type: 'debug', op: 'next' }, emit);
+    const phases: [string, number][] = [];
+    for (let i = 0; i < Math.round((PHASE.enter + PHASE.idleAfterEnter + 0.2) / TICK_DT); i++) {
+      const n = events.length;
+      tick(s, TICK_DT, emit);
+      for (const e of events.slice(n)) if (e.type === 'dragonPhase') phases.push([e.phase, e.dur]);
+    }
+    expect(phases.map((p) => p[0])).toEqual(['idle', 'windup']);
+    expect(phases[0]![1]).toBe(PHASE.idleAfterEnter);
+    expect(PHASE.idleAfterEnter).toBeLessThan(PHASE.idleMin);
   });
 });
 
@@ -350,6 +384,56 @@ describe('stagger', () => {
     for (let i = 0; i < Math.round(1.5 / TICK_DT); i++) tick(s, TICK_DT, emit);
     const hit = ofType(events, 'armyHit')[0]!;
     expect(hit.damage.eq(unitDamage(s, 'footman').mul(4).mul(2))).toBe(true);
+  });
+
+  it('only the first stagger of a dragon pays the full bonus; later ones pay a little', () => {
+    const s = tank();
+    const { events, emit } = recorder();
+    const staggerOnce = (): void => {
+      applyAction(s, { type: 'debug', op: 'phase', phase: 'windup', attack: 'swipe' }, emit);
+      applyAction(s, { type: 'strike', weak: true, aimed: true, x: 0, y: 0 }, emit);
+    };
+    staggerOnce();
+    staggerOnce();
+    staggerOnce();
+    expect(s.dragon.staggers).toBe(3);
+    expect(s.stats.staggers).toBe(3);
+    const bonuses = ofType(events, 'goldGain').map((e) => e.amount);
+    expect(bonuses.length).toBe(3);
+    expect(bonuses[0]!.eq(killGold(s).mul(BALANCE.stagger.goldFrac).ceil())).toBe(true);
+    expect(bonuses[1]!.eq(killGold(s).mul(BALANCE.stagger.repeatGoldFrac).ceil())).toBe(true);
+    expect(bonuses[2]!.eq(bonuses[1]!)).toBe(true);
+    expect(BALANCE.stagger.repeatGoldFrac).toBeLessThan(BALANCE.stagger.goldFrac);
+    // The next dragon starts fresh.
+    applyAction(s, { type: 'debug', op: 'next' }, emit);
+    expect(s.dragon.staggers).toBe(0);
+    s.dragon.hp = s.dragon.maxHp = s.dragon.maxHp.mul(1e12);
+    staggerOnce();
+    expect(ofType(events, 'goldGain')[3]!.amount.eq(killGold(s).mul(BALANCE.stagger.goldFrac).ceil())).toBe(true);
+  });
+
+  it('a killing blow is never also a stagger, even where huge-HP rounding is tight', () => {
+    const base = BALANCE.click.base;
+    try {
+      // A weak click of ~5.76e16 against HP one ulp above it: hp > damage by compare, yet
+      // break_infinity's hp - damage rounds to 0, so damageDragon kills. The blow must not stagger.
+      BALANCE.click.base = 1.151075441524737e16;
+      const s = createInitialState(1);
+      const { events, emit } = recorder();
+      applyAction(s, { type: 'debug', op: 'phase', phase: 'windup', attack: 'breath' }, emit);
+      const damage = clickDamage(s, true);
+      const hp = Decimal.fromMantissaExponent(damage.mantissa + 4 * Number.EPSILON, damage.exponent);
+      expect(hp.lte(damage)).toBe(false);
+      expect(hp.sub(damage).gt(0)).toBe(false);
+      s.dragon.hp = s.dragon.maxHp = hp;
+      applyAction(s, { type: 'strike', weak: true, aimed: true, x: 0, y: 0 }, emit);
+      expect(s.dragon.phase).toBe('dying');
+      expect(ofType(events, 'strike')[0]!.stagger).toBe(false);
+      expect(ofType(events, 'goldGain').length).toBe(0);
+      expect(s.stats.staggers).toBe(0);
+    } finally {
+      BALANCE.click.base = base;
+    }
   });
 
   it('volleys landing on a staggered dragon hit twice as hard', () => {

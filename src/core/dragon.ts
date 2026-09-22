@@ -35,6 +35,7 @@ export function makeDragon(state: GameState, index: number, phase: DragonPhase, 
     phaseT: 0,
     phaseDur,
     attack: 'breath',
+    staggers: 0,
   };
 }
 
@@ -74,6 +75,8 @@ export function updateDragon(state: GameState, dt: number, emit: Emit): void {
 
   switch (d.phase) {
     case 'enter':
+      setPhase(state, 'idle', PHASE.idleAfterEnter, emit);
+      break;
     case 'breath':
     case 'swipe':
     case 'stagger':
