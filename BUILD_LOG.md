@@ -13,15 +13,11 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - 1.1 backdrop (+ review fixes), 1.2 dragon rig, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
 - **In flight (uncommitted in the working tree):**
   - Review of 1.2 (dragon rig, committed 57a9402).
-  - WP 1.9b sim fidelity + balance (builder-high): moves weak-spot liveness into core, adds the shopping pause and new targets, casual pacing, the effectText rounding fix and an ARCHITECTURE §4 refresh. Summary below.
   - WP 1.10 framing and composition (builder-high, owns `director.ts`), from the lead's art pass:
     - Closer base framing: the hero at ≈ 28–34% of stage height, so the first newt reads at ≥ ~70 px.
     - Frame the dragon, the hero and the army's front, not the whole army. The army can run off-screen left; the clash point sits at ~40% of stage width.
     - The dragon's share of stage width ramps from ~25% at 1 m to ~44% at ≥ 10 m.
     - Evidence: dragon #12 (1.2 m) was a 120×33 px speck at the stage edge because the director framed the whole 7.2 m army.
-  - Art-pass polish, sent to the finished agents:
-    - Juice: the kill burst on small dragons is a blown-out white blob, so scale it with dragon size. Damage numbers looked like broken glyphs; check the text-cache cropping and that fonts are ready before caching.
-    - Backdrop: the mountains read flat and "vector". Make them painterly and let them recede. Re-verify at the closer framing.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
   1. Run `git status`. Uncommitted files belong to the in-flight WPs: `src/render/crowd/` = the 1.3 review fixes; `src/core/`, `src/sim/`, `src/render/dragon/weakspot.ts`, `src/render/fx/tuning.ts`+`index.ts`, `src/ui/effectText.ts` and ARCHITECTURE.md = 1.9b.
   2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
@@ -69,7 +65,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
     3. Pay the full stagger bonus only on the first stagger per dragon, 10–20% on later ones. This adds a per-dragon counter and bumps the save version.
     4. Lethal check: `!hp.sub(dmg).gt(0)`; never stagger a dying dragon.
     5. `MILESTONES`/`MILESTONE_MULT`/`WEAK_MULT` in `content/index.ts` become live getters.
-- **1.9b Sim fidelity + balance** (builder-high; owns `src/core/**`, `src/sim/**` and ARCHITECTURE §4, plus narrow grants: `render/dragon/weakspot.ts` imports the rule from core, `render/fx/tuning.ts` exports the juice time constants, and the one-line `ui/effectText.ts` fix)
+- **1.9b Sim fidelity + balance** ✅ Landed in 551f104: 35/35 targets PASS (engaged 29.5 kills by 3:15, worst 28; casual 7 kills by 1:00, 5th kill 38.9 s). (builder-high; owns `src/core/**`, `src/sim/**` and ARCHITECTURE §4, plus narrow grants: `render/dragon/weakspot.ts` imports the rule from core, `render/fx/tuning.ts` exports the juice time constants, and the one-line `ui/effectText.ts` fix)
   1. **Weak-spot liveness moves to core.** Core decides which spot is live (scale, throat during a breath windup, tail during a swipe windup) and whether any is hittable (`enter` after 72%; never while `dying`). `strike` downgrades weak hits when nothing is live, and the rig imports the rule.
   2. **Sim fidelity:** a separate, harder windup weak rate per bot; a shopping pause (0.3 s + 0.15 s per purchase); the `--profile` crash fixed; juice constants imported from the fx code, not copied; click share measured against remaining HP.
   3. **Targets:** first upgrade *bought* instead of visible; stagger share of gold ≤ 25%; a casual novelty gap; engaged worst-seed attacks seen ≥ 6.
@@ -78,6 +74,8 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   6. **Docs:** ARCHITECTURE §4 refresh.
 
 ## Art-pass notes not yet routed (lead)
+- **Casual first minute (sim finding):** the casual rhythm is limited by ~3.2 s of dead time per kill (dying 1.6 s + enter 1.6 s), not by HP. Proposal: scale `enter`/`dying` durations with dragon size (≈1.0–1.1 s for newts → 1.6 s for ≥ 4 m), so newts scuttle in and pop quickly and big dragons stay dramatic. The rig animates on phase progress, so it should follow. Then retune: engaged kills by 3:15 (29.5 against a 30 cap) has little headroom. Decide at the integration pass or after the playtest.
+- **Engaged still staggers ~half its windups** at a 25% throat hit rate. Fine for skilled play; revisit if the playtest shows fire breath is rarely seen.
 - **Dragon, 1–3 m (minutes 1–2):** the newt species is very flat and low at these sizes (bounds h 0.34 m at 1.23 m). It needs more presence: raised head, taller posture, a readable silhouette. Send it with the 1.2 review findings.
 - **HUD toasts:** 2–3 lines of plain gold italic text stack in the sky and overlap the title band. They need a subtle dark backing band, at most 2 visible, placed clear of the name/HP bar.
 - **What already looks good:** the title screen is cinematic, the first-kill flow works end to end, and late game (12 m dragon flying in, banner host) looks premium.
@@ -322,3 +320,4 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: The user added KICKOFF rule 8 (hand-off between milestones): after the ★ feedback is dealt with, let agents finish, bring BUILD_LOG fully up to date, commit, tell the user, and stop. The next milestone starts in a new session (cd7ef7c).
 - 2026-09-22: 1.2 dragon rig (57a9402): data-driven species rig, newt 0.5 → 40 m, all phases, throat/tail windup weak spots, 60–230 µs/frame. Review launched. WP 1.9b launched.
 - 2026-09-22: Crowd review fixes landed (04598dd): memory 60 → 27 MB typical, no squad teleport, visible recruits, hero contact 72 ms, rig-synced flings. Lead art pass on a static build: title great, first-kill flow works, late game premium; the dragon is too small at the start and in minutes 1–2 (framing). WP 1.10 framing launched; kill-blob/number-glyph notes to juice; mountain polish to backdrop.
+- 2026-09-22: Backdrop polish (b550de5): painterly receding mountains; layers sized from screen height so the closer framing doesn't rescale them. Juice polish (b6f9d4f): kill burst scales with dragon size (no white blob); numbers crisp and above the sparks (the "broken glyphs" were spark streaks). WP 1.9b (551f104): weak-spot liveness in core, 35/35 sim targets.
