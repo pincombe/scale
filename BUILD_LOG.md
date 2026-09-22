@@ -10,18 +10,19 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - Build: 416 KB raw / 188 KB gzip, incl. uncommitted in-flight work (fonts are 98 KB of it).
 - **Done and committed:**
   - 0.1, 0.2, 0.3.
-  - 1.1 backdrop, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
+  - 1.1 backdrop (+ review fixes), 1.2 dragon rig, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
 - **In flight (uncommitted in the working tree):**
-  - 1.2 dragon rig (also told: the weak spot must move to the throat during a breath windup; see Open issue 6).
+  - Review of 1.2 (dragon rig, committed 57a9402).
+  - WP 1.9b sim fidelity + balance (builder-high): moves weak-spot liveness into core, adds the shopping pause and new targets, casual pacing, the effectText rounding fix and an ARCHITECTURE §4 refresh. Summary below.
   - Crowd review fixes (1.3): the crowd agent is fixing them. **High:** squad-size changes teleport the whole army (~minute 9); marching archers and back-rank recruits are invisible until they reach their slot. **Medium:** memory 60 MB → ≤ 32 MB typical; hero contact within ~80 ms of the click; swipe/breath reactions synced to the real rig via new optional `DragonView.tailPoint`/`breathReachX` (the dragon agent is adding them). **Low:** stale arrows, per-frame strings, hero canvas cap for M2 zoom-in, squad labels. **Feel:** plume like a parasol, flung knights clump, muddy at 19 px.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
-  1. Run `git status`. Uncommitted files belong to the in-flight WP: `src/render/dragon/` = 1.2.
+  1. Run `git status`. Uncommitted files belong to the in-flight WPs: `src/render/crowd/` = the 1.3 review fixes; `src/core/`, `src/sim/`, `src/render/dragon/weakspot.ts`, `src/render/fx/tuning.ts`+`index.ts`, `src/ui/effectText.ts` and ARCHITECTURE.md = 1.9b.
   2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
   3. If the WP is complete per its brief summary below, commit it. If not, re-launch it with that brief summary and tell the agent to continue from the files on disk.
-  4. The 1.1, 1.3 and 1.9 reviews must be re-run if their results are lost (reviewer agent; commits aeeee92, 7376082, bfd6db1).
+  4. The 1.2 review must be re-run if its result is lost (reviewer agent, commit 57a9402). The 1.1, 1.3 and 1.9 reviews are done, and their findings are recorded in this file.
 
 ## In flight: brief summaries (enough to re-launch)
-- **1.2 Dragon rig v1 + newt** (builder-max, owns `src/render/dragon/**`)
+- **1.2 Dragon rig v1 + newt** (builder-max, owns `src/render/dragon/**`). ✅ Landed in 57a9402 and now in review; kept here as reference. As built: weak spot min `WEAK_HIT_MIN_PX = 11`; on small dragons the loose scale sits on the tail; throat only during breath windups, tail base during swipe windups; the swipe is a quick turnaround with the tail lashing through the front ranks at ~50–450 ms plus a dust shockwave; the dragon adds its own small shake on tail slams and on footsteps of dragons ≥ 5 m; `setOverride` on the returned object is for mutations; optional `DragonView.tailPoint`/`breathReachX`. **Adding a species:** add a `SpeciesDef` with `young`/`old` parameter sets, blended by size on a log scale. The sets cover proportions and posture; head shape (eye, brow, teeth, horns, gills, whiskers, frill); leg pairs; wings; crest; tail fin, spade or club; head count; per-individual variation; and behavior tuning. Set a feature to 0 to switch it off.
   - **Rig:** data-driven procedural rig: a follow-the-leader spine with a width profile giving one smooth outline; a head with hinged jaw, horns, a blinking and tracking eye, and smoking nostrils; 2–4 IK legs with planted feet; finger-bone wings with membranes on a flap cycle. Parameters cover spines, frills, whiskers, tail tip, leg count, wing size and head count (the three-headed mutation comes later).
   - **Species:** a species is a parameter set. The meadow newt, with per-individual variation from `dragon.seed`, has to work from 0.5 m to 40 m.
   - **Look:** near-black silhouette with a rim light toward `palette.light`, a hit flash and a flinch.
@@ -61,10 +62,13 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
     3. Pay the full stagger bonus only on the first stagger per dragon, 10–20% on later ones. This adds a per-dragon counter and bumps the save version.
     4. Lethal check: `!hp.sub(dmg).gt(0)`; never stagger a dying dragon.
     5. `MILESTONES`/`MILESTONE_MULT`/`WEAK_MULT` in `content/index.ts` become live getters.
-- **Review of 1.1 backdrop** (reviewer)
-  - **Focus:** performance. One ~30 fps sample was seen at the pulled-back framing, and cached canvases use 60–80 MB at DPR 2.
-  - **Also checked:** seams, resize and DPR changes, the eye timeline, re-entrancy, and code size.
-  - **Routing:** the backdrop agent has finished, so send fixes to a new builder-high with the review text.
+- **1.9b Sim fidelity + balance** (builder-high; owns `src/core/**`, `src/sim/**` and ARCHITECTURE §4, plus narrow grants: `render/dragon/weakspot.ts` imports the rule from core, `render/fx/tuning.ts` exports the juice time constants, and the one-line `ui/effectText.ts` fix)
+  1. **Weak-spot liveness moves to core.** Core decides which spot is live (scale, throat during a breath windup, tail during a swipe windup) and whether any is hittable (`enter` after 72%; never while `dying`). `strike` downgrades weak hits when nothing is live, and the rig imports the rule.
+  2. **Sim fidelity:** a separate, harder windup weak rate per bot; a shopping pause (0.3 s + 0.15 s per purchase); the `--profile` crash fixed; juice constants imported from the fx code, not copied; click share measured against remaining HP.
+  3. **Targets:** first upgrade *bought* instead of visible; stagger share of gold ≤ 25%; a casual novelty gap; engaged worst-seed attacks seen ≥ 6.
+  4. **Balance:** `hpBase` 20 → 14, heroicExample share 0.015 → 0.0175, then retune until all targets pass.
+  5. **UI:** heroicExample shows "1.5%", not "2%".
+  6. **Docs:** ARCHITECTURE §4 refresh.
 
 ## Open issues and risks
 1. **Performance is unverified end to end.** Each WP measured itself (skeleton 1.2–1.5 ms CPU with 300 stub knights + 1,500 particles; juice stress 60 fps; backdrop ~2 ms back + 1.2 ms front CPU+GPU at DPR 2), but nobody has measured the full stack with the real dragon and crowd. The backdrop agent saw one ~30 fps sample pulled back. Do a clean check on a static build (see Process).
@@ -79,6 +83,23 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 10. **Saves:** there's no save loader yet (M3). Saves are schema v3 (per-dragon stagger count); older versions are rejected.
 11. **GitHub:** nothing has been pushed and the repo `pincombe/scale` doesn't exist yet. The user chose a single public repo. Ask before creating it. After creating it: Settings > Pages > Source = "GitHub Actions".
 12. **Dev pages:** `src/render/dragon/lab.html` and `src/render/crowd/gallery.html` are dev-only. They're not in the build (the build only uses the root `index.html`). Keep or delete at M4.
+
+## Approaches tried and dropped (don't retry without a new reason)
+- **Fonts:** all-variable fonts came to ~158 KB inlined, so EB Garamond is static 400 + italic only.
+- **Post effects:**
+  - The CSS vignette was dropped, because it dimmed the coins landing in the top-left gold counter. The vignette stays in the canvas; film grain moved to CSS.
+  - Grain animating `background-position` repainted the viewport, so it now animates `transform`.
+- **Particles:** `particles.screen` on scaled time plus an fx "top-up" was replaced by the real clock.
+- **Juice:** the skeleton stub's hit-stop fired on every strike, and the first crit juice did hit-stop, kick and flash on every crit (at 8 crits/s: 23% of frames frozen, constant shake, repeated full-screen flashes). Replaced by "crit heat" and no crit flash.
+- **Text:**
+  - Flat `DRAGON_NAMES`/`DRAGON_EPITHETS` lists were replaced by the composable `dragonName()` generator.
+  - The title tagline "Every dragon is a scale on a bigger dragon." would spoil the Zoom; it's reserved for the zoom card.
+- **Dragon rig:**
+  - An over-the-head tail slam doesn't work for a newt (the tail is too short), so the swipe became a turnaround lash.
+  - A 16 px weak-spot minimum made nearly every click on a newt a crit, so the minimum is now 11 px and the scale sits off-center.
+- **Backdrop:** the eye on a far hill at `WYRM_EYE_X = -3.5` ended up behind the army, so it moved to the valley wall right of the sun, higher and 1.75× bigger.
+- **Sim:** the bot originally assumed the loose scale stays hittable during windups and while the dragon enters. That's wrong, and it led to 1.9b.
+- **Browser verification:** the shared dev server with HMR churn made visual checks unreliable while six agents edited. Agents moved to static builds or private Vite servers. Caveat: a private server on another port re-optimized the shared `node_modules/.vite` cache once. Give private servers their own `cacheDir`.
 
 ## Playtest feedback
 None yet: no ★ playtest has happened. Record the user's feedback here verbatim-ish when it arrives, with a status per item.
@@ -197,7 +218,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 | WP | Agent | Owns | Status | Commit |
 |---|---|---|---|---|
 | 1.1 Meadow backdrop, palette, eye in the hills | builder-high | `src/render/backdrop/**`, MEADOW values | ✅ accepted after review (1 high + 6 fixed) | aeeee92, b7f2b17 |
-| 1.2 Dragon rig v1 + newt, weak spot, hit test | builder-max | `src/render/dragon/**` | ⏳ **in flight** (uncommitted) | — |
+| 1.2 Dragon rig v1 + newt, weak spot, hit test | builder-max | `src/render/dragon/**` | ✅ committed; **review in flight** | 57a9402 |
 | 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ✅ committed; review done, **fixes in flight** | 7376082 |
 | 1.4 Juice: presets, numbers, hit-stop, shake, coins, post FX | builder-high | `src/render/fx/**`, `post.ts` | ✅ accepted after review (1 high + 9 fixed) | fd76ef0, 82496a7 |
 | 1.5 Economy core | builder-high | `src/core/**` | ✅ committed; review done, 5 fixes handed to 1.9 | 255c39e |
@@ -285,3 +306,6 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: 1.9 sim (bfd6db1): 30/30 targets PASS on juiced runs over 20 seeds (engaged: first kill 2 s, archers 0:56, 1.0/2.3/8.4 m at 1/2/3 min, 29 kills by 3:15, 10.5 attacks seen, clicks 46% of damage; dilation 0.92). `npm test` green again.
 - 2026-09-22: 1.3 crowd (7376082): rim-lit knights at 4 LODs, live hero, march-ins, volleys, flee/ragdoll lanes, cheers, banners with `drawEmblem()` for M2 heraldry; 0.5–0.8 ms/frame at 300 knights.
 - 2026-09-22: 1.1 review: premium look, fast in Chrome (back 0.17 ms CPU + ~1.2 ms GPU); the eye was hidden behind the army. Fixed (b7f2b17): eye above the banner band, fill −31%, memory 128 → 55 MB.
+- 2026-09-22: 1.3 review: 2 high (squad teleport at 300; invisible marching recruits) + memory, hero timing, rig-synced reactions and feel notes; fixes in flight.
+- 2026-09-22: The user added KICKOFF rule 8 (hand-off between milestones): after the ★ feedback is dealt with, let agents finish, bring BUILD_LOG fully up to date, commit, tell the user, and stop. The next milestone starts in a new session (cd7ef7c).
+- 2026-09-22: 1.2 dragon rig (57a9402): data-driven species rig, newt 0.5 → 40 m, all phases, throat/tail windup weak spots, 60–230 µs/frame. Review launched. WP 1.9b launched.
