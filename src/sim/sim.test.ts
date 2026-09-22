@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { PROFILES } from './bots';
+import { PROFILES, SHOP_PAUSE_BASE, SHOP_PAUSE_PER_BUY, shopPause } from './bots';
 import { JUICE, JuiceClock } from './juice';
-import { CRIT_STOP_GAP } from '../render/fx/tuning';
+import { CRIT_HIT_STOP, CRIT_STOP_GAP, KILL_HIT_STOP, KILL_SLOW_MO, KILL_SLOW_MO_DUR, STAGGER_HIT_STOP } from '../render/fx/tuning';
 import { FRAME_DT, runGame } from './play';
 import { clock, median, never } from './stats';
 import { TARGETS, checkTargets, metric } from './targets';
@@ -18,6 +18,16 @@ function logicOver(c: JuiceClock, seconds: number): number {
 }
 
 describe('juice clock', () => {
+  it('uses the fx layer\'s own time-effect constants', () => {
+    expect(JUICE).toEqual({
+      critHitStop: CRIT_HIT_STOP,
+      staggerHitStop: STAGGER_HIT_STOP,
+      killHitStop: KILL_HIT_STOP,
+      killSlowMo: KILL_SLOW_MO,
+      killSlowMoDur: KILL_SLOW_MO_DUR,
+    });
+  });
+
   it('runs at 1× when juice is off, whatever happens', () => {
     const c = new JuiceClock(false);
     c.onEvent(strike(true));
@@ -87,6 +97,36 @@ describe('balance sim', () => {
     expect(juiced.dilation).toBeLessThan(0.97);
     expect(juiced.dilation).toBeGreaterThan(0.8);
     expect(juiced.killsAtBoss).toBeLessThanOrEqual(plain.killsAtBoss);
+  });
+
+  it('shopping costs clicking time: 0.3 s + 0.15 s per purchase, nothing for an empty trip', () => {
+    expect(SHOP_PAUSE_BASE).toBe(0.3);
+    expect(SHOP_PAUSE_PER_BUY).toBe(0.15);
+    expect(shopPause(0)).toBe(0);
+    expect(shopPause(1)).toBeCloseTo(0.45, 9);
+    expect(shopPause(4)).toBeCloseTo(0.9, 9);
+    const r = runGame(PROFILES.engaged, 3, { seconds: 90 });
+    expect(r.shopping).toBeGreaterThan(5);
+    expect(r.shopping).toBeLessThan(30);
+  });
+
+  it('click share is a share of the damage actually dealt', () => {
+    for (const name of ['engaged', 'casual'] as const) {
+      const r = runGame(PROFILES[name], 4, { seconds: 90 });
+      expect(r.clickShare).toBeGreaterThan(0);
+      expect(r.clickShare).toBeLessThan(1);
+    }
+  });
+
+  it('windups are a harder target than the loose scale; idle never staggers', () => {
+    for (const p of Object.values(PROFILES)) expect(p.windupWeakRate).toBeLessThanOrEqual(p.weakRate);
+    expect(PROFILES.idle.windupWeakRate).toBe(0);
+  });
+
+  it('checks only the targets of profiles that ran (a single-profile sim does not crash)', () => {
+    const results = checkTargets({ casual: [runGame(PROFILES.casual, 1, { seconds: 200 })] });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every((r) => r.target.profile === 'casual')).toBe(true);
   });
 
   it('every target names a real metric', () => {

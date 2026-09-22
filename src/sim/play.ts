@@ -4,7 +4,7 @@
 import { nextFloat, seedRng } from '../lib/rng';
 import { TICK_DT, applyAction, createInitialState, fmt, sel, sizeWord, tick } from '../core';
 import type { Action, GameEvent, GameState } from '../core';
-import { shop } from './bots';
+import { shop, shopPause } from './bots';
 import type { Profile } from './bots';
 import { JuiceClock } from './juice';
 
@@ -27,10 +27,12 @@ export interface RunResult {
   seed: number;
   juice: boolean;
   seconds: number;
-  /** Wall s of the first kill / first footman hired / first upgrade offered / archers unlocked (-1: never). */
+  /** Wall s of the first kill / fifth kill / first footman hired / first upgrade offered and bought / archers unlocked (-1: never). */
   firstKill: number;
+  fifthKill: number;
   firstFootman: number;
   firstUpgradeVisible: number;
+  firstUpgradeBought: number;
   archersUnlocked: number;
   firstArcher: number;
   /** Wall s of the first purchase of each unit / upgrade id. */
@@ -67,8 +69,10 @@ export interface RunResult {
   staggerGoldShare: number;
   /** Logic seconds / wall seconds over the run (1 without juice). */
   dilation: number;
-  /** Share of damage from clicks over the window. */
+  /** Share of damage from clicks over the window (each hit counted up to the HP it could still take). */
   clickShare: number;
+  /** Wall s the player spent shopping (no clicks) inside the window. */
+  shopping: number;
 }
 
 /** The window the pacing metrics cover: to the boss for active players, the whole run for idle. */
@@ -95,8 +99,10 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     juice,
     seconds,
     firstKill: -1,
+    fifthKill: -1,
     firstFootman: -1,
     firstUpgradeVisible: -1,
+    firstUpgradeBought: -1,
     archersUnlocked: -1,
     firstArcher: -1,
     firstBuy: {},
@@ -117,13 +123,26 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     staggerGoldShare: 0,
     dilation: 1,
     clickShare: 0,
+    shopping: 0,
   };
 
   let wall = 0;
   let logic = 0;
   const pending: GameEvent[] = [];
+  /** Per pending event, for --verbose: a purchase's count owned and gold left right after it. */
+  const buyNote: string[] = [];
+  let clickDmg = 0;
+  let armyDmg = 0;
+  // Damage shares are measured when core emits, before the blow lands: each hit counts up to the HP
+  // the dragon still had (the overkill of a finishing blow is not damage dealt).
+  const dealt = (damage: { toNumber(): number }): number => Math.min(num(damage), Math.max(0, num(s.dragon.hp)));
   const emit = (e: GameEvent): void => {
+    if (wall <= winEnd) {
+      if (e.type === 'strike') clickDmg += dealt(e.damage);
+      else if (e.type === 'armyHit') armyDmg += dealt(e.damage);
+    }
     pending.push(e);
+    if (log) buyNote.push(e.type !== 'purchase' ? '' : `${e.kind === 'unit' ? ' → ' + s.units[e.id as 'footman' | 'archer'] : ''}  (gold left ${fmt(s.gold)})`);
   };
   const act = (a: Action): void => applyAction(s, a, emit);
 
@@ -131,8 +150,6 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
   let lastNovelty = -1;
   let unaffordableSince = -1;
   let purchasesInWindow = 0;
-  let clickDmg = 0;
-  let armyDmg = 0;
   let killStart = 0;
   let killGoldSum = 0;
   let staggerGoldSum = 0;
@@ -172,6 +189,7 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
             r.firstKill = wall;
             lastNovelty = lastBuyNovelty = wall;
           }
+          if (r.kills === 5) r.fifthKill = wall;
           if (log) {
             const d = s.dragon;
             log(wall, `kill #${r.kills}  ${d.name}  #${d.index} ${d.size.toFixed(2)} m  ${fmt(d.maxHp)} HP  +${fmt(e.gold)} gold  in ${(wall - killStart).toFixed(1)} s`);
@@ -209,7 +227,8 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
           if (wall <= winEnd) purchasesInWindow++;
           if (e.id === 'footman' && r.firstFootman < 0) r.firstFootman = wall;
           if (e.id === 'archer' && r.firstArcher < 0) r.firstArcher = wall;
-          log?.(wall, `buy ${e.id}${e.kind === 'unit' ? ' → ' + s.units[e.id as 'footman' | 'archer'] : ''}  (gold left ${fmt(s.gold)})`);
+          if (e.kind === 'upgrade' && r.firstUpgradeBought < 0) r.firstUpgradeBought = wall;
+          log?.(wall, `buy ${e.id}${buyNote[i]}`);
           if (!seen.has(e.id)) {
             seen.add(e.id);
             r.firstBuy[e.id] = wall;
@@ -224,14 +243,11 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
             r.staggers++;
             log?.(wall, '  stagger!');
           }
-          if (wall <= winEnd) clickDmg += Math.min(num(e.damage), num(s.dragon.maxHp));
-          break;
-        case 'armyHit':
-          if (wall <= winEnd) armyDmg += Math.min(num(e.damage), num(s.dragon.maxHp));
           break;
       }
     }
     pending.length = 0;
+    buyNote.length = 0;
   };
 
   // "Nothing affordable" stretches, sampled whenever gold can change (after clicks, after each tick).
@@ -250,12 +266,15 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
   const clicking = p.cps > 0;
   const clickStart = p.startDelay;
   let clickAcc = 0;
-  // The windup the bot last decided about (dragon id + windup count), and when its throat aim lands.
+  // The windup the bot last saw start (dragon id + windup count), and when it has retargeted to the
+  // windup spot (throat or tail base).
   let windupCount = 0;
   let aimWindup = '';
   let aimAt = Infinity;
   const windupKey = (): string => s.dragon.id + ':' + windupCount;
   let nextShop = Infinity;
+  /** Clicking resumes at this wall time (the player is in the shop panel until then). */
+  let shopUntil = -Infinity;
   let acc = 0;
   let sizeIdx = 0;
   let bossDone = false;
@@ -263,18 +282,18 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
 
   for (let f = 0; f < frames; f++) {
     // Input (between frames, in wall time).
-    if (clicking && wall >= clickStart && !(p.clickUntilFirstKill && r.firstKill >= 0)) {
+    if (clicking && wall >= clickStart && wall >= shopUntil && !(p.clickUntilFirstKill && r.firstKill >= 0)) {
       clickAcc += p.cps * FRAME_DT;
       while (clickAcc >= 1) {
         clickAcc -= 1;
         let rate = p.weakRate;
         if (s.dragon.phase === 'windup') {
-          // A new windup: decide whether to go for the throat, and how fast.
+          // A new windup: the weak spot jumped; the player needs a moment to retarget.
           if (aimWindup !== windupKey()) {
             aimWindup = windupKey();
-            aimAt = nextFloat(rng) < p.staggerTry ? wall + p.reactMin + (p.reactMax - p.reactMin) * nextFloat(rng) : Infinity;
+            aimAt = wall + p.reactMin + (p.reactMax - p.reactMin) * nextFloat(rng);
           }
-          rate = wall >= aimAt ? p.throatHit : 0;
+          rate = wall >= aimAt ? p.windupWeakRate : 0;
         }
         const weak = rate > 0 && nextFloat(rng) < rate;
         act({ type: 'strike', weak, aimed: true, x: 0, y: 0 });
@@ -283,8 +302,12 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     sampleAffordable(); // a click may have paid for something the shop spends right away
     if (r.firstKill >= 0 && nextShop === Infinity) nextShop = wall + Math.min(1, p.shopEvery);
     if (wall >= nextShop) {
-      shop(s, p, act);
-      nextShop += p.shopEvery;
+      const pause = shopPause(shop(s, p, act));
+      if (pause > 0) {
+        shopUntil = wall + pause;
+        if (wall <= winEnd) r.shopping += Math.min(pause, winEnd - wall);
+      }
+      nextShop = Math.max(nextShop + p.shopEvery, shopUntil);
     }
     drain();
 

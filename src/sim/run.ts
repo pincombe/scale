@@ -96,7 +96,7 @@ function main(): void {
   const seeds = Array.from({ length: args.seeds }, (_, i) => i + 1);
   const profiles = args.profile ? [args.profile] : PROFILE_NAMES;
   const cols: Column[] = [];
-  const juiced = {} as Record<ProfileName, RunResult[]>;
+  const juiced: Partial<Record<ProfileName, RunResult[]>> = {};
   for (const name of profiles) {
     const p = PROFILES[name];
     // Idle never clicks after the first newt, so its 1× and juiced runs barely differ: juiced only.
@@ -112,7 +112,7 @@ function main(): void {
   table(cols);
 
   console.log('\nTargets (juiced runs):');
-  const results = checkTargets(juiced).filter((r) => profiles.includes(r.target.profile));
+  const results = checkTargets(juiced);
   let fails = 0;
   for (const r of results) {
     const m = metric(r.target.metric);

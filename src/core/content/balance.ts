@@ -94,8 +94,8 @@ export const BALANCE: Balance = {
      * one's HP, where growth fades from hpGrowthEarly to hpGrowthLate over ~hpGrowthFade kills:
      * steep while clicks and first upgrades carry the player, steady once the army does.
      */
-    hpBase: 20,
-    hpGrowthEarly: 1.8,
+    hpBase: 12,
+    hpGrowthEarly: 1.75,
     hpGrowthLate: 1.225,
     hpGrowthFade: 5,
     /** Kill gold = HP × goldPerHp (× goldMult upgrades). */
@@ -148,9 +148,10 @@ export const BALANCE: Balance = {
 
   /**
    * Tuned by the balance sim (juiced engaged player, median of 20 seeds, bought at): pointySwords
-   * 0:07, keenEye 0:22, drillSergeant 0:34, bounty 0:54, fletching 1:26, heroicExample 1:43,
-   * warHorns 2:34, quickNock 2:52, grindstone 3:06 (the last push before the boss). Most unlock
-   * 10–30 s before they're affordable, so the panel usually has something to save for.
+   * 0:11, keenEye 0:27, drillSergeant 0:46, bounty 1:07, fletching 1:39, heroicExample 1:53,
+   * warHorns 2:49, quickNock 3:06, grindstone 3:14 (the last push before the boss). A casual
+   * player (shops every 10 s) gets pointySwords ~0:25 and heroicExample ~2:45. Most unlock 10–30 s
+   * before they're affordable, so the panel usually has something to save for.
    */
   upgrades: {
     pointySwords: { cost: 25, unlock: { stat: 'footman', at: 1 }, effect: { kind: 'clickMult', mult: 2 } },
@@ -159,9 +160,9 @@ export const BALANCE: Balance = {
     bounty: { cost: 600, unlock: { stat: 'kills', at: 6 }, effect: { kind: 'goldMult', mult: 1.5 } },
     fletching: { cost: 2500, unlock: { stat: 'archer', at: 3 }, effect: { kind: 'unitMult', unit: 'archer', mult: 2 } },
     warHorns: { cost: 30000, unlock: { stat: 'footman', at: 40 }, effect: { kind: 'armyMult', mult: 1.5 } },
-    heroicExample: { cost: 4000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.015 } },
+    heroicExample: { cost: 3000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.02 } },
     quickNock: { cost: 40000, unlock: { stat: 'archer', at: 20 }, effect: { kind: 'periodMult', unit: 'archer', mult: 0.7 } },
-    grindstone: { cost: 60000, unlock: { stat: 'kills', at: 25 }, effect: { kind: 'clickMult', mult: 3 } },
+    grindstone: { cost: 40000, unlock: { stat: 'kills', at: 25 }, effect: { kind: 'clickMult', mult: 3 } },
   },
 
   /** Dragon phase timings in seconds (the phase machine lives in core/dragon.ts). */

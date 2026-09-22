@@ -1,27 +1,22 @@
 // Juice time dilation for the sim. In the game, hit-stop and slow-mo scale the logic clock too
 // (ARCHITECTURE §2), so every crit and kill costs the economy a little wall time. The sim drives
-// the real TimeDirector (src/app/time.ts: pure, no DOM) with the juice requests the fx layer makes.
-//
-// The request values are COPIED from src/render/fx/index.ts (WP 1.4), which touches the DOM and
-// can't be imported here; CRIT_STOP_GAP comes from the pure render/fx/tuning.ts. Keep in sync:
+// the real TimeDirector (src/app/time.ts: pure, no DOM) with the juice requests the fx layer makes
+// (src/render/fx/index.ts), using the same constants from the pure render/fx/tuning.ts:
 //   strike handler:  on a crit, if (wall clock - last crit >= CRIT_STOP_GAP)
-//                    time.hitStop(e.stagger ? 0.08 : 0.07); every crit resets the last-crit clock
-//   dragonDeath:     time.hitStop(0.08); time.slowMo(0.25, 0.55)
+//                    hitStop(stagger ? STAGGER_HIT_STOP : CRIT_HIT_STOP); every crit resets the clock
+//   dragonDeath:     hitStop(KILL_HIT_STOP); slowMo(KILL_SLOW_MO, KILL_SLOW_MO_DUR)
 // TimeDirector itself caps a hit-stop at 0.12 s and ignores one within 0.3 s of the previous one.
 import { TimeDirector } from '../app/time';
-import { CRIT_STOP_GAP } from '../render/fx/tuning';
+import { CRIT_HIT_STOP, CRIT_STOP_GAP, KILL_HIT_STOP, KILL_SLOW_MO, KILL_SLOW_MO_DUR, STAGGER_HIT_STOP } from '../render/fx/tuning';
 import type { GameEvent } from '../core';
 
+/** The fx layer's time effects (wall s), as the sim applies them. */
 export const JUICE = {
-  /** Hit-stop on a weak-spot crit (s, wall), only after CRIT_STOP_GAP s without crits. */
-  critHitStop: 0.07,
-  /** Hit-stop on a crit that staggers. */
-  staggerHitStop: 0.08,
-  /** Hit-stop on a kill. */
-  killHitStop: 0.08,
-  /** Kill slow-mo: starts at this scale and eases back to 1 over killSlowMoDur (wall s). */
-  killSlowMo: 0.25,
-  killSlowMoDur: 0.55,
+  critHitStop: CRIT_HIT_STOP,
+  staggerHitStop: STAGGER_HIT_STOP,
+  killHitStop: KILL_HIT_STOP,
+  killSlowMo: KILL_SLOW_MO,
+  killSlowMoDur: KILL_SLOW_MO_DUR,
 } as const;
 
 /**

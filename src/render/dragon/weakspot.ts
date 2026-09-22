@@ -1,5 +1,6 @@
 // The weak spot: which glowing target is live, where it sits on the rig, and its fades.
-// Pure logic (no DOM) so the balance-critical rules are testable:
+// Which spot is live, and when any can be hit, is a game rule owned by core (core/weakspot.ts,
+// enforced in applyAction): this file maps it onto the rig.
 //
 //   phase                 live weak spot
 //   windup (breath)       the glowing THROAT only (the loose scale dims out and can't be hit)
@@ -8,6 +9,7 @@
 //   enter (in flight), dying   none
 //
 // The hit position switches the instant the phase changes; only the visuals cross-fade.
+import { weakSpotFor, weakSpotLive } from '../../core';
 import type { DragonAttack, DragonPhase } from '../../core';
 import type { DragonRig, SpineSample } from './rig';
 import { WEAK_SHIFT_MAX, WEAK_SHIFT_MIN } from './tuning';
@@ -24,17 +26,14 @@ const TAIL_SIDE = 0.62;
 const FADE_IN = 0.18;
 const FADE_OUT = 0.12;
 
+/** The rig's marker mode for core's live weak spot in this phase. */
 export function weakModeFor(phase: DragonPhase, attack: DragonAttack): number {
-  if (phase === 'windup') return attack === 'breath' ? WEAK_THROAT : WEAK_TAIL;
-  return WEAK_SCALE;
+  const kind = weakSpotFor(phase, attack);
+  return kind === 'throat' ? WEAK_THROAT : kind === 'tail' ? WEAK_TAIL : WEAK_SCALE;
 }
 
-/** Whether a weak spot can be hit in this phase at progress k (0..1). Clicks use this, not fades. */
-export function weakLiveFor(phase: DragonPhase, k: number): boolean {
-  if (phase === 'dying') return false;
-  if (phase === 'enter') return k > 0.72;
-  return true;
-}
+/** Whether a weak spot can be hit in this phase at progress k (0..1): core's rule. Clicks use this, not fades. */
+export const weakLiveFor = weakSpotLive;
 
 /** The glowing throat (u): the gular pouch under the jaw of the main head (moves with the head). */
 export function throatPoint(rig: DragonRig, out: { x: number; y: number }): { x: number; y: number } {

@@ -18,18 +18,20 @@ export interface Profile {
   name: ProfileName;
   /** Clicks per wall second. */
   cps: number;
-  /** Chance a click lands on the weak spot (the loose scale) outside windups. */
+  /**
+   * Chance a click lands on the loose scale outside windups. Core decides whether it counts: while
+   * the dragon is still arriving (early `enter`) a weak click is a plain hit (core/weakspot.ts).
+   */
   weakRate: number;
   /**
-   * Windups (PLAN §3.2): the weak spot is the glowing throat, somewhere else, so a stagger takes
-   * intent. Each windup the player goes for the throat with chance `staggerTry`; if so, after a
-   * reaction time in [reactMin, reactMax] s each click hits the throat with chance `throatHit`.
-   * Other windup clicks are plain body hits.
+   * Windups (PLAN §3.2): the weak spot moves off the loose scale to a different, harder target (the
+   * throat for a breath, the tail base for a swipe), and hitting it staggers. The player needs
+   * [reactMin, reactMax] s to retarget; clicks before that are plain body hits, clicks after it hit
+   * the windup spot with chance `windupWeakRate`.
    */
-  staggerTry: number;
+  windupWeakRate: number;
   reactMin: number;
   reactMax: number;
-  throatHit: number;
   /** Wall seconds before the first click (reading the title). */
   startDelay: number;
   /** Stop clicking after the first kill (the idle player: the newt can only die by clicking). */
@@ -46,10 +48,9 @@ export const PROFILES: Record<ProfileName, Profile> = {
     name: 'engaged',
     cps: 6,
     weakRate: 0.3,
-    staggerTry: 0.6,
-    reactMin: 0.3,
-    reactMax: 0.8,
-    throatHit: 0.5,
+    windupWeakRate: 0.25,
+    reactMin: 0.4,
+    reactMax: 1.0,
     startDelay: 1,
     clickUntilFirstKill: false,
     shopEvery: 0.5,
@@ -60,11 +61,10 @@ export const PROFILES: Record<ProfileName, Profile> = {
     name: 'casual',
     cps: 3,
     weakRate: 0.1,
-    // Ignores stagger timing: keeps clicking at random, so the throat gets its 10% share of hits.
-    staggerTry: 1,
+    // Doesn't chase the windup spot: keeps clicking where it was, and now and then hits the throat.
+    windupWeakRate: 0.05,
     reactMin: 0,
     reactMax: 0,
-    throatHit: 0.1,
     startDelay: 2,
     clickUntilFirstKill: false,
     shopEvery: 10,
@@ -75,10 +75,9 @@ export const PROFILES: Record<ProfileName, Profile> = {
     name: 'idle',
     cps: 3,
     weakRate: 0,
-    staggerTry: 0,
+    windupWeakRate: 0,
     reactMin: 0,
     reactMax: 0,
-    throatHit: 0,
     startDelay: 2,
     clickUntilFirstKill: true,
     shopEvery: 60,
@@ -184,11 +183,23 @@ function greedyBuy(s: GameState, p: Profile): Action | null {
   return s.gold.gte(cost) ? { type: 'buyUnit', unit: best, amount: 1 } : null;
 }
 
-/** Everything the bot buys on one shopping trip, applied through `apply`. */
-export function shop(s: GameState, p: Profile, apply: (a: Action) => void): void {
+/** Shopping costs clicking time: a trip that buys anything pauses clicks this long (wall s). */
+export const SHOP_PAUSE_BASE = 0.3;
+export const SHOP_PAUSE_PER_BUY = 0.15;
+
+/** Wall seconds a trip with `buys` purchases keeps the player from clicking (0 for none). */
+export function shopPause(buys: number): number {
+  return buys > 0 ? SHOP_PAUSE_BASE + SHOP_PAUSE_PER_BUY * buys : 0;
+}
+
+/** Everything the bot buys on one shopping trip, applied through `apply`. Returns the purchases made. */
+export function shop(s: GameState, p: Profile, apply: (a: Action) => void): number {
+  let buys = 0;
   for (let k = 0; k < MAX_BUYS_PER_TRIP; k++) {
     const a = p.shop === 'greedy' ? greedyBuy(s, p) : cheapestBuy(s);
-    if (!a) return;
+    if (!a) break;
     apply(a);
+    buys++;
   }
+  return buys;
 }

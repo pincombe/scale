@@ -80,7 +80,8 @@ describe('dragon curves', () => {
 
   it('gold is HP × goldPerHp, and tiers multiply both', () => {
     expect(dragonGold(0, 12).toNumber()).toBeCloseTo(dragonMaxHp(0, 12).toNumber() * BALANCE.dragon.goldPerHp, -1);
-    expect(dragonMaxHp(1, 20).div(dragonMaxHp(0, 20)).toNumber() / BALANCE.dragon.tierHpMult).toBeCloseTo(1, 4);
+    // Tier-0 HP is rounded to whole numbers (~4e3 at index 20), so the ratio is only good to ~1e-4.
+    expect(dragonMaxHp(1, 20).div(dragonMaxHp(0, 20)).toNumber() / BALANCE.dragon.tierHpMult).toBeCloseTo(1, 3);
   });
 
   it('names come from dragonName() and are deterministic per seed', () => {

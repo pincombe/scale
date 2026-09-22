@@ -62,4 +62,5 @@ export {
   type Requirement,
 } from './content';
 export { UNLOCK_FLAGS } from './progress';
+export { ENTER_WEAK_FROM, phaseProgress, weakSpotFor, weakSpotHittable, weakSpotLive, type WeakSpotKind } from './weakspot';
 export * as sel from './selectors';

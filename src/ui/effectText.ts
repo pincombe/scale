@@ -20,7 +20,7 @@ export function effectLine(e: UpgradeEffect): string {
     case 'goldMult':
       return `Dragon gold ${times(e.mult)}`;
     case 'clickArmyShare':
-      return `Each click adds ${Math.round(e.share * 100)}% of army DPS`;
+      return `Each click adds ${Math.round(e.share * 1000) / 10}% of army DPS`;
     case 'periodMult': {
       const faster = Math.round((1 / e.mult - 1) * 100);
       return `${UNITS[e.unit].plural} attack ${faster}% faster`;

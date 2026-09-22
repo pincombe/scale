@@ -25,7 +25,9 @@ const ACTIVE: ProfileName[] = ['engaged', 'casual'];
 export const METRICS: Metric[] = [
   { key: 'firstKill', label: 'first kill', get: (r) => never(r.firstKill), worst: 'max', fmt: sec },
   { key: 'firstFootman', label: 'first footman', get: (r) => never(r.firstFootman), worst: 'max', fmt: sec },
-  { key: 'firstUpgradeVisible', label: 'first upgrade visible', get: (r) => never(r.firstUpgradeVisible), worst: 'max', fmt: sec },
+  { key: 'fifthKill', label: 'fifth kill', get: (r) => never(r.fifthKill), worst: 'max', fmt: sec },
+  { key: 'kills60', label: 'kills @1:00', get: (r) => r.killsByMinute[0] ?? NaN, worst: 'min', fmt: count },
+  { key: 'firstUpgradeBought', label: 'first upgrade bought', get: (r) => never(r.firstUpgradeBought), worst: 'max', fmt: sec },
   { key: 'archersUnlocked', label: 'archers unlocked', get: (r) => never(r.archersUnlocked), worst: 'max', fmt: mm },
   { key: 'firstArcher', label: 'first archer hired', get: (r) => never(r.firstArcher), worst: 'max', fmt: mm },
   { key: 'size60', label: 'dragon size @1:00', get: (r) => r.sizeAt[0] ?? NaN, worst: 'min', fmt: meters },
@@ -46,6 +48,7 @@ export const METRICS: Metric[] = [
   { key: 'staggers', label: 'staggers (window)', get: (r) => r.staggers, worst: 'min', fmt: count, only: ACTIVE },
   { key: 'staggerGoldShare', label: 'stagger share of gold', get: (r) => r.staggerGoldShare, worst: 'max', fmt: pct, only: ACTIVE },
   { key: 'clickShare', label: 'click share of damage', get: (r) => r.clickShare, worst: 'min', fmt: pct, only: ACTIVE },
+  { key: 'shopping', label: 'time shopping (window)', get: (r) => r.shopping, worst: 'max', fmt: sec, only: ACTIVE },
   { key: 'dilation', label: 'logic / wall time', get: (r) => r.dilation, worst: 'min', fmt: (x) => x.toFixed(3) },
 ];
 
@@ -81,8 +84,8 @@ export interface Target {
 export const TARGETS: Target[] = [
   // Engaged (6 clicks/s, 30% weak spot, buys whenever sensible): the judge's first 3:15.
   { profile: 'engaged', metric: 'firstKill', stat: 'worst', hi: 5, note: 'first kill ≤ 5 s' },
-  { profile: 'engaged', metric: 'firstFootman', stat: 'worst', hi: 15, note: 'first footman ≤ 15 s' },
-  { profile: 'engaged', metric: 'firstUpgradeVisible', stat: 'worst', hi: 35, note: 'first upgrade visible ≤ 35 s' },
+  { profile: 'engaged', metric: 'firstFootman', stat: 'worst', hi: 8, note: 'first footman ≤ 8 s (design: ≤ 15 s)' },
+  { profile: 'engaged', metric: 'firstUpgradeBought', stat: 'worst', hi: 30, note: 'first upgrade bought by 0:30' },
   { profile: 'engaged', metric: 'archersUnlocked', stat: 'median', lo: 50, hi: 75, note: 'archers by 50–75 s' },
   { profile: 'engaged', metric: 'archersUnlocked', stat: 'worst', hi: 90, note: 'archers by 1:30 on every seed' },
   { profile: 'engaged', metric: 'size60', stat: 'median', lo: 0.8, hi: 1.3, note: 'dog ~1 m by 1:00' },
@@ -94,26 +97,31 @@ export const TARGETS: Target[] = [
   { profile: 'engaged', metric: 'longestNoveltyGap', stat: 'median', hi: 20, note: 'something new every ≤ 20 s (median run)' },
   { profile: 'engaged', metric: 'longestNoveltyGap', stat: 'worst', hi: 30, note: 'something new every ≤ 30 s (every run)' },
   { profile: 'engaged', metric: 'attacks', stat: 'median', lo: 8, note: 'sees ≥ 8 breaths/swipes by 3:15' },
+  { profile: 'engaged', metric: 'attacks', stat: 'worst', lo: 6, note: 'sees ≥ 6 breaths/swipes on every seed' },
   { profile: 'engaged', metric: 'staggers', stat: 'median', lo: 5, note: 'lands ≥ 5 staggers by 3:15' },
+  { profile: 'engaged', metric: 'staggerGoldShare', stat: 'median', hi: 0.25, note: 'staggers are a bonus (≤ 25% of gold)' },
   { profile: 'engaged', metric: 'clickShare', stat: 'median', lo: 0.4, hi: 0.6, note: 'clicks do 40–60% of the damage' },
-  { profile: 'engaged', metric: 'longestKillGap', stat: 'worst', hi: 30, note: 'no dead ends' },
+  { profile: 'engaged', metric: 'longestKillGap', stat: 'worst', hi: 20, note: 'no dead ends (a kill every ≤ 20 s)' },
 
   // Casual (3 clicks/s, 10% weak spot, shops every 10 s): the same beats, somewhat later.
   { profile: 'casual', metric: 'firstKill', stat: 'worst', hi: 8, note: 'first kill ≤ 8 s' },
-  { profile: 'casual', metric: 'firstFootman', stat: 'worst', hi: 20, note: 'first footman ≤ 20 s' },
-  { profile: 'casual', metric: 'firstUpgradeVisible', stat: 'worst', hi: 60, note: 'first upgrade visible ≤ 1:00' },
+  { profile: 'casual', metric: 'firstFootman', stat: 'worst', hi: 10, note: 'first footman ≤ 10 s' },
+  { profile: 'casual', metric: 'fifthKill', stat: 'median', hi: 45, note: 'a snappy first minute (5th kill ≤ 45 s)' },
+  { profile: 'casual', metric: 'firstUpgradeBought', stat: 'worst', hi: 45, note: 'first upgrade bought by 0:45' },
   { profile: 'casual', metric: 'archersUnlocked', stat: 'median', hi: 135, note: 'archers by ~2:00' },
   { profile: 'casual', metric: 'killsAtBoss', stat: 'median', lo: 18, note: '18+ kills by 3:15' },
   { profile: 'casual', metric: 'attacks', stat: 'median', lo: 5, note: 'sees ≥ 5 breaths/swipes by 3:15' },
   { profile: 'casual', metric: 'staggers', stat: 'median', lo: 2, note: 'lands a stagger now and then' },
+  { profile: 'casual', metric: 'staggerGoldShare', stat: 'median', hi: 0.25, note: 'staggers are a bonus (≤ 25% of gold)' },
+  { profile: 'casual', metric: 'longestNoveltyGap', stat: 'median', hi: 30, note: 'something new every ≤ 30 s (median run)' },
   { profile: 'casual', metric: 'longestUnaffordable', stat: 'worst', hi: 30, note: 'never > 30 s with nothing affordable' },
-  { profile: 'casual', metric: 'longestKillGap', stat: 'worst', hi: 40, note: 'no dead ends' },
+  { profile: 'casual', metric: 'longestKillGap', stat: 'worst', hi: 25, note: 'no dead ends (a kill every ≤ 25 s)' },
 
   // Idle (clicks the first newt, then only shops once a minute): never stuck.
   { profile: 'idle', metric: 'firstKill', stat: 'worst', hi: 10, note: 'first kill (by clicking) ≤ 10 s' },
-  { profile: 'idle', metric: 'kills5', stat: 'worst', lo: 5, note: 'progresses without clicks (≥ 5 kills by 5:00)' },
-  { profile: 'idle', metric: 'idleGrowth', stat: 'worst', lo: 1, note: 'kills keep increasing 5:00 → 10:00' },
-  { profile: 'idle', metric: 'longestKillGap', stat: 'worst', hi: 120, note: 'a kill at least every 2 min (no dead ends)' },
+  { profile: 'idle', metric: 'kills5', stat: 'worst', lo: 8, note: 'progresses without clicks (≥ 8 kills by 5:00)' },
+  { profile: 'idle', metric: 'idleGrowth', stat: 'worst', lo: 10, note: 'keeps killing 5:00 → 10:00 (≥ 10 kills)' },
+  { profile: 'idle', metric: 'longestKillGap', stat: 'worst', hi: 60, note: 'a kill at least every minute (no dead ends)' },
 ];
 
 export interface TargetResult {
@@ -122,11 +130,16 @@ export interface TargetResult {
   ok: boolean;
 }
 
-export function checkTargets(runs: Record<ProfileName, readonly RunResult[]>): TargetResult[] {
-  return TARGETS.map((t) => {
-    const s = summarize(runs[t.profile], metric(t.metric));
+/** Check every target whose profile has runs (a single-profile sim checks only its own). */
+export function checkTargets(runs: Partial<Record<ProfileName, readonly RunResult[]>>): TargetResult[] {
+  const out: TargetResult[] = [];
+  for (const t of TARGETS) {
+    const rs = runs[t.profile];
+    if (!rs || rs.length === 0) continue;
+    const s = summarize(rs, metric(t.metric));
     const value = t.stat === 'median' ? s.median : s.worst;
     const ok = Number.isFinite(value) && (t.lo === undefined || value >= t.lo) && (t.hi === undefined || value <= t.hi);
-    return { target: t, value, ok };
-  });
+    out.push({ target: t, value, ok });
+  }
+  return out;
 }

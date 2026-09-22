@@ -54,16 +54,18 @@ Handlers may dispatch; the new events drain in the same frame. A throwing handle
 
 ```ts
 createInitialState(seed): GameState   tick(state, dt, emit): void   applyAction(state, action, emit): void
-interface GameState { v /*2*/; seed; rng: [u32,u32,u32,u32]; t /*sim s*/; tier /*0 Meadow*/; gold: Decimal; lifetimeGold: Decimal;
+interface GameState { v /*3, STATE_VERSION*/; seed; rng: [u32,u32,u32,u32]; t /*sim s*/; tier /*0 Meadow*/; gold: Decimal; lifetimeGold: Decimal;
   units: Record<UnitId, number>; upgrades: Record<string, number>; kills /*this tier*/; flags: Record<string, boolean>;
   dragon: DragonState; stats: { strikes; crits; staggers };  /* core-private: */ nextDragonId; army }
 interface DragonState { id /*unique per spawn*/; index /*nth in tier*/; species; name; epithet; size /*m, body length*/;
-  seed /*u32, visual variation*/; hp: Decimal; maxHp: Decimal; phase; phaseT; phaseDur; attack: 'breath'|'swipe' }
+  seed /*u32, visual variation*/; hp: Decimal; maxHp: Decimal; phase; phaseT; phaseDur; attack: 'breath'|'swipe';
+  staggers /*times this dragon was staggered: the first pays the full bonus*/ }
 type DragonPhase = 'enter'|'idle'|'windup'|'breath'|'swipe'|'stagger'|'dying'
 type UnitId = 'footman'|'archer'
 type UpgradeId = 'pointySwords'|'keenEye'|'drillSergeant'|'bounty'|'fletching'|'warHorns'|'heroicExample'|'quickNock'|'grindstone'
 ```
-- Phases: `enter` → `idle` (3–6 s) → `windup` (1.2 s, `attack` tells which) → `breath` (1.5 s) | `swipe` (0.9 s) → `idle`…; a weak-spot strike during `windup` → `stagger` (2 s: ×2 army damage, gold bonus). HP ≤ 0 → `dying` (1.6 s) → next dragon (`index + 1`) spawns in `enter`. The first dragon starts in `idle`. Durations live in `BALANCE.phase` (read `PHASE` or `dragon.phaseDur`, never hard-code them).
+- Phases: `enter` (1.6 s) → `idle` (`idleAfterEnter` = 1.0 s, so every dragon telegraphs an attack early) → `windup` (1.2 s, `attack` tells which) → `breath` (1.5 s) | `swipe` (0.9 s) → `idle` (3–6 s) → `windup`…; a weak-spot strike during `windup` → `stagger` (2 s: ×2 army damage, gold bonus). HP ≤ 0 → `dying` (1.6 s) → next dragon (`index + 1`) spawns in `enter`. The first dragon starts in `idle` (`firstIdle` 4 s). Durations live in `BALANCE.phase` (read `PHASE` or `dragon.phaseDur`, never hard-code them).
+- **Weak spot** (`core/weakspot.ts`, a game rule; the dragon rig imports it for its hit test and glow): `weakSpotFor(phase, attack)` → `'throat'` in a breath windup, `'tail'` (tail base) in a swipe windup, else `'scale'` (the loose scale). `weakSpotLive(phase, k)`: none while `dying`, none in `enter` until `k > ENTER_WEAK_FROM` (0.72 of the entrance), else live; `weakSpotHittable(dragon)` applies it at `phaseT / phaseDur`. **Core enforces it:** `strike {weak: true}` when no spot is live is a plain hit, and the `strike` event's `weak`/`crit` say what actually happened. Render decides *where* the spot is (`dragon.hitTest`) and sends `weak`; core decides whether it counts.
 - **Flags** (`state.flags`, set once, never cleared; each emits one `unlock {kind, id}` with the part after the dot as `id`). In unlock order for a new player:
 
   | Flag | When | UI meaning |
@@ -76,8 +78,8 @@ type UpgradeId = 'pointySwords'|'keenEye'|'drillSergeant'|'bounty'|'fletching'|'
   | `unit.archer` | 10 kills (~1:00) | archers can be hired |
 
   Requirements are data (`UNITS[id].unlock`, `UPGRADES[i].unlock`: `{stat: 'kills'|UnitId, at}`); `UNLOCK_FLAGS` lists every flag. Debug: `debug.loopPhase` (repeat the current phase), `debug.immortal`.
-- Saves: `serialize(state)` / `deserialize(text)` (JSON, Decimals exact as `{"$d":[m,e]}`; `toJSON`/`fromJSON` for any value).
-- **Economy** (`core/formulas.ts`; every tunable number is in `core/content/balance.ts` → `BALANCE`): HP/gold/size by dragon index; unit costs grow ×1.12–1.13 per unit; each unit type doubles its damage at 10/25/50/100/200…500 owned, then every 100 (unbounded, so multipliers are Decimals). Click = `base × click upgrades + share × army DPS` (heroicExample: 5%), weak spot ×5 (×10 with keenEye). Costs and rewards below 1e15 are canonical whole-number Decimals; break_infinity can't round-trip every integer through `toNumber()`, so show numbers with `fmt()`, never `toNumber()`.
+- Saves: schema v3 (`STATE_VERSION`; bumped for `DragonState.staggers`, older saves are rejected until the M3 loader migrates them). `serialize(state)` / `deserialize(text)` (JSON, Decimals exact as `{"$d":[m,e]}`; `toJSON`/`fromJSON` for any value).
+- **Economy** (`core/formulas.ts`; every tunable number is in `core/content/balance.ts` → `BALANCE`): HP/gold/size by dragon index; unit costs grow ×1.12–1.13 per unit; each unit type doubles its damage at 10/25/50/100/200…500 owned, then every 100 (unbounded, so multipliers are Decimals). Click = `(base + share × armyDPS) × clickMult` (clickMult = pointySwords ×2 × grindstone ×3; share = heroicExample, 2%); a weak-spot crit multiplies the whole strike ×5 (×10 with keenEye). Stagger gold = kill reward × 50% on a dragon's first stagger, × 10% on later ones (`BALANCE.stagger`, `staggerGold`). Costs and rewards below 1e15 are canonical whole-number Decimals; break_infinity can't round-trip every integer through `toNumber()`, so show numbers with `fmt()`, never `toNumber()`.
 - **Selectors for UI** (`core/selectors.ts`, also `import { sel } from 'core'`; pure, fine at 10 Hz): `unitVisible/unitAffordable(s, unit, n)`, `unitCost(s, unit, n)`, `maxAffordable`, `unitDps`, `armyDps`, `clickDamage(s, weak)`, `clickDps(s, cps, weakRate)`, `goldPerSec(s, cps?, weakRate?)`, `nextMilestone(s, unit) → {at, mult, remaining, frac}`, `upgradeVisible/upgradeAffordable/upgradeOwned(s, id)`, `visibleUpgrades(s)`, `requirementProgress(s, req)`, `anythingAffordable(s)`, `dragonInfo(s) → {name, epithet, index, size, sizeWord, hp, maxHp, hpFrac, reward, staggerReward, kills}`. Upgrade effects are data (`UPGRADES[i].effect`: `clickMult|unitMult|armyMult|weakMult|goldMult|clickArmyShare|periodMult`): the UI writes the effect line from it.
 - **Text** (`core/content/text.ts`, the writer's strings, shapes owned by core): `UNIT_TEXT[id] {name, plural, flavor}`, `UPGRADE_TEXT[id] {name, flavor}`, `dragonName(rand, species, index) → {name, epithet}` (core passes a rand seeded from `state.rng`), `sizeWord(meters)`, `MICROCOPY` (keys like `clickToStart`, `unlock.<flag>`).
 
@@ -85,12 +87,12 @@ Actions: `strike {weak, aimed, x, y}` (x, y = world impact point, echoed back) �
 
 | Event | Meaning |
 |---|---|
-| `strike {damage, crit, weak, stagger, aimed, x, y}` | a click landed (ignored while `dying`). `crit` = weak spot ×5 (×10 with keenEye); `stagger` = weak hit during windup (not on a killing blow) |
+| `strike {damage, crit, weak, stagger, aimed, x, y}` | a click landed (ignored while `dying`). `weak`/`crit` = it really hit a live weak spot, ×5 (×10 with keenEye); a weak click with no live spot comes back `false`. `stagger` = weak hit during windup (not on a killing blow) |
 | `armyHit {unit, damage, hits}` | a footman melee beat, or a volley landing. `hits` = visible blows/arrows (≤ 24/40). `damage` includes the ×2 while staggered |
 | `volley {unit, arrows, flight}` | archers loosed; the matching `armyHit` arrives exactly `flight` s later (dropped if its target dragon died or is gone) |
 | `dragonSpawn {id}` · `dragonPhase {id, phase, dur}` | new dragon · every phase change (also on spawn) |
 | `dragonDeath {id, gold}` | kill; `gold` is already in `state.gold` |
-| `goldGain {amount, source}` | non-kill gold (`stagger` bonus = 50% of the kill reward, `other`), already added |
+| `goldGain {amount, source}` | non-kill gold (`stagger` bonus = 50% of the kill reward on a dragon's first stagger, 10% after; `other`), already added |
 | `purchase {kind, id, amount}` · `unlock {kind, id}` · `milestone {unit, owned, mult}` | economy moments (`purchase.amount` = units actually hired; one `milestone` per threshold crossed, at most 8 per purchase) |
 | `resync` | state changed wholesale: rebuild from state, no juice |
 

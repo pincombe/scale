@@ -89,7 +89,7 @@ export function hasUpgrade(state: GameState, id: string): boolean {
   return (state.upgrades[id] ?? 0) > 0;
 }
 
-/** Multiplier on the base part of click damage. */
+/** Click upgrades' multiplier on the whole strike (the base and the heroicExample share). */
 export function clickMult(state: GameState): number {
   let m = 1;
   for (const u of UPGRADES) {

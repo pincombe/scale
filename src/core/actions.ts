@@ -5,6 +5,7 @@ import { PHASE, UNITS, upgradeDefOf } from './content';
 import { addGold, damageDragon, killDragon, setPhase, spawnDragon, startWindup } from './dragon';
 import { BUY_MAX, MAX_BUY, clickDamage, maxAffordable, staggerGold, unitCost, upgradeCost } from './formulas';
 import { checkMilestones } from './progress';
+import { weakSpotHittable } from './weakspot';
 import type { Action, DebugAction, DragonPhase, Emit, GameState } from './types';
 
 export function applyAction(state: GameState, a: Action, emit: Emit): void {
@@ -31,7 +32,9 @@ function finite(x: number): number {
 function strike(state: GameState, a: Extract<Action, { type: 'strike' }>, emit: Emit): void {
   const d = state.dragon;
   if (d.phase === 'dying') return; // nothing to hit until the next dragon arrives
-  const weak = a.weak === true;
+  // Core has the last word on the weak spot: a weak click while none is live (the dragon is still
+  // arriving) is a plain hit, and the event says so.
+  const weak = a.weak === true && weakSpotHittable(d);
   const damage = clickDamage(state, weak);
   // Same test as damageDragon (hp - damage > 0), so a blow that kills is never also a stagger, even
   // where break_infinity's compare and subtract round differently at huge HP.
