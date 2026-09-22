@@ -3,26 +3,22 @@
 The lead's resume document. A fresh lead should be able to pick up from this file alone. PLAN.md is the design, KICKOFF.md the lead's rules, ARCHITECTURE.md the code contracts (build against it, not against other modules' internals).
 
 ## Resume here
-- **Milestone:** M1 First Blood ★. We are **not yet at the ★ playtest**. The user has not played anything yet. Stop at the M1 playtest and wait for feedback before starting M2 (KICKOFF).
-- **Snapshot (2026-09-23, HEAD 6544218):** tests 236/236, typecheck clean, `npm run sim` 35/35, build 425 KB raw / 190 KB gzip (fonts 98 KB).
-- **Done and committed:**
-  - 0.1, 0.2, 0.3.
-  - 1.1 backdrop (+ review fixes), 1.2 dragon rig, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
-- **In flight:** the pre-playtest fix round from the M1 milestone review (no blockers; five feel fixes):
-  1. Sim/core: a faster early dragon size curve (engaged ~1.5–2 m at 1:00, ~4–5 m at 2:00, ~10–13 m at 3:00) and a non-aimer sim profile targeting ≤ ~9 s per kill in 0:40–2:00.
-  2. Juice: fade click/crit numbers on death so "+N" is clear; keep "STAGGERED!" above crit numbers; give army numbers their own band on small dragons.
-  3. Crowd: the hero's lunge scales with dragon size so he stops hiding the newt.
-  4. HUD: the first kill's gold counts up from 0.
-  
-  The inline SVG favicon is done. Then comes a final check, commit and the ★ playtest handoff.
-- **All M1 WPs have landed, been reviewed and been fixed:** 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 (+1.9b), 1.10 framing. HEAD 6544218. `npm run check` green (236 tests), sim 35/35, build 425 KB raw / 190 KB gzip.
-- **If you are a fresh lead in a new session,** the old agents can't be messaged.
-  1. Run `git status`. It should be clean. Everything is committed as of 6544218.
-  2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
-  3. If the WP is complete per its brief summary below, commit it. If not, re-launch it with that brief summary and tell the agent to continue from the files on disk.
-  4. If the milestone review's result is lost, re-run it with the checklist under Next steps, "M1 milestone review".
+- **Milestone:** M1 First Blood ★. **The M1 playtest build was handed to the user on 2026-09-23. We're waiting for their feedback.** Don't start M2. KICKOFF rule 8: once the ★ feedback is dealt with, let agents finish, update this file, commit, tell the user, and stop. The next milestone starts in a new session.
+- **Snapshot (2026-09-23, HEAD dc2ed52 + this log):**
+  - Tests: 237 pass. Typecheck: clean.
+  - `npm run sim`: 39/39 targets PASS.
+  - Build: `dist/index.html` 427 KB raw / 190 KB gzip, of which fonts are 98 KB.
+  - The working tree is clean; nothing is in flight.
+- **Done, reviewed and fixed:** 0.1, 0.2, 0.3 and 1.1–1.10. Details are in Work packages and Log.
+- **Playing the build:**
+  - Open `dist/index.html` directly (self-contained, works from `file://`), or run `npm run preview` and go to http://localhost:4173.
+  - Add `?debug` for the FPS panel and state jumps (ARCHITECTURE §10).
+- **If you are a fresh lead in a new session:** the old agents can't be messaged.
+  1. Read the **Playtest feedback** section. If it has the user's M1 feedback, turn it into WPs.
+  2. Otherwise ask the user for their M1 feedback.
+  3. For M2 planning, read "M2 notes from M1 reviews" and Next steps.
 
-## In flight: brief summaries (enough to re-launch)
+## How the M1 visual WPs were built (reference)
 - **1.2 Dragon rig v1 + newt** (builder-max, owns `src/render/dragon/**`). ✅ Landed in 57a9402 and now in review; kept here as reference. As built: weak spot min `WEAK_HIT_MIN_PX = 11`; on small dragons the loose scale sits on the tail; throat only during breath windups, tail base during swipe windups; the swipe is a quick turnaround with the tail lashing through the front ranks at ~50–450 ms plus a dust shockwave; the dragon adds its own small shake on tail slams and on footsteps of dragons ≥ 5 m; `setOverride` on the returned object is for mutations; optional `DragonView.tailPoint`/`breathReachX`. **Adding a species:** add a `SpeciesDef` with `young`/`old` parameter sets, blended by size on a log scale. The sets cover proportions and posture; head shape (eye, brow, teeth, horns, gills, whiskers, frill); leg pairs; wings; crest; tail fin, spade or club; head count; per-individual variation; and behavior tuning. Set a feature to 0 to switch it off.
   - **Rig:** data-driven procedural rig: a follow-the-leader spine with a width profile giving one smooth outline; a head with hinged jaw, horns, a blinking and tracking eye, and smoking nostrils; 2–4 IK legs with planted feet; finger-bone wings with membranes on a flap cycle. Parameters cover spines, frills, whiskers, tail tip, leg count, wing size and head count (the three-headed mutation comes later).
   - **Species:** a species is a parameter set. The meadow newt, with per-individual variation from `dragon.seed`, has to work from 0.5 m to 40 m.
@@ -71,9 +67,19 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   5. **UI:** heroicExample shows "1.5%", not "2%".
   6. **Docs:** ARCHITECTURE §4 refresh.
 
-## Art-pass notes not yet routed (lead)
-- **Engaged still staggers ~half its windups** at a 25% throat hit rate. Fine for skilled play; revisit if the playtest shows fire breath is rarely seen.
-- **What already looks good:** the title screen is cinematic, the first-kill flow works end to end, and late game (12 m dragon flying in, banner host) looks premium.
+## Observations to revisit after the playtest (lead)
+- **Staggers:** engaged players still stagger ~half their windups at a 25% throat-hit rate. Fine for skilled play; revisit if the user rarely sees fire breath.
+- **Base framing:** until dragons reach ~3 m, knights are large (the hero is ~260 px) and the dragon is small. That's by design (the newt joke, then the pull-back), and the faster size curve shortens this phase. If the user finds minutes 0:40–1:30 underwhelming, options are:
+  - frame a bit wider (`director.heroFrac` 0.29 → ~0.25);
+  - move the clash point right once the title is gone;
+  - a faster early size curve.
+- **Tail-swipe thumps:** the SFX thumps are timed 0.45–1.15 s after the swipe starts, not synced to the crowd's ragdoll landings (the crowd now flings via the rig's `tailPoint`). If they feel off, add a crowd→audio landing hook.
+- **What already looks premium:**
+  - the title over the live meadow;
+  - the first strike and first kill (warm pop, coins counting up from 0);
+  - the eye opening in the hills (~2:30, the milestone review's favorite moment);
+  - the 3 m dragon breathing fire at the hero;
+  - late game: a 12 m winged dragon flying in over a banner-dotted host, and the 41 m breath.
 
 ## M2 notes from M1 reviews (for the M2 planner)
 **Dragon rig extensibility** (from the 1.2 review)
@@ -96,18 +102,27 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 - The crowd's `drawEmblem()` in `banner.ts` takes a heraldry description (`Heraldry` type + optional `setHeraldry?` in `crowd/api.ts`).
 
 ## Open issues and risks
-1. **Performance is unverified end to end.** Each WP measured itself (skeleton 1.2–1.5 ms CPU with 300 stub knights + 1,500 particles; juice stress 60 fps; backdrop ~2 ms back + 1.2 ms front CPU+GPU at DPR 2), but nobody has measured the full stack with the real dragon and crowd. The backdrop agent saw one ~30 fps sample pulled back. Do a clean check on a static build (see Process).
-2. **Canvas memory:** backdrop 55 MB at DPR 2 (after fixes), crowd sprite sheets ~60 MB (4 LODs), number canvases capped at 8 MB: ~125 MB total. The crowd review may trim it. Check Safari in the perf pass.
-3. **Size:** 416 KB raw now, against a ~400 KB target and the 1 MB hard fail. M2 adds the zoom, Mountain tier, heraldry and music. If it trends past ~700 KB, look for bloated tables and consider subsetting fonts further.
-4. **Weak spot too generous on small newts:** almost every click crits. The fix was sent to the dragon agent (min radius ~10–12 px, off-center). Verify when 1.2 lands.
-5. **First framing:** the director's base framing puts the hero at 20% of stage height, which makes the first newt only ~50 px on screen. Judge it at the integration pass. The option is a tighter opening framing (`director.heroFrac`) for the first few dragons.
-6. **Weak spot during windups (balance-critical):** the sim assumes the weak spot moves to the throat during a breath windup (PLAN §3.2). If the rig keeps the loose scale hittable during windups, a masher staggers ~90% of windups and fire breath is rarely seen. Sent to the dragon agent; verify when 1.2 lands. Also: the casual first minute is slow (8–10 s per kill); judge it at the integration pass. ARCHITECTURE §4 is stale on the click formula and stagger gold.
-7. **Tail-swipe thumps aren't synced:** the SFX thumps are timed 0.45–1.15 s after the swipe, not to the crowd's actual ragdoll landings. If it feels off, add a crowd→audio landing hook.
-8. **Unreviewed WPs:** the HUD (1.6, medium) and text (1.8, writer) had no reviewer pass. They're covered by the lead's integration pass and the M1 milestone review. The HUD reads MICROCOPY keys `panel.armyEmpty`, `panel.upgradesEmpty` and `tier.<n>`; confirm it picks up the writer's strings rather than its fallbacks.
-9. **Juice costs logic time** by design (a consistent freeze). If juice tuning changes, update `src/sim/juice.ts` to match `src/render/fx/tuning.ts`.
-10. **Saves:** there's no save loader yet (M3). Saves are schema v3 (per-dragon stagger count); older versions are rejected.
-11. **GitHub:** nothing has been pushed and the repo `pincombe/scale` doesn't exist yet. The user chose a single public repo. Ask before creating it. After creating it: Settings > Pages > Source = "GitHub Actions".
-12. **Dev pages:** `src/render/dragon/lab.html` and `src/render/crowd/gallery.html` are dev-only. They're not in the build (the build only uses the root `index.html`). Keep or delete at M4.
+1. **Real FPS has never been measured in a visible pane with the full stack.** The browser pane was hidden during every late check, which throttles rAF.
+   - Synthetic numbers (the frame loop driven from JS, at 1440×900, DPR 2):
+     - fresh start: 1.3–1.8 ms CPU avg, ~1.4 ms GPU;
+     - dragon 20 with 85 units: 1.7 ms CPU, ~1.5–2 ms GPU;
+     - a 41 m breath with 300 knights and 1,480 particles: 3.7 ms CPU (p99 6.1), ~5–8 ms GPU.
+   - Nothing points below 60 fps, but confirm with `?debug` in a visible pane. The user's playtest is the first real reading, so ask them.
+2. **Safari and Firefox are untested** (planned for M4.4, sooner if the user reports issues). Known risks:
+   - Safari rasterizes canvas on the CPU; the backdrop is ~5.3 screens of fill per frame.
+   - Film grain is a full-screen `mix-blend-mode: overlay` CSS layer (`src/render/fx/grain.ts`); the fallback is plain opacity.
+   - WebAudio in Safari.
+3. **Canvas memory** at DPR 2:
+   - backdrop ~57 MB;
+   - crowd sprites 27 MB typical, 43 MB at dragon 12 after the LOD bump, 64 MB cap;
+   - numbers ≤ 8 MB;
+   - so ~100–130 MB in total. Watch Safari.
+4. **Size:** 427 KB raw, against a ~400 KB target and the 1 MB hard fail. M2 adds the zoom, the Mountain tier, heraldry and music. If it trends past ~700 KB, look for bloated tables and consider subsetting fonts further.
+5. **Juice costs logic time** by design (a consistent freeze). If you change the juice tuning, keep `src/sim/juice.ts` in sync with `src/render/fx/tuning.ts`; the sim imports the exported constants.
+6. **Saves:** there's no save loader yet (M3). Saves are schema v3; older versions are rejected.
+7. **GitHub:** nothing has been pushed and the repo `pincombe/scale` doesn't exist yet. The user chose a single public repo, and at the M1 handoff the lead asked whether to create it. After creating it: Settings > Pages > Source = "GitHub Actions".
+8. **Dev pages:** `src/render/dragon/lab.html` and `src/render/crowd/gallery.html` are dev-only and not in the build. Keep or delete them at M4.
+9. **Agent tooling:** the shared browser pane is often hidden, which stalls rAF, and automation clicks land wrong under viewport emulation. Agents should verify on static builds, dispatch PointerEvents, and step frames from JS for measurements (see Process notes).
 
 ## Approaches tried and dropped (don't retry without a new reason)
 - **Fonts:** all-variable fonts came to ~158 KB inlined, so EB Garamond is static 400 + italic only.
@@ -127,7 +142,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 - **Browser verification:** the shared dev server with HMR churn made visual checks unreliable while six agents edited. Agents moved to static builds or private Vite servers. Caveat: a private server on another port re-optimized the shared `node_modules/.vite` cache once. Give private servers their own `cacheDir`.
 
 ## Playtest feedback
-None yet: no ★ playtest has happened. Record the user's feedback here verbatim-ish when it arrives, with a status per item.
+- **M1 ★ (handed over 2026-09-23):** awaiting the user's feedback. Record it here, close to verbatim, with a status per item (open, WP x.y, done, won't do + why).
 
 ## Art direction (lead's notes)
 **The look** (PLAN §4)
@@ -176,7 +191,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 ## M1 design reference (lead decisions)
 **Units** (tier 0)
 - **Footman:** melee, strikes in beats about once a second. Available after the first kill; a lone "Hire a Footman" button pulses.
-- **Archer:** volleys every ~2.5 s with ~1.1 s of flight. Unlocks at 10 kills, around 0:55 for an engaged player.
+- **Archer:** volleys every ~2.5 s with ~1.1 s of flight. Unlocks at 12 kills, around 1:00 for an engaged player.
 - Costs grow ×1.12 (footman) and ×1.13 (archer) per purchase. Milestones ×2 at 10/25/50/100 owned, then every 100 after 500.
 
 **Upgrades** (ids fixed; costs and unlocks tuned by the sim)
@@ -199,7 +214,8 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 
 **Pacing targets** (engaged: 6 clicks/s, 30% weak spots)
 - First kill ≤ 5 s. First footman ≤ 15 s. First upgrade visible ≤ 35 s. Archers at 50–75 s.
-- Dragon size ~1 m by 1:00, ~2.5 m by 2:00, ~10 m by 3:00; 25–30 kills by 3:15.
+- Dragon size (0.5 × 1.12^kills): engaged ~1.7 m at 1:00, ~4.8 m at 2:00, ~12.7 m at 3:00; ≤ 32 kills by 3:15.
+- Non-aimer (5 clicks/s, never hits the weak spot): ≤ ~9 s per kill in 0:40–2:00.
 - Never more than 30 s with nothing affordable. Casual gets the same beats later. Idle never gets stuck.
 - The M2 boss will be summoned by kill count (Wyrm Gauge), not by the clock.
 
@@ -252,6 +268,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 | 1.8 Meadow text | writer | `src/core/content/text.ts` | ✅ committed | f7d020d |
 | 1.9 Balance sim v0 + 5 core fixes (+1.9b fidelity, size-scaled phases) | builder-high | `src/sim/**`, `BALANCE`, core fixes | ✅ accepted after review (35/35 targets) | bfd6db1, 551f104, 2925c0f |
 | 1.10 Framing and composition (dragon-first camera) | builder-high | `src/render/director.ts` | ✅ accepted (lead art pass) | 8086746 |
+| M1 milestone review + pre-playtest fixes (faster early growth, non-aimer pacing, numbers never stack, hero stand-off, first-kill count-up, favicon) | reviewer + owners | — | ✅ done | 62cda8c, ab38393, fc39def, d9abb5f, dc2ed52 |
 
 ## Process notes (how this build runs)
 **Agents and reviews**
@@ -282,35 +299,19 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
   - a ~200-word report format
 
 ## Next steps
-**Finish M1**
-1. Land 1.2 and 1.3. For each: typecheck and tests for the folder, a browser check, commit, then a `reviewer` pass (the dragon is max, the crowd high). Route findings back.
-2. ✅ 1.9 landed (bfd6db1); review done. **WP 1.9b (builder-high), launch after 1.2 lands:**
-   - **Weak-spot liveness moves into core.** The rig currently blocks the weak spot for the first 72% of `enter` (`weakLiveFor` in `render/dragon/weakspot.ts`), but the sim doesn't. Make it a pure core rule that core enforces in `strike` (non-live weak hits become normal hits), and have the rig import it. With the rig's real behavior, engaged click share drops 46% → 35% and size at 3:00 drops 8.4 → 7.1 m, so both fail.
-   - **Sim models the throat weak spot during breath windups.**
-   - **Shopping pause:** 0.3 s + 0.15 s per purchase; the engaged bot currently buys ~31 times a minute at no cost.
-   - **Fix the crash** in `npm run sim -- --profile casual`.
-   - **Shared tuning:** juice time constants exported from `fx/tuning.ts` and imported by both fx and the sim.
-   - **Targets:**
-     - drop the trivially-passing ones;
-     - add a stagger share of gold cap, a casual novelty gap and a worst-seed attacks-seen floor;
-     - compute click share against remaining HP.
-   - **Casual pacing:** apply the reviewer's recommendation (`hpBase` 20 → 14, heroicExample share 0.015 → 0.0175), then retune to all-PASS.
-   - **UI fix:** `ui/effectText.ts:23` rounds 1.5% to "2%"; use `Math.round(share*1000)/10`.
-   - **Docs:** ARCHITECTURE §4 refresh (save v3, `DragonState.staggers`, `idleAfterEnter` 1.0, click formula, stagger gold 50% then 10%).
-3. ✅ 1.1 review fixes landed (b7f2b17). The eye now sits at 39–44% height, 1.75× bigger, on the valley wall right of the sun. Fill is 7.7 → 5.3 screens and canvas memory 128 → 55 MB. **Safari is still unmeasured** (M3/M4 cross-browser pass, or sooner if the user reports it).
-4. **Integration and art-direction pass (lead):**
-   - Build statically and play the first 3–4 minutes at 1440×900 against the §2 beats.
-   - Take screenshots of each beat.
-   - Measure performance with 300 knights + 1,500 particles at the pulled-back framing.
-   - Check the console is clean.
-   - Make a fix list, send it to the agents, and iterate until it looks premium (see "To judge at the integration pass").
-5. **M1 milestone review:** a `reviewer` pass over the whole build (correctness, performance, cross-browser risk).
-6. `npm run check` green, then commit, then the **M1 ★ playtest handoff:**
-   - point the user to `dist/index.html` (opens from file://) and the dev server;
-   - give three lines: what to try, what changed, known issues;
-   - ask whether to create the public repo `pincombe/scale` and enable Pages.
-   
-   Then **wait** for feedback.
+**M1 (now)**
+1. ✅ All WPs landed, reviewed and fixed. The milestone review found no blockers, and its five feel fixes are in.
+2. ✅ M1 ★ playtest build handed to the user (2026-09-23). **Waiting for feedback.**
+3. When feedback arrives, record it under Playtest feedback, then turn it into WPs and fix. The first things to check against it:
+   - Real FPS in a visible pane (Open issue 1).
+   - The minutes-0:40–1:30 framing (Observations).
+   - Whether the user wants the public repo created now.
+4. Then **hand off per KICKOFF rule 8:**
+   - let running agents finish;
+   - update this file (including anything only in the lead's head);
+   - commit;
+   - tell the user it's ready;
+   - stop. M2 starts in a new session.
 
 **M2 The Zoom ★** (only after the M1 feedback; PLAN §14)
 - 2.1 Zoom director + fusion cinematic (max; prototype first; use the snapshot rule in Decisions).
@@ -341,3 +342,4 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: 1.2 review: good shape, within budget (draw 0.06–0.11 ms); 1 high (swipe tail target on top of the scale) + 5 lower. Fix round sent with art notes; grass clearing sent to backdrop. M2 extensibility notes recorded.
 - 2026-09-23: Polish round landed: crowd gap (c544733), grass clearing (ecfa2ff), premium toasts (d6ab8fc), size-scaled enter/dying (2925c0f), dragon fix round incl. presence at 1–3 m and big-dragon cues (6544218). Lead spot check on a static build: title, first kill, Hire button, dragon-12 composition and dragon-20 fire breath look good. M1 milestone review launched.
 - 2026-09-23: M1 milestone review: no blockers; console clean over 2.5 min of play; only one network request (the page); synthetic CPU 1.3–3.7 ms avg per frame (the pane was hidden, so no real FPS). Feel: minute one hooks (title, first strike, first kill); weakest stretch 0:40–2:00 for non-aimers (10–14 s per kill, small dragon, empty right half); most impressive: the eye opening in the hills at ~2:30, then the 41 m breath. The ?debug-only "Hire button and panel together" glitch can't happen in normal play. Fix round sent (sim, juice, crowd, HUD); favicon added.
+- 2026-09-23: Pre-playtest fixes landed: first-kill gold counts up from 0 (62cda8c), numbers never stack (ab38393), the hero never hides the newt (fc39def), size curve 0.5 × 1.12^i plus a non-aimer profile at 8.9 s per kill (39/39 targets; goldPerHp 0.9 → 1.2, archers at 12 kills), favicon. `npm run check` green (237 tests), 427 KB. **M1 ★ playtest build handed to the user.**
