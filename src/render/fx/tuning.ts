@@ -45,6 +45,18 @@ export function coinDelay(j: number, n: number): number {
 
 /** Hit-stop and the full kick land only on a crit that follows CRIT_STOP_GAP s without crits. */
 export const CRIT_STOP_GAP = 0.6;
+
+// Time effects (wall seconds). They cost logic time (ARCHITECTURE §2), so the balance sim
+// (src/sim/juice.ts) imports these same constants to model the dilation.
+/** Hit-stop on a weak-spot crit (only after CRIT_STOP_GAP s without crits). */
+export const CRIT_HIT_STOP = 0.07;
+/** Hit-stop on a crit that staggers. */
+export const STAGGER_HIT_STOP = 0.08;
+/** Hit-stop on a kill. */
+export const KILL_HIT_STOP = 0.08;
+/** Kill slow-mo: starts at this time scale and eases back to 1 over KILL_SLOW_MO_DUR. */
+export const KILL_SLOW_MO = 0.25;
+export const KILL_SLOW_MO_DUR = 0.55;
 /** Crit heat: +1 per crit, cools this much per second, capped. */
 export const CRIT_COOL = 3;
 export const CRIT_HEAT_MAX = 3;
@@ -81,4 +93,18 @@ export function coinShares(total: Decimal, want: number): CoinShares {
 /** Sum of the shares (for tests and debug). */
 export function sharesTotal(s: CoinShares): Decimal {
   return s.each.mul(s.count - 1).add(s.last).add(D(0));
+}
+
+/**
+ * Visual magnitude of a kill (0..1) from the corpse's on-screen width and the reward: a newt's
+ * death is a crisp pop (~0), a barn-sized dragon filling the frame gets the full bloom (1). Drives
+ * bloom size, ember/smoke counts, flash alpha, kick and shake (NOT hit-stop/slow-mo: those are
+ * constant and mirrored by the sim).
+ */
+export function killScale(screenPx: number, gold: Decimal): number {
+  const size = (screenPx - 60) / 500;
+  const g = gold.toNumber();
+  const reward = Math.min(0.15, 0.03 * (Number.isFinite(g) ? Math.log10(1 + Math.max(0, g)) : 308));
+  const m = (size < 0 ? 0 : size) + reward;
+  return m > 1 ? 1 : m;
 }

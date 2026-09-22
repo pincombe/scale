@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { D } from '../../core/decimal';
-import { CRIT_HEAT_MAX, coinCount, coinDelay, coinShares, critDamp, damageFrac, heatAfterCrit, hitTrauma, sharesTotal } from './tuning';
+import { killScale, CRIT_HEAT_MAX, coinCount, coinDelay, coinShares, critDamp, damageFrac, heatAfterCrit, hitTrauma, sharesTotal } from './tuning';
 
 describe('fx tuning', () => {
   it('damageFrac clamps and survives huge and zero values', () => {
@@ -46,6 +46,15 @@ describe('fx tuning', () => {
     expect(h).toBe(CRIT_HEAT_MAX);
     expect(critDamp(h)).toBeLessThan(0.35);
     expect(critDamp(h)).toBeGreaterThan(0.2);
+  });
+
+  it('kill scale: a newt pops, a frame-filling dragon blooms', () => {
+    expect(killScale(40, D(10))).toBeLessThan(0.1);
+    expect(killScale(250, D(1000))).toBeGreaterThan(0.3);
+    expect(killScale(250, D(1000))).toBeLessThan(0.7);
+    expect(killScale(700, D(1e6))).toBe(1);
+    expect(killScale(40, D('1e999'))).toBeLessThanOrEqual(0.15);
+    expect(killScale(-5, D(0))).toBe(0);
   });
 
   it('coin shares sum exactly to the reward', () => {

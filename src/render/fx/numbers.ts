@@ -3,7 +3,7 @@
 // shadow, gradient fill, coin icon) is rendered into it ONCE when the value changes, so a frame is
 // just one drawImage per number (no fillText/strokeText in the hot path).
 //
-// Army hits and rapid crits aggregate: a new hit merges into the live number of its group (bumping
+// Army hits, rapid clicks and rapid crits aggregate: a new hit merges into the live number of its group (bumping
 // it) instead of spawning another, so a big army or a crit spree never turns into number soup.
 //
 // Memory: each slot's canvas is sized to fit its text (rounded to buckets), rendered at about
@@ -13,7 +13,7 @@ import type { Decimal } from '../../core/decimal';
 import { fmt } from '../../core/format';
 import type { Camera } from '../camera';
 import { context2d, makeCanvas } from '../atlas';
-import { outBack, outCubic } from '../../lib/ease';
+import { outCubic } from '../../lib/ease';
 import { vec2 } from '../../lib/vec';
 
 export const NK_CLICK = 0;
@@ -51,13 +51,13 @@ const OUTLINE = '#1c0c05';
 
 const STYLES: readonly Style[] = [
   // click
-  { font: `800 34px ${CINZEL}`, size: 34, fill: ['#ffffff', '#fffaf0', '#ffe2b8'], outline: OUTLINE, stroke: 3.2, res: 1.2, icon: false, life: 0.85, rise: 64, riseT: 0.85, fadeT: 0.3, alpha: 1 },
+  { font: `800 34px ${CINZEL}`, size: 34, fill: ['#ffffff', '#fffaf0', '#ffe2b8'], outline: OUTLINE, stroke: 3.2, res: 1, icon: false, life: 0.85, rise: 64, riseT: 0.85, fadeT: 0.3, alpha: 1 },
   // crit
   { font: `900 58px ${CINZEL}`, size: 58, fill: ['#fffbe6', '#ffe066', '#ffb42a', '#ff7a1a'], outline: '#2a0e02', stroke: 4.5, res: 1.2, icon: false, life: 1.25, rise: 90, riseT: 1.2, fadeT: 0.35, alpha: 1 },
   // army
-  { font: `700 21px ${CINZEL}`, size: 21, fill: ['#fff0dc', '#f2c89a', '#d99a64'], outline: OUTLINE, stroke: 2.6, res: 1.2, icon: false, life: 1.3, rise: 44, riseT: 1.4, fadeT: 0.3, alpha: 0.86 },
+  { font: `700 21px ${CINZEL}`, size: 21, fill: ['#fff0dc', '#f2c89a', '#d99a64'], outline: OUTLINE, stroke: 2.6, res: 1, icon: false, life: 1.3, rise: 44, riseT: 1.4, fadeT: 0.3, alpha: 0.86 },
   // gold (+N)
-  { font: `800 28px ${CINZEL}`, size: 28, fill: ['#fffbe0', '#ffd95e', '#e8961c'], outline: '#2a1202', stroke: 3.2, res: 1.2, icon: true, life: 1.3, rise: 58, riseT: 1.2, fadeT: 0.35, alpha: 1 },
+  { font: `800 28px ${CINZEL}`, size: 28, fill: ['#fffbe0', '#ffd95e', '#e8961c'], outline: '#2a1202', stroke: 3.2, res: 1, icon: true, life: 1.3, rise: 58, riseT: 1.2, fadeT: 0.35, alpha: 1 },
   // callout (STAGGERED!)
   { font: `900 40px ${CINZEL}`, size: 40, fill: ['#ffffff', '#dff9ff', '#7fdcff', '#3aa6e8'], outline: '#06121c', stroke: 4, res: 1.2, icon: false, life: 1.35, rise: 34, riseT: 1.3, fadeT: 0.35, alpha: 1 },
   // kill reward (+N, big)
@@ -75,8 +75,11 @@ const ARMY_WINDOW = 1.1;
 const ARMY_MAX_AGE = 2.0;
 const CRIT_WINDOW = 0.35;
 const CRIT_MAX_AGE = 1.0;
-/** Merge group used for crits. */
+const CLICK_WINDOW = 0.3;
+const CLICK_MAX_AGE = 0.7;
+/** Merge groups used for crits and clicks. */
 export const GROUP_CRIT = 200;
+export const GROUP_CLICK = 201;
 
 export class NumberPool {
   private readonly active = new Uint8Array(MAX);
@@ -93,6 +96,10 @@ export class NumberPool {
   /** Army unit key (0 footman, 1 archer...) for merging; 255 = none. */
   private readonly group = new Uint8Array(MAX);
   private readonly amount: (Decimal | null)[] = new Array<Decimal | null>(MAX).fill(null);
+  /** Text each slot was last rendered with (re-rendered once the web font finishes loading). */
+  private readonly texts: string[] = new Array<string>(MAX).fill('');
+  /** Some live slot was rendered before Cinzel was ready (with a fallback font). */
+  private staleFonts = false;
   // Cached render per slot.
   private readonly canvases: (HTMLCanvasElement | null)[] = new Array<HTMLCanvasElement | null>(MAX).fill(null);
   private readonly srcW = new Float32Array(MAX);
@@ -110,7 +117,32 @@ export class NumberPool {
   constructor(
     private readonly coinIcon: () => HTMLCanvasElement | null,
     private readonly glow: () => HTMLCanvasElement | null,
-  ) {}
+  ) {
+    // boot waits for the fonts with a timeout, so a strike can land before Cinzel is ready: those
+    // slots would cache a fallback-font render. Re-render live slots when fonts finish loading.
+    const fonts = typeof document !== 'undefined' ? document.fonts : undefined;
+    if (fonts) {
+      const refresh = (): void => this.refreshFonts();
+      fonts.addEventListener?.('loadingdone', refresh);
+      fonts.ready.then(refresh).catch(() => undefined);
+    }
+  }
+
+  private fontsOk(font: string): boolean {
+    const fonts = typeof document !== 'undefined' ? document.fonts : undefined;
+    try {
+      return !fonts || fonts.check(font);
+    } catch {
+      return true;
+    }
+  }
+
+  /** Re-render live slots that may hold a fallback-font render (no-op once fonts were ready). */
+  refreshFonts(): void {
+    if (!this.staleFonts) return;
+    this.staleFonts = false;
+    for (let i = 0; i < MAX; i++) if (this.active[i] && this.texts[i]) this.render(i, this.texts[i]!);
+  }
 
   /** Live numbers (debug). */
   get count(): number {
@@ -179,6 +211,11 @@ export class NumberPool {
     if (!this.merge(NK_CRIT, GROUP_CRIT, amount, CRIT_WINDOW, CRIT_MAX_AGE, 0.9)) this.spawn(NK_CRIT, wx, wy, amount, null, GROUP_CRIT);
   }
 
+  /** Click: rapid clicks count up in one bumping number instead of a spray of "1 1 1". */
+  click(wx: number, wy: number, amount: Decimal): void {
+    if (!this.merge(NK_CLICK, GROUP_CLICK, amount, CLICK_WINDOW, CLICK_MAX_AGE, 0.6)) this.spawn(NK_CLICK, wx, wy, amount, null, GROUP_CLICK);
+  }
+
   private merge(kind: number, group: number, amount: Decimal, window: number, maxAge: number, extend: number): boolean {
     for (let i = 0; i < MAX; i++) {
       if (!this.active[i] || this.kind[i] !== kind || this.group[i] !== group) continue;
@@ -232,15 +269,15 @@ export class NumberPool {
           }
           if (kind === NK_CALLOUT) rot = this.spin[i]! * (1 - Math.exp(-age * 10));
         } else {
-          // Pop: grow in with overshoot.
-          const k = age < 0.15 ? age / 0.15 : 1;
-          s = (kind === NK_ARMY ? 0.7 : 0.45) + (kind === NK_ARMY ? 0.3 : 0.55) * outBack(k);
+          // Pop: land a touch big and settle to exactly 1 (legible from the first frame; a
+          // number that grows from tiny/faint reads as a broken glyph for a few frames).
+          const k = age < 0.12 ? 1 - age / 0.12 : 0;
+          s = 1 + (kind === NK_ARMY ? 0.18 : 0.32) * k * k * k;
         }
         const b = this.bump[i]!;
-        if (b < 0.16 && b < age) s *= 1 + (kind === NK_CRIT ? 0.4 : 0.28) * (1 - b / 0.16);
+        if (b < 0.14 && b < age) s *= 1 + (kind === NK_CRIT ? 0.4 : kind === NK_CLICK ? 0.3 : 0.28) * (1 - b / 0.14);
         s *= 0.82 + 0.18 * fade;
         let alpha = st.alpha * fade * fade;
-        if (kind !== NK_CRIT && kind !== NK_CALLOUT && kind !== NK_REWARD && age < 0.05) alpha *= age / 0.05;
         if (alpha < 0.01) continue;
 
         cam.worldToScreen(this.wx[i]!, this.wy[i]!, p);
@@ -265,14 +302,19 @@ export class NumberPool {
 
         ctx.globalAlpha = alpha > 1 ? 1 : alpha;
         const ds = dpr * s;
-        if (rot === 0) ctx.setTransform(ds, 0, 0, ds, dpr * x, dpr * y);
+        const dw = this.dstW[i]!;
+        const dh = this.dstH[i]!;
+        if (rot === 0) {
+          // Snap to whole device pixels: at rest (s = 1, res = dpr) this is a 1:1 blit.
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawImage(cv, 0, 0, this.srcW[i]!, this.srcH[i]!, Math.round(dpr * x - (dw * ds) / 2), Math.round(dpr * y - (dh * ds) / 2), dw * ds, dh * ds);
+          continue;
+        }
         else {
           const c = Math.cos(rot) * ds;
           const sn = Math.sin(rot) * ds;
           ctx.setTransform(c, sn, -sn, c, dpr * x, dpr * y);
         }
-        const dw = this.dstW[i]!;
-        const dh = this.dstH[i]!;
         ctx.drawImage(cv, 0, 0, this.srcW[i]!, this.srcH[i]!, -dw / 2, -dh / 2, dw, dh);
       }
     }
@@ -376,7 +418,10 @@ export class NumberPool {
     c.fillText(text, x0, y);
     this.srcW[i] = W;
     this.srcH[i] = H;
-    this.dstW[i] = wCss;
-    this.dstH[i] = hCss;
+    // Destination size = source pixels / res, so an s = 1 draw maps texels 1:1 onto the screen.
+    this.dstW[i] = W / res;
+    this.dstH[i] = H / res;
+    this.texts[i] = text;
+    if (!this.fontsOk(st.font)) this.staleFonts = true;
   }
 }

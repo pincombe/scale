@@ -29,7 +29,8 @@
 //                  power, not an earthquake. No full-screen flash on crits.
 //     stagger    + STAGGERED! callout, big ring, ember burst, gentle warm flash
 //   armyHit      small sparks per blow/arrow, ONE aggregated army number (merges), shake ~ damage/maxHp
-//   dragonDeath  hit-stop, short slow-mo beat (~0.55 s), warm flash, kick, flare, shockwaves, embers + smoke + dust,
+//   dragonDeath  hit-stop, short slow-mo beat, then visuals scaled by killScale (corpse screen size +
+//                  reward): warm gold flash, kick, amber bloom, shockwaves, embers + smoke + dust,
 //                  smoldering embers over the dying body, big +gold number, and the coin fountain:
 //                  coins burst from the corpse, then home to the HUD 'gold' anchor (retargeted if it
 //                  moves); every arrival pulses the counter and fires onCoinLanded(count, value),
@@ -43,9 +44,10 @@
 // and the coin flight (particles.screen runs on the real clock) use wall time so the reward always
 // arrives on schedule.
 //
-// Tuning mirrored by the balance sim: crit hit-stop 0.07 s (0.08 on a stagger), at most once per
-// CRIT_STOP_GAP; kill hit-stop 0.08 s + slowMo(0.25, 0.55); kicks: crit 0.55 x critDamp, stagger
-// 0.8, kill 1.
+// Time effects (constants in tuning.ts, imported by the balance sim too): crit hit-stop
+// CRIT_HIT_STOP (STAGGER_HIT_STOP on a stagger), at most once per CRIT_STOP_GAP; kill
+// KILL_HIT_STOP + slowMo(KILL_SLOW_MO, KILL_SLOW_MO_DUR); kicks: isolated crit 0.55 (none in a
+// spree), stagger 0.8, kill 0.35-1 by killScale.
 import type { Scene } from '../../app/scene';
 import type { Layer, View } from '../types';
 import type { DamageKind, FxApi, FxPreset } from './api';
@@ -57,7 +59,23 @@ import { rect, vec2 } from '../../lib/vec';
 import { buildPresets, type Presets } from './presets';
 import { fxSprites } from './sprites';
 import { NK_ARMY, NK_CALLOUT, NK_CLICK, NK_CRIT, NK_GOLD, NK_REWARD, NumberPool } from './numbers';
-import { CRIT_COOL, CRIT_STOP_GAP, coinCount, coinDelay, coinShares, critDamp, damageFrac, heatAfterCrit, hitTrauma } from './tuning';
+import {
+  CRIT_COOL,
+  CRIT_HIT_STOP,
+  CRIT_STOP_GAP,
+  KILL_HIT_STOP,
+  killScale,
+  KILL_SLOW_MO,
+  KILL_SLOW_MO_DUR,
+  STAGGER_HIT_STOP,
+  coinCount,
+  coinDelay,
+  coinShares,
+  critDamp,
+  damageFrac,
+  heatAfterCrit,
+  hitTrauma,
+} from './tuning';
 
 export interface FxRender {
   api: FxApi;
@@ -261,7 +279,7 @@ export function createFx(scene: Scene): FxRender {
     const k = 1 / z;
     scene.dragon.bounds(box);
     let ny = y - liftPx * k;
-    if (box.h * z < 140) ny = Math.min(ny, box.y - 10 * k);
+    if (box.h * z < 140) ny = Math.min(ny, box.y - 28 * k);
     scene.dragon.headPoint(tmp3);
     let nx = x;
     const dx = (nx - tmp3.x) * z;
@@ -282,22 +300,22 @@ export function createFx(scene: Scene): FxRender {
     if (e.crit) {
       w.burst(p.sparkBig, e.x, e.y, 26, -Math.PI / 2, k);
       w.burst(p.spark, e.x, e.y, 14, -Math.PI / 2, k);
-      w.burst(p.flareBig, e.x, e.y, 1, 0, k * 0.38);
-      w.burst(p.glint, e.x, e.y, 1, 0, k * 1.5);
+      w.burst(p.flareBig, e.x, e.y, 1, 0, k * 0.34);
+      w.burst(p.glint, e.x, e.y, 1, 0, k * 1.15);
       w.burst(p.ember, e.x, e.y, 8, -Math.PI / 2, k);
       ring(e.x, e.y, k, 1, 0.3);
       ring(e.x, e.y, k, 1.8, 0.5);
       const a = -0.6 + (Math.random() - 0.5) * 0.3;
       slash(e.x, e.y, a, k, 1.35);
       slash(e.x, e.y, a + 1.25 + Math.PI, k, 1.2);
-      numberAnchor(e.x, e.y, 24);
+      numberAnchor(e.x, e.y, 36);
       numbers.crit(tmp2.x, tmp2.y, e.damage);
       const damp = critDamp(critHeat);
       critHeat = heatAfterCrit(critHeat);
       // Hit-stop and the chromatic kick only on the first crit after a pause (and on kills):
       // an isolated crit punches; a spree gets sparks, a merged number, damped shake, zoom punch.
       if (clock - lastCrit >= CRIT_STOP_GAP) {
-        time.hitStop(e.stagger ? 0.08 : 0.07);
+        time.hitStop(e.stagger ? STAGGER_HIT_STOP : CRIT_HIT_STOP);
         post.kick(0.55);
       } else camera.punchZoom(0.02);
       lastCrit = clock;
@@ -307,8 +325,8 @@ export function createFx(scene: Scene): FxRender {
       w.burst(p.flare, e.x, e.y, 1, 0, k);
       const a = (slashFlip ? -0.55 : 0.55) + (Math.random() - 0.5) * 0.35;
       slash(e.x, e.y, slashFlip ? a : a + Math.PI, k);
-      numberAnchor(e.x, e.y, 10);
-      numbers.spawn(NK_CLICK, tmp2.x, tmp2.y, e.damage);
+      numberAnchor(e.x, e.y, 30);
+      numbers.click(tmp2.x, tmp2.y, e.damage);
       shake(hitTrauma(f, 'click'), 0.35);
       camera.punchZoom(0.014);
     }
@@ -322,7 +340,7 @@ export function createFx(scene: Scene): FxRender {
       w.burst(p.glint, tmp.x, tmp.y, 1, 0, k * 2.2);
       shake(0.3, 0.6);
       post.kick(0.8);
-      post.flash(scene.palette.accent.glow, 0.1, 0.3);
+      post.flash(scene.palette.accent.gold, 0.08, 0.3);
     }
   });
 
@@ -352,40 +370,48 @@ export function createFx(scene: Scene): FxRender {
     const cx = box.x + box.w * 0.5;
     const cy = box.y + box.h * 0.55;
     const px = box.w * camera.zoomEff;
-    const sz = Math.max(0.75, Math.min(2.2, Math.sqrt(px / 140)));
+    // Magnitude: a newt's death is a crisp warm pop; the big bloom is saved for big dragons.
+    const m = killScale(px, e.gold);
+    const sz = Math.max(0.6, Math.min(2.2, Math.sqrt(px / 140)));
 
-    w.burst(p.flareBig, cx, cy, 1, 0, k * sz * 0.6);
-    w.burst(p.glint, cx, cy, 1, 0, k * 2.4 * sz);
-    ring(cx, cy, k, 1.6 * sz, 0.45);
-    ring(cx, cy, k, 3.2 * sz, 0.8);
-    for (let j = 0; j < 44; j++) {
+    w.burst(p.bloom, cx, cy, 1, 0, k * (0.24 + 1.0 * m));
+    if (m > 0.3) w.burst(p.glint, cx, cy, 1, 0, k * (0.6 + 0.8 * m));
+    ring(cx, cy, k, 0.7 + 1.3 * m, 0.4);
+    if (m > 0.25) ring(cx, cy, k, 1.6 + 2 * m, 0.8);
+    const embers = Math.round(20 + 40 * m);
+    for (let j = 0; j < embers; j++) {
       scene.dragon.impactPoint(tmp);
-      w.burst(p.ember, tmp.x, tmp.y, 1, -Math.PI / 2, k * 1.25);
+      w.burst(p.ember, tmp.x, tmp.y, 1, -Math.PI / 2, k * (1 + 0.3 * m));
     }
-    for (let j = 0; j < 14; j++) {
+    const sparks = Math.round(6 + 10 * m);
+    for (let j = 0; j < sparks; j++) {
       scene.dragon.impactPoint(tmp);
-      w.burst(p.sparkBig, tmp.x, tmp.y, 1, -Math.PI / 2, k * 0.8);
+      w.burst(p.sparkBig, tmp.x, tmp.y, 1, -Math.PI / 2, k * (0.55 + 0.3 * m));
     }
-    for (let j = 0; j < 8; j++) {
+    const smoke = Math.round(3 + 6 * m);
+    for (let j = 0; j < smoke; j++) {
       scene.dragon.impactPoint(tmp);
       w.burst(p.smoke, tmp.x, tmp.y, 1, -Math.PI / 2, k * sz * 0.8);
     }
-    for (let j = 0; j < 14; j++) w.burst(p.dust, box.x + Math.random() * box.w, -0.02 * box.h, 1, -Math.PI / 2, k * sz);
+    const dust = Math.round(6 + 10 * m);
+    for (let j = 0; j < dust; j++) w.burst(p.dust, box.x + Math.random() * box.w, -0.02 * box.h, 1, -Math.PI / 2, k * sz);
     // The body smolders while it collapses (the dying phase), in slow-mo.
-    emit(p.ember, EM_BODY, 0, 0, 0, 0, 34, 1.5, 1.1);
+    emit(p.ember, EM_BODY, 0, 0, 0, 0, 20 + 20 * m, 1.5, 1.1);
 
-    numbers.spawn(NK_REWARD, cx, box.y - 20 * k, e.gold);
+    // Above the coin fountain (numbers draw under particles.screen), clear of small corpses.
+    numbers.spawn(NK_REWARD, cx, box.y - Math.max(20, 110 - box.h * camera.zoomEff) * k, e.gold);
 
     camera.worldToScreen(cx, cy, tmp);
     deathClock = clock;
     firstLand = lastLand = -1;
     coins(tmp.x, tmp.y, coinCount(e.gold), Math.min(160, px * 0.5), e.gold);
 
-    time.hitStop(0.08);
-    time.slowMo(0.25, 0.55);
-    shake(hitTrauma(1, 'kill'), 0.75);
-    post.kick(1);
-    post.flash(scene.palette.accent.glow, 0.22, 0.5);
+    time.hitStop(KILL_HIT_STOP);
+    time.slowMo(KILL_SLOW_MO, KILL_SLOW_MO_DUR);
+    shake(hitTrauma(1, 'kill') * (0.6 + 0.4 * m), 0.5 + 0.25 * m);
+    post.kick(0.35 + 0.65 * m);
+    // Warm and gentle: gold, never a white-out.
+    post.flash(scene.palette.accent.gold, 0.06 + 0.12 * m, 0.45);
   });
 
   game.on('goldGain', (e) => {
@@ -412,7 +438,6 @@ export function createFx(scene: Scene): FxRender {
       w.size1[i] *= k * strength;
       w.y[i] = -w.size0[i]! * 0.42;
     }
-    w.burst(p.glint, box.x + box.w * 0.5, box.y + box.h * 0.4, 1, 0, k * 1.6 * strength);
   };
 
   // One purchase can emit several milestones (+ an unlock): merge them into one shimmer per frame.

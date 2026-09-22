@@ -16,6 +16,8 @@ export interface Presets {
   flare: ParticleSpec;
   /** Big bloom (crit, kill). */
   flareBig: ParticleSpec;
+  /** Warm amber bloom for kills, scaled by the kill's magnitude (never a white disc). */
+  bloom: ParticleSpec;
   /** 4-point glint. */
   glint: ParticleSpec;
   /** Crescent slash streak (set rot per spawn). */
@@ -43,7 +45,7 @@ export function buildPresets(atlas: SpriteAtlas, sprites: BuiltinSprites, p: Pal
   const { gold, fire, ember, glow } = p.accent;
   return {
     spark: particleSpec({
-      sprite: atlas.ramp(sprites.spark, ['#ffffff', gold, fire], 5, 0.6),
+      sprite: atlas.ramp(sprites.spark, ['#fff3d2', gold, gold, fire], 5, 0.45),
       ramp: 5,
       additive: true,
       align: true,
@@ -52,11 +54,11 @@ export function buildPresets(atlas: SpriteAtlas, sprites: BuiltinSprites, p: Pal
       speed: 820,
       speedVar: 0.55,
       angle: -Math.PI / 2,
-      spread: 1.35,
+      spread: 1.65,
       drag: 5,
-      gravity: 1700,
-      size: 40,
-      sizeEnd: 10,
+      gravity: 1900,
+      size: 30,
+      sizeEnd: 8,
       sizeVar: 0.3,
       curve: CURVE_FADE,
     }),
@@ -97,7 +99,7 @@ export function buildPresets(atlas: SpriteAtlas, sprites: BuiltinSprites, p: Pal
       curve: CURVE_FADE,
     }),
     flare: particleSpec({
-      sprite: atlas.tint(sprites.glow, glow, 0.7),
+      sprite: atlas.tint(sprites.glow, '#ffdca0', 0.35),
       additive: true,
       life: 0.13,
       lifeVar: 0.1,
@@ -108,7 +110,7 @@ export function buildPresets(atlas: SpriteAtlas, sprites: BuiltinSprites, p: Pal
       alpha: 0.85,
     }),
     flareBig: particleSpec({
-      sprite: atlas.tint(sprites.glow, gold, 0.55),
+      sprite: atlas.tint(sprites.glow, gold, 0.35),
       additive: true,
       life: 0.3,
       lifeVar: 0.1,
@@ -118,8 +120,19 @@ export function buildPresets(atlas: SpriteAtlas, sprites: BuiltinSprites, p: Pal
       curve: CURVE_FLASH,
       alpha: 0.75,
     }),
+    bloom: particleSpec({
+      sprite: atlas.tint(sprites.glow, '#ffab45', 0.12),
+      additive: true,
+      life: 0.45,
+      lifeVar: 0.1,
+      size: 300,
+      sizeEnd: 380,
+      sizeVar: 0.05,
+      curve: CURVE_FLASH,
+      alpha: 0.6,
+    }),
     glint: particleSpec({
-      sprite: atlas.tint(fx.star, glow, 0.9),
+      sprite: atlas.tint(fx.star, '#ffe2a0', 0.45),
       additive: true,
       life: 0.26,
       lifeVar: 0.15,
