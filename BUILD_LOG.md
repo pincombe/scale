@@ -74,7 +74,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 3. **Size:** 416 KB raw now, against a ~400 KB target and the 1 MB hard fail. M2 adds the zoom, Mountain tier, heraldry and music. If it trends past ~700 KB, look for bloated tables and consider subsetting fonts further.
 4. **Weak spot too generous on small newts:** almost every click crits. The fix was sent to the dragon agent (min radius ~10–12 px, off-center). Verify when 1.2 lands.
 5. **First framing:** the director's base framing puts the hero at 20% of stage height, which makes the first newt only ~50 px on screen. Judge it at the integration pass. The option is a tighter opening framing (`director.heroFrac`) for the first few dragons.
-6. **Pacing tests are red** until 1.9 lands (3 in `pacing.test.ts`, possibly 1 in `sim.test.ts`).
+6. **Weak spot during windups (balance-critical):** the sim assumes the weak spot moves to the throat during a breath windup (PLAN §3.2). If the rig keeps the loose scale hittable during windups, a masher staggers ~90% of windups and fire breath is rarely seen. Sent to the dragon agent; verify when 1.2 lands. Also: the casual first minute is slow (8–10 s per kill); judge it at the integration pass. ARCHITECTURE §4 is stale on the click formula and stagger gold.
 7. **Tail-swipe thumps aren't synced:** the SFX thumps are timed 0.45–1.15 s after the swipe, not to the crowd's actual ragdoll landings. If it feels off, add a crowd→audio landing hook.
 8. **Unreviewed WPs:** the HUD (1.6, medium) and text (1.8, writer) had no reviewer pass. They're covered by the lead's integration pass and the M1 milestone review. The HUD reads MICROCOPY keys `panel.armyEmpty`, `panel.upgradesEmpty` and `tier.<n>`; confirm it picks up the writer's strings rather than its fallbacks.
 9. **Juice costs logic time** by design (a consistent freeze). If juice tuning changes, update `src/sim/juice.ts` to match `src/render/fx/tuning.ts`.
@@ -206,7 +206,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 | 1.6 HUD, Army/Upgrades panels, title, progressive disclosure | builder-medium | `src/ui/**` | ✅ committed (no formal review) | 825e78f |
 | 1.7 SFX v1 | builder-high | `src/audio/**` | ✅ accepted after review (2 high + 6 fixed) | 01fc25a, c0b831b |
 | 1.8 Meadow text | writer | `src/core/content/text.ts` | ✅ committed | f7d020d |
-| 1.9 Balance sim v0 + 5 core fixes | builder-high | `src/sim/**`, `BALANCE`, listed core fixes | ⏳ **in flight** (uncommitted) | — |
+| 1.9 Balance sim v0 + 5 core fixes | builder-high | `src/sim/**`, `BALANCE`, listed core fixes | ✅ committed (30/30 targets PASS, 20 seeds); **review in flight** | bfd6db1 |
 
 ## Process notes (how this build runs)
 **Agents and reviews**
@@ -271,4 +271,5 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: 1.5 economy (255c39e): 139 tests; engaged first kill 1 s, archers ~55 s, 1/2.5/10 m at 1/2/3 min, 28 kills by 3:15. Review: logic correct; 5 balance/feel fixes handed to 1.9.
 - 2026-09-22: 1.7 SFX (01fc25a), metered offline. Review: 2 high (fire breath never played; crits often silent) + 6 fixed (c0b831b); storm test peaks ~544 live nodes.
 - 2026-09-22: 1.4 juice (fd76ef0). Review: crit spam was an earthquake and a flash hazard. Fixed with crit heat, merged numbers, capped canvas memory, exact coin values, compositor grain (82496a7); frozen frames at 8 crits/s down from 23% to 1.6%.
-- 2026-09-22: 1.8 text (f7d020d), 1.6 HUD (825e78f), 1.1 backdrop (aeeee92) committed. BUILD_LOG rewritten as a resume document.
+- 2026-09-22: 1.8 text (f7d020d), 1.6 HUD (825e78f), 1.1 backdrop (aeeee92) committed. BUILD_LOG rewritten as a resume document (c6fab8c).
+- 2026-09-22: 1.9 sim (bfd6db1): 30/30 targets PASS on juiced runs over 20 seeds (engaged: first kill 2 s, archers 0:56, 1.0/2.3/8.4 m at 1/2/3 min, 29 kills by 3:15, 10.5 attacks seen, clicks 46% of damage; dilation 0.92). `npm test` green again.
