@@ -5,15 +5,18 @@
 // are painted on top ('source-atop', so they never leave the silhouette) shifted AWAY from the light.
 // What stays uncovered is a crisp two-step band of light on exactly the edges that face the sun.
 //
-// Levels of detail (device px per figure unit): a knight is 100 units tall, so LOD 0 is 340 px
-// (a hero-sized knight at the base framing on a 2x display) and LOD 3 is 42 px (pulled back ~10x).
+// Levels of detail (device px per figure unit): a knight is 100 units tall, so LOD 0 is 440 px
+// (a front-rank knight at the director's close base framing on a 2x 900 px display, upscaled at
+// most ~1.2x, and ~1.05x once an army nudges the camera back) and LOD 4 is 28 px (pulled back ~16x).
 import { context2d, makeCanvas } from '../atlas';
 import { mixHex } from '../../lib/color';
 import type { Palette } from '../palette';
 import { A_BRACE, A_CHEER, A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_RAISE, A_STRIKE, SHEET_KINDS, buildAnims, type AnimDef, type SheetKind } from './anims';
 import { Joints, anchors, drawDetails, drawFigure, figureBounds, solve, type Anchors, type FigureKind, type Pose } from './rig';
 
-export const LOD_SCALE = [3.4, 1.7, 0.85, 0.42] as const;
+export const LOD_SCALE = [4.4, 2.2, 1.1, 0.55, 0.28] as const;
+/** LODs at or below this scale are far LODs: thicker rim, lighter mid tone (a far host separates from the hills). */
+const FAR_LOD_SCALE = 1.15;
 export const LOD_COUNT = LOD_SCALE.length;
 /** Transparent border around each baked frame (device px). */
 const PAD = 2;
@@ -228,7 +231,8 @@ export class KnightSheets {
     const kind: FigureKind = f.kind;
     // Rim thickness in figure units: ~1.6 CSS px at the base framing; thicker at the small LODs so
     // a far host still separates from the dusk hills.
-    const rimU = Math.max(0.95, (lod >= 2 ? 2.1 : 1.45) / s);
+    const far = s <= FAR_LOD_SCALE;
+    const rimU = Math.max(0.95, (far ? 2.1 : 1.45) / s);
     const minW = 1.25 / s;
     const mx = f.mirror ? -s : s;
     // Canvas x = (x' - x0) * s + PAD, where x' = -x for mirrored frames (x0 is already mirrored).
@@ -236,7 +240,7 @@ export class KnightSheets {
     const f0 = PAD - f.y0 * s;
     this.pass(ctx, kind, pose, j, minW, this.rim, 0, mx, s, e0, f0);
     ctx.globalCompositeOperation = 'source-atop';
-    this.pass(ctx, kind, pose, j, minW, lod >= 2 ? this.midFar : this.mid, rimU * 0.5, mx, s, e0, f0);
+    this.pass(ctx, kind, pose, j, minW, far ? this.midFar : this.mid, rimU * 0.5, mx, s, e0, f0);
     this.pass(ctx, kind, pose, j, minW, this.sil, rimU * 1.05, mx, s, e0, f0);
     ctx.setTransform(mx, 0, 0, s, e0, f0);
     drawDetails(ctx, kind, j, this.rim);
