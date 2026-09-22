@@ -20,7 +20,14 @@ SCALE is an infinite idle game about knights and dragons, built for a competitio
 - `src/sim/`: headless balance simulator.
 
 ## Commands
-To be filled in during M0: dev, build, test, typecheck, sim, size.
+- `npm run dev`: Vite dev server (launch.json `dev`, port 5173)
+- `npm run build`: build the single self-contained `dist/index.html`
+- `npm run preview`: serve the built file (launch.json `preview`, port 4173)
+- `npm run typecheck`: `tsc --noEmit`
+- `npm test`: Vitest once (`npm run test:watch` to watch)
+- `npm run sim`: headless balance sim in Node (`tsx src/sim/run.ts`)
+- `npm run size`: size guard on `dist/index.html` (fails over 1 MB or on external refs)
+- `npm run check`: typecheck, test, build and size in one go. Run before reporting.
 
 ## Conventions
 - TypeScript strict. Economy numbers use `Decimal` (break_infinity.js).

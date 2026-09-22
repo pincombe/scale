@@ -1,0 +1,32 @@
+/*
+ * Embedded fonts: latin subset, woff2 only (inlined as data URIs by the build).
+ * Title: Cinzel Variable (weights 400-900). Body: EB Garamond 400, normal + italic.
+ */
+@font-face {
+  font-family: 'Cinzel Variable';
+  font-style: normal;
+  font-display: block;
+  font-weight: 400 900;
+  src: url('@fontsource-variable/cinzel/files/cinzel-latin-wght-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: normal;
+  font-display: block;
+  font-weight: 400;
+  src: url('@fontsource/eb-garamond/files/eb-garamond-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: italic;
+  font-display: block;
+  font-weight: 400;
+  src: url('@fontsource/eb-garamond/files/eb-garamond-latin-400-italic.woff2') format('woff2');
+}
+
+:root {
+  --font-title: 'Cinzel Variable', 'Trajan Pro', Georgia, serif;
+  --font-body: 'EB Garamond', Garamond, Georgia, serif;
+}
