@@ -15,10 +15,12 @@ export interface EyeSchedule {
   firstShown: boolean;
   /** Game time (s) of the next opening, Infinity when none is scheduled. */
   nextAt: number;
+  /** Kills seen last step: a drop (reset game, new tier) restarts the schedule. */
+  kills: number;
 }
 
 export function createEyeSchedule(): EyeSchedule {
-  return { firstShown: false, nextAt: Infinity };
+  return { firstShown: false, nextAt: Infinity, kills: 0 };
 }
 
 /**
@@ -26,6 +28,11 @@ export function createEyeSchedule(): EyeSchedule {
  * animating (a due opening then waits until it closes).
  */
 export function stepEyeSchedule(s: EyeSchedule, kills: number, now: number, busy: boolean): boolean {
+  if (kills < s.kills) {
+    s.firstShown = false;
+    s.nextAt = Infinity;
+  }
+  s.kills = kills;
   if (!s.firstShown && s.nextAt === Infinity && kills >= EYE_FIRST_KILLS) s.nextAt = now + EYE_FIRST_DELAY;
   if (!busy && now >= s.nextAt) {
     s.firstShown = true;

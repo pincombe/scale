@@ -34,12 +34,51 @@ export function skyHexAt(p: Palette, frac: number): string {
   return toHex(c.r, c.g, c.b);
 }
 
+/** Glow falloff (fraction of radius -> alpha), shared by the glow sprite and the baked sky glow. */
+const GLOW_STOPS = [
+  [0, 1],
+  [0.06, 0.78],
+  [0.14, 0.5],
+  [0.26, 0.27],
+  [0.42, 0.12],
+  [0.62, 0.045],
+  [0.82, 0.012],
+  [1, 0],
+] as const;
+
+function glowLut(n: number): Float32Array {
+  const lut = new Float32Array(n + 1);
+  for (let i = 0; i <= n; i++) {
+    const f = i / n;
+    let k = 0;
+    while (k < GLOW_STOPS.length - 2 && f > GLOW_STOPS[k + 1]![0]) k++;
+    const a = GLOW_STOPS[k]!;
+    const b = GLOW_STOPS[k + 1]!;
+    lut[i] = a[1] + ((b[1] - a[1]) * (f - a[0])) / (b[0] - a[0]);
+  }
+  return lut;
+}
+
+/** Where the sun glow is baked into the sky (CSS px) and how strong it is. */
+export interface SkyGlow {
+  x: number;
+  y: number;
+  /** Glow radius (px); the horizon band is 2.4 G wide and 0.32 G tall. */
+  r: number;
+  /** Alpha of the round glow and of the horizon band ('lighter' of the sun glow color). */
+  a: number;
+  band: number;
+}
+
 /**
  * The sky gradient at CSS resolution, computed per pixel with triangular dither (no 8-bit
- * banding in Safari/Firefox either) and a faint painterly mottle.
+ * banding in Safari/Firefox either), a faint painterly mottle, and the sun's big glow and
+ * horizon band added in (so they cost no fill per frame). The canvas is `extra` px wider than
+ * the view: the gradient is horizontally uniform, so the draw slides the source window to keep
+ * the baked glow under the sun when the stage center moves (panel open).
  */
-export function bakeSky(p: Palette, w: number, h: number): HTMLCanvasElement {
-  const c = makeCanvas(w, h);
+export function bakeSky(p: Palette, w: number, h: number, glow: SkyGlow, extra: number): HTMLCanvasElement {
+  const c = makeCanvas(w + extra, h);
   const ctx = context2d(c);
   const img = ctx.createImageData(c.width, c.height);
   const d = img.data;
@@ -56,23 +95,51 @@ export function bakeSky(p: Palette, w: number, h: number): HTMLCanvasElement {
   }
   // Low-frequency mottle (a painted wash, not flat vector): coarse grid, bilinear.
   const n = new Noise(0x5c7);
-  const G = 48;
-  const gw = Math.ceil(W / G) + 2;
-  const gh = Math.ceil(H / G) + 2;
+  const GRID = 48;
+  const gw = Math.ceil(W / GRID) + 2;
+  const gh = Math.ceil(H / GRID) + 2;
   const grid = new Float32Array(gw * gh);
   for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) grid[j * gw + i] = n.fbm2(i * 0.35, j * 0.5, 3);
   let s = 0x9e3779b9 | 0;
+  const LN = 512;
+  const lut = glowLut(LN);
+  const gc = parseHex(p.sun.glow, { r: 0, g: 0, b: 0 });
+  const G = Math.max(1, glow.r);
+  const iG = 1 / G;
+  const iBx = 1 / (2.4 * G);
+  const iBy = 1 / (0.32 * G);
   for (let y = 0; y < H; y++) {
-    const r0 = rows[y * 3]!;
-    const g0 = rows[y * 3 + 1]!;
-    const b0 = rows[y * 3 + 2]!;
-    const gy = y / G;
+    let r0 = rows[y * 3]!;
+    let g0 = rows[y * 3 + 1]!;
+    let b0 = rows[y * 3 + 2]!;
+    const dy = y - glow.y;
+    const inGlow = Math.abs(dy) < G;
+    const rowR = r0;
+    const rowG = g0;
+    const rowB = b0;
+    const gy = y / GRID;
     const j = gy | 0;
     const fy = gy - j;
     // Mottle strongest mid-sky, gone at the horizon glow.
     const mAmp = 5 * (1 - Math.min(1, y / horizonPx) ** 3);
     for (let x = 0; x < W; x++) {
-      const gx = x / G;
+      r0 = rowR;
+      g0 = rowG;
+      b0 = rowB;
+      if (inGlow) {
+        const dx = x - glow.x;
+        let a = 0;
+        const q = Math.sqrt(dx * dx + dy * dy) * iG;
+        if (q < 1) a += glow.a * lut[(q * LN) | 0]!;
+        const bx = dx * iBx;
+        const by = dy * iBy;
+        const qb = Math.sqrt(bx * bx + by * by);
+        if (qb < 1) a += glow.band * lut[(qb * LN) | 0]!;
+        r0 += gc.r * a;
+        g0 += gc.g * a;
+        b0 += gc.b * a;
+      }
+      const gx = x / GRID;
       const i = gx | 0;
       const fx = gx - i;
       const k = j * gw + i;
@@ -108,17 +175,7 @@ export function bakeGlow(color: string, size = 256): HTMLCanvasElement {
   const ctx = context2d(c);
   const r = size / 2;
   const g = ctx.createRadialGradient(r, r, 0, r, r, r);
-  const stops = [
-    [0, 1],
-    [0.06, 0.78],
-    [0.14, 0.5],
-    [0.26, 0.27],
-    [0.42, 0.12],
-    [0.62, 0.045],
-    [0.82, 0.012],
-    [1, 0],
-  ] as const;
-  for (const [at, a] of stops) g.addColorStop(at, rgba(color, a));
+  for (const [at, a] of GLOW_STOPS) g.addColorStop(at, rgba(color, a));
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
   return c;
@@ -155,7 +212,7 @@ export function bakeSun(p: Palette, radiusCss: number, dpr: number): HTMLCanvasE
 }
 
 /** God-ray wedges fanning from the center, white, soft-edged. Drawn additive and rotated. */
-export function bakeRays(seed: number, size = 1024, count = 22): HTMLCanvasElement {
+export function bakeRays(seed: number, size = 768, count = 22): HTMLCanvasElement {
   const c = makeCanvas(size, size);
   const ctx = context2d(c);
   const rng = new Rng(seed);
@@ -260,17 +317,12 @@ function cloudLobes(spec: CloudSpec, cw: number, base: number, th: number): Lobe
     }
     x += th * (0.16 + 0.26 * rng.float()) * (1 + spec.streak * 2.2);
   }
-  // Detached puffs above the bank and thin lit streaks trailing below it.
-  for (let i = 0; i < 7; i++) {
+  // Thin lit streaks trailing below the bank.
+  for (let i = 0; i < 4; i++) {
     const cx = pad + rng.float() * (cw - 2 * pad);
     const r = th * (0.1 + 0.12 * rng.float());
-    if (i < 3 && spec.streak < 0.6) {
-      const cy = base - th * (1.2 + 0.6 * rng.float());
-      for (let k = 0; k < 3; k++) lobes.push({ x: cx + k * r * 1.2, y: cy - rng.float() * r * 0.6, rx: r * 1.3, ry: r });
-    } else {
-      const cy = base + th * (0.3 + 0.55 * rng.float());
-      lobes.push({ x: cx, y: cy, rx: r * (5 + 6 * rng.float()), ry: r * 0.22 });
-    }
+    const cy = base + th * (0.3 + 0.55 * rng.float());
+    lobes.push({ x: cx, y: cy, rx: r * (5 + 6 * rng.float()), ry: r * 0.22 });
   }
   return lobes;
 }

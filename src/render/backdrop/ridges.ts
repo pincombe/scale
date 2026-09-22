@@ -62,6 +62,9 @@ export interface RidgeDef {
   readonly rimPx: number;
   /** Strength of the lit faces on slopes turned toward the sun (0 = flat silhouette). */
   readonly faces?: number;
+  /** Bake resolution caps: far, hazy layers bake at DPR 1 with no zoom headroom (memory). */
+  readonly maxDpr?: number;
+  readonly headroom?: number;
   /** Height of the silhouette at x (m). */
   height(x: number): number;
   /** Adds decoration subpaths (trees, buildings) intersecting [x0, x1]. */
@@ -91,8 +94,10 @@ export const MOUNTAINS: RidgeDef = {
   name: 'mountains',
   decoH: 0.05,
   p: 0.06,
-  maxH: 4.6,
+  maxH: 4.8,
   faces: 0.4,
+  maxDpr: 1,
+  headroom: 1,
   tone: 0.24,
   baseTone: 0.02,
   rim: 0.55,
@@ -100,33 +105,35 @@ export const MOUNTAINS: RidgeDef = {
   height(x) {
     const crag = 0.8 * ridged(nM, x * 0.38, 5.5) + 0.3 * ridged(nM, x * 0.95, 9.1) + 0.05 * nM.simplex2(x * 5, 3);
     const h = 1.95 + 0.7 * nM.fbm2(x * 0.14, 1.3, 3) + crag;
-    return h * valley(x, 0.62, 2.1) + 0.1 * Math.min(Math.abs(x - VALLEY_X), 10);
+    return smax(h * valley(x, 0.62, 2.1) + 0.1 * Math.min(Math.abs(x - VALLEY_X), 10), wyrm(x), 0.3);
   },
 };
 
-// The wyrm: a long hill whose profile is a sleeping head (snout toward the fight), its neck and
-// spine trailing left as a craggy ridge. The eye opens under the brow at WYRM_EYE_X.
-const HEAD_X = [-8.2, -7.0, -6.0, -5.0, -4.4, -4.05, -3.75, -3.52, -3.24, -2.95, -2.62, -2.38, -2.16, -1.98, -1.7];
-const HEAD_Y = [1.05, 1.3, 1.42, 1.58, 1.84, 1.96, 1.9, 2.0, 1.74, 1.6, 1.5, 1.55, 1.34, 1.02, 0.72];
-export const WYRM_EYE_X = -3.5;
+// The wyrm: the valley's right wall is a sleeping head resting beside the setting sun, snout toward
+// the valley and the fight, horns swept back, its spine trailing off as the range. The eye opens in
+// its brow (WYRM_EYE_X, WYRM_EYE_Y): ~40% of the screen height, center-right of the stage.
+const HEAD_X = [2.15, 2.4, 2.58, 2.78, 2.98, 3.12, 3.28, 3.5, 3.75, 4.05, 4.4, 4.8, 5.3, 6.0, 6.9, 8.0, 9.0];
+const HEAD_Y = [1.3, 2.2, 2.5, 2.62, 2.58, 2.95, 3.62, 3.92, 3.84, 3.86, 3.95, 3.85, 3.62, 3.4, 3.15, 2.8, 2.5];
+export const WYRM_EYE_X = 3.76;
+export const WYRM_EYE_Y = 3.32;
 
-/** Backswept horn crag: rises gently from `base` leftward to a tip at `tip`, then drops. */
+/** Backswept horn crag: rises gently from `base` rightward to a tip at `tip`, then drops. */
 function horn(x: number, base: number, tip: number, h: number): number {
-  if (x > base || x < tip - 0.1) return 0;
-  if (x >= tip) return h * Math.pow((base - x) / (base - tip), 1.6);
-  return h * (1 - (tip - x) / 0.1);
+  if (x < base || x > tip + 0.12) return 0;
+  if (x <= tip) return h * Math.pow((x - base) / (tip - base), 1.6);
+  return h * (1 - (x - tip) / 0.12);
 }
 
 function wyrm(x: number): number {
   let h = spline(HEAD_X, HEAD_Y, x);
-  h += horn(x, -4.2, -4.78, 0.42) + horn(x, -4.75, -5.15, 0.24);
-  if (x > -7.8 && x < -5.2) {
+  h += horn(x, 4.45, 5.3, 0.62) + horn(x, 4.95, 5.62, 0.36);
+  if (x > 5.8 && x < 8.8) {
     // Spinal crags along the neck, like weathered rocks.
-    const u = (x + 7.8) / 0.34;
+    const u = (x - 5.8) / 0.38;
     const f = u - Math.floor(u);
-    const size = 0.07 + 0.11 * hash2f(Math.floor(u), 7);
-    const env = Math.min(1, (x + 7.8) / 0.8, (-5.2 - x) / 0.5);
-    h += size * env * Math.max(0, 1 - Math.abs(f - 0.45) * 2.6);
+    const size = 0.08 + 0.12 * hash2f(Math.floor(u), 7);
+    const env = Math.min(1, (x - 5.8) / 0.5, (8.8 - x) / 0.8);
+    h += size * env * Math.max(0, 1 - Math.abs(f - 0.55) * 2.6);
   }
   return h;
 }
@@ -135,15 +142,17 @@ export const FAR_HILLS: RidgeDef = {
   name: 'farHills',
   decoH: 0.05,
   p: 0.12,
-  maxH: 2.5,
+  maxH: 1.9,
   faces: 0.3,
+  maxDpr: 1,
+  headroom: 1,
   tone: 0.4,
   baseTone: 0.12,
   rim: 0.5,
   rimPx: 1.3,
   height(x) {
     const hills = (1.02 + 0.38 * nH.fbm2(x * 0.26, 2.1, 3)) * valley(x, 0.68, 1.55) + 0.05 * Math.min(Math.abs(x - VALLEY_X), 8);
-    return smax(hills, wyrm(x), 0.18);
+    return hills;
   },
 };
 
@@ -156,6 +165,7 @@ export const HILLS: RidgeDef = {
   decoH: 0.62,
   p: 0.26,
   maxH: 1.9,
+  headroom: 1,
   tone: 0.57,
   baseTone: 0.3,
   rim: 0.6,
@@ -356,13 +366,15 @@ export function ridgePath(def: RidgeDef, x0: number, x1: number, step: number, b
 
 /** How far below the ground line (CSS px) a cached layer extends: covers shake and roll. */
 const BOTTOM_PX = 90;
-/** Bake a bit sharper than needed so zoom punches stay crisp. */
+/** Near layers bake a bit sharper than needed so zoom punches stay crisp. */
 const BAKE_HEADROOM = 1.1;
+/** Re-bake once the sun has moved this far (CSS px) relative to the layer (panel open/close). */
+const SUN_MOVE_PX = 24;
 /** Re-bake once the zoom leaves [bakeZ / DOWN, bakeZ * UP]. */
 const REBAKE_UP = 1.02;
 const REBAKE_DOWN = 1.32;
 /** Extra layer width baked on each side (fraction of the visible width) to absorb pans. */
-const SLACK = 0.16;
+const SLACK = 0.08;
 
 export interface Light {
   /** Sun position in this layer's coordinates. */
@@ -370,7 +382,7 @@ export interface Light {
   y: number;
 }
 
-/** Shared scratch for lit-face bands (grown to the largest layer). */
+/** Scratch for lit-face bands, allocated per bake and freed after it. */
 let scratch: HTMLCanvasElement | null = null;
 
 /**
@@ -391,11 +403,7 @@ function paintFaces(
   fill: CanvasGradient,
   alpha: number,
 ): void {
-  if (!scratch || scratch.width < cw || scratch.height < ch) {
-    scratch = scratch ?? makeCanvas(1, 1);
-    scratch.width = Math.max(scratch.width, cw);
-    scratch.height = Math.max(scratch.height, ch);
-  }
+  scratch = makeCanvas(cw, ch);
   const s = context2d(scratch);
   s.setTransform(1, 0, 0, 1, 0, 0);
   s.globalCompositeOperation = 'source-over';
@@ -421,6 +429,10 @@ function paintFaces(
   ctx.globalAlpha = alpha;
   ctx.drawImage(scratch, 0, 0, cw, ch, 0, 0, cw, ch);
   ctx.restore();
+  // Free the backing store right away (it is as big as the layer).
+  scratch.width = 0;
+  scratch.height = 0;
+  scratch = null;
 }
 
 export class RidgeCache {
@@ -440,6 +452,10 @@ export class RidgeCache {
   crest = '#000';
   base = '#000';
   rimColor = '#fff';
+  /** Darker than the crest: the eye socket. */
+  shade = '#000';
+  /** Sun x in layer meters at bake time. */
+  lightX = 0;
 
   constructor(readonly def: RidgeDef) {}
 
@@ -447,21 +463,36 @@ export class RidgeCache {
     this.palette = null;
   }
 
-  /** 0 = fine, 1 = should re-bake (resolution), 2 = must re-bake (coverage, palette, dpr). */
-  need(zBase: number, vx0: number, vx1: number, dpr: number, pal: Palette): number {
-    if (!this.canvas || this.palette !== pal || this.dpr !== dpr) return 2;
+  /** Effective bake DPR for a view DPR. */
+  bakeDpr(dpr: number): number {
+    return Math.min(dpr, this.def.maxDpr ?? dpr);
+  }
+
+  /**
+   * 0 = fine, 1 = should re-bake (resolution, sun moved), 2 = must re-bake (coverage, palette,
+   * dpr). `lightX` is the sun's current x in this layer's meters.
+   */
+  need(zBase: number, vx0: number, vx1: number, dpr: number, pal: Palette, lightX: number): number {
+    if (!this.canvas || this.palette !== pal || this.dpr !== this.bakeDpr(dpr)) return 2;
     if (vx0 < this.x0 || vx1 > this.x1) return 2;
     if (zBase > this.bakeZ * REBAKE_UP || zBase < this.bakeZ / REBAKE_DOWN) return 1;
+    if (Math.abs(lightX - this.lightX) * zBase > SUN_MOVE_PX) return 1;
     return 0;
+  }
+
+  /** Backing-store bytes. */
+  bytes(): number {
+    return this.canvas ? this.canvas.width * this.canvas.height * 4 : 0;
   }
 
   covers(vx0: number, vx1: number): boolean {
     return this.canvas !== null && vx0 >= this.x0 && vx1 <= this.x1;
   }
 
-  bake(pal: Palette, zBase: number, vx0: number, vx1: number, dpr: number, light: Light): void {
+  bake(pal: Palette, zBase: number, vx0: number, vx1: number, viewDpr: number, light: Light): void {
     const def = this.def;
-    const z = zBase * BAKE_HEADROOM;
+    const dpr = this.bakeDpr(viewDpr);
+    const z = zBase * (def.headroom ?? BAKE_HEADROOM);
     const slack = (vx1 - vx0) * SLACK;
     const x0 = vx0 - slack;
     const x1 = vx1 + slack;
@@ -473,22 +504,26 @@ export class RidgeCache {
     const k = z * dpr;
     const cw = Math.ceil((x1 - x0) * k);
     const ch = Math.ceil((bottom - top) * k);
-    if (!this.canvas || this.canvas.width < cw || this.canvas.height < ch) {
-      const c = this.canvas ?? makeCanvas(1, 1);
-      c.width = Math.max(c.width, Math.ceil(cw * 1.08));
-      c.height = Math.max(c.height, Math.ceil(ch * 1.04));
+    // Exact size (reuse the canvas when it is already within 3%, to avoid reallocating).
+    const c0 = this.canvas;
+    if (!c0 || c0.width < cw || c0.height < ch || c0.width > cw * 1.03 + 2 || c0.height > ch * 1.03 + 2) {
+      const c = c0 ?? makeCanvas(1, 1);
+      c.width = cw;
+      c.height = ch;
       this.canvas = c;
       this.ctx = context2d(c);
     }
     const ctx = this.ctx!;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.clearRect(0, 0, this.canvas!.width, this.canvas!.height);
     ctx.setTransform(k, 0, 0, k, -x0 * k, -top * k);
 
     this.crest = toneColor(pal, def.tone);
     this.base = toneColor(pal, def.baseTone);
     this.rimColor = mixHex(pal.rim, pal.haze, 0.55 * (1 - def.tone));
+    this.shade = mixHex(this.crest, pal.silhouette, 0.55);
+    this.lightX = light.x;
 
     const path = ridgePath(def, x0, x1, Math.max(0.004, 1.4 / k), bottom);
     const body = ctx.createLinearGradient(0, -def.maxH * 0.75, 0, 0.02);

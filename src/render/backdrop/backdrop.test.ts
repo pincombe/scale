@@ -40,6 +40,20 @@ describe('eye schedule', () => {
     expect(stepEyeSchedule(s, 3, 11, false)).toBe(true);
   });
 
+  it('restarts when kills drop (reset game / new tier)', () => {
+    const s = createEyeSchedule();
+    stepEyeSchedule(s, 3, 0, false);
+    expect(stepEyeSchedule(s, 3, EYE_FIRST_DELAY, false)).toBe(true);
+    eyeClosed(s, 20, 0);
+    expect(stepEyeSchedule(s, 0, 30, false)).toBe(false);
+    expect(s.firstShown).toBe(false);
+    expect(s.nextAt).toBe(Infinity);
+    // No random openings until the 3rd kill again.
+    expect(stepEyeSchedule(s, 2, 20 + EYE_MAX_GAP + 1, false)).toBe(false);
+    stepEyeSchedule(s, 3, 500, false);
+    expect(stepEyeSchedule(s, 3, 500 + EYE_FIRST_DELAY, false)).toBe(true);
+  });
+
   it('a manual opening before the first kill-triggered one schedules nothing', () => {
     const s = createEyeSchedule();
     eyeClosed(s, 50, 0.3);

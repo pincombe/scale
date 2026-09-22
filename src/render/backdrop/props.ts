@@ -69,15 +69,16 @@ function quad(
 // ---------------------------------------------------------------- the eye
 
 /** Half-width and max half-height of the eye opening (m on the far-hills layer). */
-const EYE_HW = 0.27;
-const EYE_HH = 0.1;
-const EYE_TILT = -0.12;
+const EYE_HW = 0.47;
+const EYE_HH = 0.175;
+/** The head faces left: the front (tear-duct) corner dips toward the snout. */
+const EYE_TILT = 0.1;
 
 function almond(ctx: CanvasRenderingContext2D, hw: number, hh: number): void {
   // Reptile eye: the upper lid arcs higher than the lower, corners slightly hooded.
-  ctx.moveTo(-hw, hh * 0.1);
-  ctx.bezierCurveTo(-hw * 0.55, -hh * 1.25, hw * 0.45, -hh * 1.35, hw, -hh * 0.05);
-  ctx.bezierCurveTo(hw * 0.5, hh * 1.05, -hw * 0.5, hh * 1.1, -hw, hh * 0.1);
+  ctx.moveTo(hw, hh * 0.1);
+  ctx.bezierCurveTo(hw * 0.55, -hh * 1.25, -hw * 0.45, -hh * 1.35, -hw, -hh * 0.05);
+  ctx.bezierCurveTo(-hw * 0.5, hh * 1.05, hw * 0.5, hh * 1.1, hw, hh * 0.1);
   ctx.closePath();
 }
 
@@ -122,9 +123,9 @@ export function drawEye(
   // Glow bleeding into the hill and the haze around it.
   ctx.globalCompositeOperation = 'lighter';
   ctx.globalAlpha = 0.5 * pose.glow * flick;
-  ctx.drawImage(art.glow, -1.1, -1.1, 2.2, 2.2);
+  ctx.drawImage(art.glow, -1.9, -1.9, 3.8, 3.8);
   ctx.globalAlpha = 0.6 * pose.glow * flick;
-  ctx.drawImage(art.glow, -0.42, -0.36, 0.84, 0.72);
+  ctx.drawImage(art.glow, -0.74, -0.63, 1.48, 1.26);
   ctx.globalCompositeOperation = 'source-over';
   // Lid folds: a dark crease that deepens as the lids part.
   ctx.globalAlpha = Math.min(1, o * 5) * 0.75;
@@ -152,12 +153,12 @@ export function drawEye(
   // Wet highlight
   ctx.fillStyle = 'rgba(255,250,225,0.8)';
   ctx.beginPath();
-  ctx.ellipse(-EYE_HW * 0.3 - px * 0.5, -hh * 0.35, EYE_HW * 0.07, EYE_HH * 0.16, -0.3, 0, TAU);
+  ctx.ellipse(EYE_HW * 0.28 - px * 0.5, -hh * 0.35, EYE_HW * 0.07, EYE_HH * 0.16, -0.3, 0, TAU);
   ctx.fill();
   ctx.restore();
   // Lid edge line
   ctx.strokeStyle = lid;
-  ctx.lineWidth = 0.02;
+  ctx.lineWidth = 0.03;
   ctx.beginPath();
   almond(ctx, EYE_HW, hh);
   ctx.stroke();

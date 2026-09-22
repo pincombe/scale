@@ -147,7 +147,8 @@ export class Ground {
   /** (Re)bake for a palette and the reference device px/m. */
   bake(pal: Palette, refZoom: number, dpr: number): void {
     const k0 = refZoom * dpr * 1.15;
-    if (this.palette === pal && Math.abs(k0 - this.baseK) < 1e-6) return;
+    // Levels are a mip chain, so small viewport changes (window drags) need no re-bake.
+    if (this.palette === pal && k0 <= this.baseK && k0 > this.baseK * 0.8) return;
     this.palette = pal;
     this.baseK = k0;
     const top = toneColor(pal, 0.93);
@@ -240,6 +241,13 @@ export class Ground {
       }
       ctx.restore();
     }
+  }
+
+  bytes(): number {
+    let b = this.fill ? this.fill.width * this.fill.height * 4 : 0;
+    for (const c of this.tiles) b += c.width * c.height * 4;
+    for (const c of this.tuftTiles) b += c.width * c.height * 4;
+    return b;
   }
 
   private level(need: number): number {

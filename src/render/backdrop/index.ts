@@ -19,7 +19,7 @@ import { rect, vec2, type Vec2 } from '../../lib/vec';
 import { hash2f } from '../../lib/math';
 import { SAFE_MARGIN } from '../world';
 import { bakeClouds, bakeGlow, bakeRays, bakeSky, bakeSun, SUN_SPRITE_R, type CloudBank } from './sky';
-import { FAR_HILLS, HILLS, RIDGES, RidgeCache, TREELINE, WINDMILL_TOWER, WINDMILL_X, WINDOWS, WYRM_EYE_X, type Light } from './ridges';
+import { HILLS, MOUNTAINS, RIDGES, RidgeCache, TREELINE, WINDMILL_TOWER, WINDMILL_X, WINDOWS, WYRM_EYE_X, WYRM_EYE_Y, type Light } from './ridges';
 import { Ground } from './ground';
 import { Foreground } from './foreground';
 import { Ambient } from './ambient';
@@ -36,9 +36,14 @@ export interface Backdrop {
   birds(): void;
   /** Rolling CPU cost of the two layers' draw() (ms, main view), and silhouette re-bakes. */
   readonly stats: { backMs: number; frontMs: number; bakes: number; bakeMsMax: number };
+  /** Canvas memory owned by the backdrop (MB of backing store). */
+  memMB(): number;
 }
 
 const STARS = 46;
+/** Clouds are soft: baked at this DPR at most (memory). */
+const CLOUD_DPR = 1.25;
+const RESIZE_SETTLE_MS = 220;
 
 /** The sun sits this many viewport heights right of the stage center. */
 export const SUN_DX = 0.27;
@@ -49,6 +54,9 @@ interface SkyArt {
   h: number;
   dpr: number;
   sky: HTMLCanvasElement;
+  /** Sky canvas is this much wider than the view; the baked glow sits at sunX0 (panel closed). */
+  extra: number;
+  sunX0: number;
   sun: HTMLCanvasElement;
   sunGlow: HTMLCanvasElement;
   clouds: CloudBank[];
@@ -72,7 +80,7 @@ function bakeMist(color: string): HTMLCanvasElement {
 export function createBackdrop(scene: Scene): Backdrop {
   const caches = RIDGES.map((d) => new RidgeCache(d));
   const cacheOf = (name: string): RidgeCache => caches.find((c) => c.def.name === name)!;
-  const farHills = cacheOf(FAR_HILLS.name);
+  const mountains = cacheOf(MOUNTAINS.name);
   const hills = cacheOf(HILLS.name);
   const treeline = cacheOf(TREELINE.name);
   const ground = new Ground();
@@ -98,22 +106,41 @@ export function createBackdrop(scene: Scene): Backdrop {
   const schedule = createEyeSchedule();
   let eyeT = -1;
   let millAngle = 0.3;
+  let pendW = 0;
+  let pendH = 0;
+  let pendSince = 0;
   const stats = { backMs: 0, frontMs: 0, bakes: 0, bakeMsMax: 0 };
 
   const ensureSky = (view: View): SkyArt => {
     const p = view.palette;
     const s = sky;
-    if (s && s.palette === p && s.w === view.width && s.h === view.height && s.dpr === view.dpr) return s;
+    const w = view.width;
     const h = view.height;
+    if (s && s.palette === p) {
+      if (s.w === w && s.h === h && s.dpr === view.dpr) return s;
+      // Debounce: while the window is being dragged, keep drawing the old sky (stretched).
+      const now = performance.now();
+      if (pendW !== w || pendH !== h) {
+        pendW = w;
+        pendH = h;
+        pendSince = now;
+      }
+      if (now - pendSince < RESIZE_SETTLE_MS) return s;
+    }
+    const extra = Math.ceil(w * 0.4);
+    const sunX0 = w * 0.5 + SUN_DX * h;
+    const G = p.sun.glowRadius * h;
     const art: SkyArt = {
       palette: p,
-      w: view.width,
+      w,
       h,
       dpr: view.dpr,
-      sky: bakeSky(p, view.width, h),
+      sky: bakeSky(p, w, h, { x: sunX0, y: p.sun.y * h, r: G, a: 0.5, band: 0.32 }, extra),
+      extra,
+      sunX0,
       sun: bakeSun(p, p.sun.radius * h, view.dpr),
       sunGlow: bakeGlow(p.sun.glow, 256),
-      clouds: bakeClouds(p, view.width, h, view.dpr),
+      clouds: bakeClouds(p, w, h, Math.min(view.dpr, CLOUD_DPR)),
       mist: bakeMist(mixHex(p.haze, p.sun.glow, 0.25)),
       birdColor: mixHex(p.silhouette, p.depthTint ?? p.haze, 0.3),
     };
@@ -154,14 +181,16 @@ export function createBackdrop(scene: Scene): Backdrop {
     return out;
   };
 
-  const bakeCache = (c: RidgeCache, view: View, zBase: number, x0: number, x1: number): void => {
-    const cam = view.camera;
-    const p = c.def.p;
+  /** Sun position in layer-p meters (writes `light`); call layerRange for p first (origin). */
+  const lightIn = (view: View, p: number): Light => {
+    const z = view.camera.parallaxZoom(p);
     sunPos(view, sun);
-    cam.parallaxToScreen(p, 0, 0, origin);
-    const z = cam.parallaxZoom(p);
     light.x = (sun.x - origin.x) / z;
     light.y = (sun.y - origin.y) / z;
+    return light;
+  };
+
+  const bakeCache = (c: RidgeCache, view: View, zBase: number, x0: number, x1: number): void => {
     const t0 = performance.now();
     c.bake(view.palette, zBase, x0, x1, view.dpr, light);
     stats.bakes++;
@@ -202,16 +231,16 @@ export function createBackdrop(scene: Scene): Backdrop {
       ctx.shadowColor = 'rgba(0,0,0,0)';
     } else if (c === treeline) {
       drawWindows(ctx, WINDOWS, TREELINE, warmGlow, view.time);
-    } else if (c === farHills && eyeT >= 0 && eyeArt) {
+    } else if (c === mountains && eyeT >= 0 && eyeArt) {
       eyePose(eyeT, pose);
       const ex = WYRM_EYE_X;
-      const ey = -FAR_HILLS.height(WYRM_EYE_X) + 0.34;
+      const ey = -WYRM_EYE_Y;
       // Look toward the fight (stage center, a little above the ground line).
       cam.parallaxToScreen(p, ex, ey, origin);
       const dx = cam.stageCX - origin.x;
       const dy = cam.anchorFrac * view.height - view.height * 0.08 - origin.y;
       const l = Math.hypot(dx, dy) || 1;
-      drawEye(ctx, pose, ex, ey, dx / l, dy / l, eyeArt, c.crest, view.time);
+      drawEye(ctx, pose, ex, ey, dx / l, dy / l, eyeArt, c.shade, view.time);
     }
     ctx.restore();
   };
@@ -228,9 +257,7 @@ export function createBackdrop(scene: Scene): Backdrop {
   const back: Layer = {
     name: 'backdrop.back',
     visible: true,
-    resize() {
-      for (const c of caches) c.invalidate();
-    },
+    // No resize hook: caches re-bake from need() (coverage/zoom/dpr), the sky is debounced.
     update(view: View) {
       ensureSprites();
       ensureSky(view);
@@ -243,7 +270,8 @@ export function createBackdrop(scene: Scene): Backdrop {
         const p = c.def.p;
         layerRange(view, p, tmp);
         const zBase = cam.refZoom * Math.pow(cam.zoom / cam.refZoom, p);
-        const need = c.need(zBase, tmp.x, tmp.y, view.dpr, view.palette);
+        lightIn(view, p);
+        const need = c.need(zBase, tmp.x, tmp.y, view.dpr, view.palette, light.x);
         if (need === 2 || (need === 1 && optional)) {
           if (need === 1) optional = false;
           bakeCache(c, view, zBase, tmp.x, tmp.y);
@@ -273,8 +301,11 @@ export function createBackdrop(scene: Scene): Backdrop {
       const H = view.height;
       const t = view.time;
       const pal = view.palette;
-      // Sky, and the first stars of dusk overhead.
-      ctx.drawImage(art.sky, 0, 0, W, H);
+      // Sky (with the sun's glow baked in, slid to follow the stage center), and the first stars.
+      sunPos(view, sun);
+      let sx = art.sunX0 - sun.x * (art.w / W);
+      sx = sx < 0 ? 0 : sx > art.extra ? art.extra : sx;
+      ctx.drawImage(art.sky, sx, 0, art.w, art.h, 0, 0, W, H);
       ctx.globalCompositeOperation = 'lighter';
       for (let i = 0; i < STARS; i++) {
         const fy = hash2f(i, 92);
@@ -295,24 +326,18 @@ export function createBackdrop(scene: Scene): Backdrop {
         if (x < 0) x += period;
         ctx.drawImage(b.canvas, x - b.w, b.y, b.w, b.h);
       }
-      // Sun: glow, horizon band, rays, disc.
-      sunPos(view, sun);
-      const G = pal.sun.glowRadius * H;
+      // Sun: god rays (clipped above the ridges, where they show), then the disc.
       const breath = 1 + 0.04 * Math.sin(t * 0.6);
       ctx.globalCompositeOperation = 'lighter';
-      ctx.globalAlpha = 0.5 * breath;
-      ctx.drawImage(art.sunGlow, sun.x - G, sun.y - G, G * 2, G * 2);
-      ctx.globalAlpha = 0.32;
-      ctx.drawImage(art.sunGlow, sun.x - G * 2.4, sun.y - G * 0.32, G * 4.8, G * 0.64);
       ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, W, sun.y + H * 0.08);
+      ctx.clip();
       ctx.translate(sun.x, sun.y);
       const R = H * 1.2;
       ctx.rotate(t * 0.011);
-      ctx.globalAlpha = 0.085 * breath;
+      ctx.globalAlpha = 0.1 * breath;
       ctx.drawImage(rays, -R, -R, R * 2, R * 2);
-      ctx.rotate(-t * 0.026 + 1.3);
-      ctx.globalAlpha = 0.06;
-      ctx.drawImage(rays, -R * 0.8, -R * 0.8, R * 1.6, R * 1.6);
       ctx.restore();
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
@@ -372,6 +397,17 @@ export function createBackdrop(scene: Scene): Backdrop {
     openEye,
     birds: () => ambient.birds(scene.camera.viewW, scene.camera.viewH),
     stats,
+    memMB() {
+      let b = ground.bytes() + fg.bytes();
+      for (let i = 0; i < caches.length; i++) b += caches[i]!.bytes();
+      const cv = (c: HTMLCanvasElement | null): number => (c ? c.width * c.height * 4 : 0);
+      b += cv(rays) + cv(amberGlow) + cv(warmGlow);
+      if (sky) {
+        b += cv(sky.sky) + cv(sky.sun) + cv(sky.sunGlow) + cv(sky.mist);
+        for (const cl of sky.clouds) b += cv(cl.canvas);
+      }
+      return b / (1024 * 1024);
+    },
   };
 
   const dbg = scene.debug;
@@ -379,6 +415,7 @@ export function createBackdrop(scene: Scene): Backdrop {
   dbg.button('open eye', openEye, 'y');
   dbg.button('birds', api.birds);
   dbg.watch('backdrop ms', () => `${stats.backMs.toFixed(2)} + ${stats.frontMs.toFixed(2)}`);
+  dbg.watch('backdrop MB', () => api.memMB().toFixed(1));
   if (dbg.enabled) Object.assign(window, { __backdrop: api });
 
   return api;

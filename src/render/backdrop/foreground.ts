@@ -20,12 +20,12 @@ const PAN = 1.3;
 const SHRINK = 0.3;
 /** Clump spacing in foreground units (m at the base framing). */
 const CELL = 0.24;
-const VARIANTS = 16;
+const VARIANTS = 12;
 /** Sprite extent in clump units (a clump is ~1 unit tall): x in [-HALF_W, HALF_W], y in [-TALL, 0]. */
 const HALF_W = 0.5;
 const TALL = 1.32;
 /** Bake heights (device px for TALL units) of the two levels of detail. */
-const LOD_HI = 520;
+const LOD_HI = 440;
 const LOD_LO = 130;
 
 interface Clump {
@@ -134,6 +134,12 @@ export class Foreground {
       c.lo = bakeClump(pal, v, LOD_LO, c);
       this.clumps.push(c);
     }
+  }
+
+  bytes(): number {
+    let b = 0;
+    for (const c of this.clumps) b += (c.hi.width * c.hi.height + c.lo.width * c.lo.height) * 4;
+    return b;
   }
 
   draw(ctx: CanvasRenderingContext2D, view: View, glow: HTMLCanvasElement): void {
