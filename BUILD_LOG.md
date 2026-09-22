@@ -14,7 +14,14 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 - **In flight (uncommitted in the working tree):**
   - Review of 1.2 (dragon rig, committed 57a9402).
   - WP 1.9b sim fidelity + balance (builder-high): moves weak-spot liveness into core, adds the shopping pause and new targets, casual pacing, the effectText rounding fix and an ARCHITECTURE §4 refresh. Summary below.
-  - Crowd review fixes (1.3): the crowd agent is fixing them. **High:** squad-size changes teleport the whole army (~minute 9); marching archers and back-rank recruits are invisible until they reach their slot. **Medium:** memory 60 MB → ≤ 32 MB typical; hero contact within ~80 ms of the click; swipe/breath reactions synced to the real rig via new optional `DragonView.tailPoint`/`breathReachX` (the dragon agent is adding them). **Low:** stale arrows, per-frame strings, hero canvas cap for M2 zoom-in, squad labels. **Feel:** plume like a parasol, flung knights clump, muddy at 19 px.
+  - WP 1.10 framing and composition (builder-high, owns `director.ts`), from the lead's art pass:
+    - Closer base framing: the hero at ≈ 28–34% of stage height, so the first newt reads at ≥ ~70 px.
+    - Frame the dragon, the hero and the army's front, not the whole army. The army can run off-screen left; the clash point sits at ~40% of stage width.
+    - The dragon's share of stage width ramps from ~25% at 1 m to ~44% at ≥ 10 m.
+    - Evidence: dragon #12 (1.2 m) was a 120×33 px speck at the stage edge because the director framed the whole 7.2 m army.
+  - Art-pass polish, sent to the finished agents:
+    - Juice: the kill burst on small dragons is a blown-out white blob, so scale it with dragon size. Damage numbers looked like broken glyphs; check the text-cache cropping and that fonts are ready before caching.
+    - Backdrop: the mountains read flat and "vector". Make them painterly and let them recede. Re-verify at the closer framing.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
   1. Run `git status`. Uncommitted files belong to the in-flight WPs: `src/render/crowd/` = the 1.3 review fixes; `src/core/`, `src/sim/`, `src/render/dragon/weakspot.ts`, `src/render/fx/tuning.ts`+`index.ts`, `src/ui/effectText.ts` and ARCHITECTURE.md = 1.9b.
   2. For each WP, run `npx tsc --noEmit`, `npx vitest run <folder>`, and look at it in the browser.
@@ -69,6 +76,11 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   4. **Balance:** `hpBase` 20 → 14, heroicExample share 0.015 → 0.0175, then retune until all targets pass.
   5. **UI:** heroicExample shows "1.5%", not "2%".
   6. **Docs:** ARCHITECTURE §4 refresh.
+
+## Art-pass notes not yet routed (lead)
+- **Dragon, 1–3 m (minutes 1–2):** the newt species is very flat and low at these sizes (bounds h 0.34 m at 1.23 m). It needs more presence: raised head, taller posture, a readable silhouette. Send it with the 1.2 review findings.
+- **HUD toasts:** 2–3 lines of plain gold italic text stack in the sky and overlap the title band. They need a subtle dark backing band, at most 2 visible, placed clear of the name/HP bar.
+- **What already looks good:** the title screen is cinematic, the first-kill flow works end to end, and late game (12 m dragon flying in, banner host) looks premium.
 
 ## Open issues and risks
 1. **Performance is unverified end to end.** Each WP measured itself (skeleton 1.2–1.5 ms CPU with 300 stub knights + 1,500 particles; juice stress 60 fps; backdrop ~2 ms back + 1.2 ms front CPU+GPU at DPR 2), but nobody has measured the full stack with the real dragon and crowd. The backdrop agent saw one ~30 fps sample pulled back. Do a clean check on a static build (see Process).
@@ -219,7 +231,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 |---|---|---|---|---|
 | 1.1 Meadow backdrop, palette, eye in the hills | builder-high | `src/render/backdrop/**`, MEADOW values | ✅ accepted after review (1 high + 6 fixed) | aeeee92, b7f2b17 |
 | 1.2 Dragon rig v1 + newt, weak spot, hit test | builder-max | `src/render/dragon/**` | ✅ committed; **review in flight** | 57a9402 |
-| 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ✅ committed; review done, **fixes in flight** | 7376082 |
+| 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ✅ accepted after review (2 high + 7 fixed) | 7376082, 04598dd |
 | 1.4 Juice: presets, numbers, hit-stop, shake, coins, post FX | builder-high | `src/render/fx/**`, `post.ts` | ✅ accepted after review (1 high + 9 fixed) | fd76ef0, 82496a7 |
 | 1.5 Economy core | builder-high | `src/core/**` | ✅ committed; review done, 5 fixes handed to 1.9 | 255c39e |
 | 1.6 HUD, Army/Upgrades panels, title, progressive disclosure | builder-medium | `src/ui/**` | ✅ committed (no formal review) | 825e78f |
@@ -309,3 +321,4 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: 1.3 review: 2 high (squad teleport at 300; invisible marching recruits) + memory, hero timing, rig-synced reactions and feel notes; fixes in flight.
 - 2026-09-22: The user added KICKOFF rule 8 (hand-off between milestones): after the ★ feedback is dealt with, let agents finish, bring BUILD_LOG fully up to date, commit, tell the user, and stop. The next milestone starts in a new session (cd7ef7c).
 - 2026-09-22: 1.2 dragon rig (57a9402): data-driven species rig, newt 0.5 → 40 m, all phases, throat/tail windup weak spots, 60–230 µs/frame. Review launched. WP 1.9b launched.
+- 2026-09-22: Crowd review fixes landed (04598dd): memory 60 → 27 MB typical, no squad teleport, visible recruits, hero contact 72 ms, rig-synced flings. Lead art pass on a static build: title great, first-kill flow works, late game premium; the dragon is too small at the start and in minutes 1–2 (framing). WP 1.10 framing launched; kill-blob/number-glyph notes to juice; mountain polish to backdrop.
