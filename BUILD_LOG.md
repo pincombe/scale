@@ -13,7 +13,6 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - 1.1 backdrop, 1.3 knight crowd, 1.4 juice (+ review fixes), 1.5 economy, 1.6 HUD, 1.7 SFX (+ review fixes), 1.8 text, 1.9 balance sim (+ the five core fixes).
 - **In flight (uncommitted in the working tree):**
   - 1.2 dragon rig (also told: the weak spot must move to the throat during a breath windup; see Open issue 6).
-  - Backdrop review fixes (1.1).
   - Review of 1.3.
 - **If you are a fresh lead in a new session,** the old agents can't be messaged.
   1. Run `git status`. Uncommitted files belong to the in-flight WP: `src/render/dragon/` = 1.2.
@@ -69,7 +68,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 
 ## Open issues and risks
 1. **Performance is unverified end to end.** Each WP measured itself (skeleton 1.2–1.5 ms CPU with 300 stub knights + 1,500 particles; juice stress 60 fps; backdrop ~2 ms back + 1.2 ms front CPU+GPU at DPR 2), but nobody has measured the full stack with the real dragon and crowd. The backdrop agent saw one ~30 fps sample pulled back. Do a clean check on a static build (see Process).
-2. **Canvas memory:** backdrop caches 60–80 MB at DPR 2, crowd sprite sheets ~60 MB (4 LODs), number canvases capped at 8 MB: ~130–150 MB total. Set a budget and check Safari in the perf pass.
+2. **Canvas memory:** backdrop 55 MB at DPR 2 (after fixes), crowd sprite sheets ~60 MB (4 LODs), number canvases capped at 8 MB: ~125 MB total. The crowd review may trim it. Check Safari in the perf pass.
 3. **Size:** 416 KB raw now, against a ~400 KB target and the 1 MB hard fail. M2 adds the zoom, Mountain tier, heraldry and music. If it trends past ~700 KB, look for bloated tables and consider subsetting fonts further.
 4. **Weak spot too generous on small newts:** almost every click crits. The fix was sent to the dragon agent (min radius ~10–12 px, off-center). Verify when 1.2 lands.
 5. **First framing:** the director's base framing puts the hero at 20% of stage height, which makes the first newt only ~50 px on screen. Judge it at the integration pass. The option is a tighter opening framing (`director.heroFrac`) for the first few dragons.
@@ -197,7 +196,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 ### M1: First Blood ★ (in progress)
 | WP | Agent | Owns | Status | Commit |
 |---|---|---|---|---|
-| 1.1 Meadow backdrop, palette, eye in the hills | builder-high | `src/render/backdrop/**`, MEADOW values | ✅ committed; **review in flight** | aeeee92 |
+| 1.1 Meadow backdrop, palette, eye in the hills | builder-high | `src/render/backdrop/**`, MEADOW values | ✅ accepted after review (1 high + 6 fixed) | aeeee92, b7f2b17 |
 | 1.2 Dragon rig v1 + newt, weak spot, hit test | builder-max | `src/render/dragon/**` | ⏳ **in flight** (uncommitted) | — |
 | 1.3 Knight crowd: sprites, formation, hero, reactions, banners | builder-high | `src/render/crowd/**` | ✅ committed; **review in flight** | 7376082 |
 | 1.4 Juice: presets, numbers, hit-stop, shake, coins, post FX | builder-high | `src/render/fx/**`, `post.ts` | ✅ accepted after review (1 high + 9 fixed) | fd76ef0, 82496a7 |
@@ -251,12 +250,7 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
    - **Casual pacing:** apply the reviewer's recommendation (`hpBase` 20 → 14, heroicExample share 0.015 → 0.0175), then retune to all-PASS.
    - **UI fix:** `ui/effectText.ts:23` rounds 1.5% to "2%"; use `Math.round(share*1000)/10`.
    - **Docs:** ARCHITECTURE §4 refresh (save v3, `DragonState.staggers`, `idleAfterEnter` 1.0, click formula, stagger gold 50% then 10%).
-3. ⏳ 1.1 review done; the backdrop agent is fixing it:
-   - **High:** the eye was hidden behind the army and too small. Move it to 35–45% of screen height, center-right, 1.5–2× bigger.
-   - **Medium:** Safari fill (bake the sun glow into the sky, clip the rays, drop the second ray pass).
-   - **Medium:** memory ~128 MB → ≤ 60 MB.
-   - **Low:** stale lighting when the panel opens, the eye schedule not resetting, resize debounce, "saucer" clouds.
-   - **Measured in Chrome:** back layer 0.17 ms CPU + ~1.2 ms GPU; front 0.12 ms + < 0.5 ms. The ~30 fps sample was not the backdrop. **Safari is still unmeasured.**
+3. ✅ 1.1 review fixes landed (b7f2b17). The eye now sits at 39–44% height, 1.75× bigger, on the valley wall right of the sun. Fill is 7.7 → 5.3 screens and canvas memory 128 → 55 MB. **Safari is still unmeasured** (M3/M4 cross-browser pass, or sooner if the user reports it).
 4. **Integration and art-direction pass (lead):**
    - Build statically and play the first 3–4 minutes at 1440×900 against the §2 beats.
    - Take screenshots of each beat.
@@ -290,3 +284,4 @@ None yet: no ★ playtest has happened. Record the user's feedback here verbatim
 - 2026-09-22: 1.8 text (f7d020d), 1.6 HUD (825e78f), 1.1 backdrop (aeeee92) committed. BUILD_LOG rewritten as a resume document (c6fab8c).
 - 2026-09-22: 1.9 sim (bfd6db1): 30/30 targets PASS on juiced runs over 20 seeds (engaged: first kill 2 s, archers 0:56, 1.0/2.3/8.4 m at 1/2/3 min, 29 kills by 3:15, 10.5 attacks seen, clicks 46% of damage; dilation 0.92). `npm test` green again.
 - 2026-09-22: 1.3 crowd (7376082): rim-lit knights at 4 LODs, live hero, march-ins, volleys, flee/ragdoll lanes, cheers, banners with `drawEmblem()` for M2 heraldry; 0.5–0.8 ms/frame at 300 knights.
+- 2026-09-22: 1.1 review: premium look, fast in Chrome (back 0.17 ms CPU + ~1.2 ms GPU); the eye was hidden behind the army. Fixed (b7f2b17): eye above the banner band, fill −31%, memory 128 → 55 MB.
