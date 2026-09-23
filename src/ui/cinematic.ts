@@ -22,13 +22,25 @@ export const RETURN_MS = 650;
 export const LANDING = { headline: 150, scales: 1900, panel: 3100, dock: 4500, coachWait: 10000 } as const;
 
 /** Named one-way signals between UI modules (e.g. 'heraldryLeft': the player moved on from Heraldry). */
-export type LandingSignal = 'heraldryLeft';
+export type LandingSignal = 'heraldryLeft' | 'coachShown' | 'landingEnd';
+
+/** After the "Press 1" coach shows, let it be read before the held toasts start (ms). */
+const COACH_READ_MS = 1400;
+/** A landing never holds toasts longer than this after the UI is back (the coach may not come). */
+const LANDING_MAX_MS = LANDING.dock + LANDING.coachWait + 2500;
+/** A later zoom (no Heraldry coach): the landing is over once the dock has risen. */
+const LANDING_LATER_MS = LANDING.dock + 1200;
 
 export interface Cinematic {
   /** True while the zoom cinematic owns the screen. */
   readonly on: boolean;
   /** Run fn now (after `delayMs`), or once the cinematic is over (after RETURN_MS + `delayMs`). */
   after(fn: () => void, delayMs?: number): void;
+  /**
+   * True from a zoom's switch until its staged landing is over (the dock has risen and, on the first
+   * zoom, the "Press 1" coach has shown): unlock and milestone toasts hold until 'landingEnd'.
+   */
+  readonly landing: boolean;
   /** Raise a signal (listeners run synchronously). */
   signal(name: LandingSignal): void;
   /** Listen for a signal; returns an unsubscribe. */
@@ -56,9 +68,20 @@ export function cinematicOf(scene: Scene, ui: UiRoot): Cinematic {
     for (const { fn, delay } of q) run(fn, RETURN_MS + delay);
   });
   const listeners = new Map<LandingSignal, Set<() => void>>();
+  let landing = false;
+  let landingTimer = 0;
+  const endLanding = (): void => {
+    if (!landing) return;
+    landing = false;
+    window.clearTimeout(landingTimer);
+    c!.signal('landingEnd');
+  };
   c = {
     get on() {
       return live();
+    },
+    get landing() {
+      return landing;
     },
     signal(name) {
       const set = listeners.get(name);
@@ -76,5 +99,22 @@ export function cinematicOf(scene: Scene, ui: UiRoot): Cinematic {
     },
   };
   cache.set(ui, c);
+
+  // The landing: from the switch (under the cinematic) until the "Press 1" coach has been read (the
+  // first zoom) or the dock has risen (later zooms), with a cap either way.
+  const self = c;
+  scene.game.on('zoomSwitch', () => {
+    landing = true;
+    window.clearTimeout(landingTimer);
+    const first = scene.game.state.zoom.count === 1;
+    self.after(() => {
+      landingTimer = window.setTimeout(endLanding, first ? LANDING_MAX_MS : LANDING_LATER_MS);
+    }, 0);
+  });
+  self.listen('coachShown', () => {
+    if (!landing) return;
+    window.clearTimeout(landingTimer);
+    landingTimer = window.setTimeout(endLanding, COACH_READ_MS);
+  });
   return c;
 }

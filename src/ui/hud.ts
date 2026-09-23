@@ -357,17 +357,26 @@ function createHireButton(scene: Scene, ui: UiRoot): void {
 function createToasts(scene: Scene, ui: UiRoot): void {
   const { game } = scene;
   const cine = cinematicOf(scene, ui);
-  // Moments that happen under the zoom cinematic (the switch's unlocks) wait until the HUD is back,
-  // then arrive a beat apart, in order.
-  let pending = 0;
-  const say = (text: string | undefined, kind: 'unlock' | 'upgrade' | 'milestone' | 'info'): void => {
-    if (!text) return;
-    if (!cine.on) {
-      ui.toast(text, kind);
+  // Unlock and milestone toasts that happen during a zoom (the switch's unlocks, the colossus's
+  // first kills) hold until the staged landing is over (cinematic.ts), then arrive one at a time.
+  const held: { text: string; kind: 'unlock' | 'upgrade' | 'milestone' | 'info' }[] = [];
+  let releasing = 0;
+  const release = (): void => {
+    const next = held.shift();
+    if (!next) {
+      releasing = 0;
       return;
     }
-    cine.after(() => ui.toast(text, kind), 400 + 900 * pending++);
-    cine.after(() => (pending = 0), 0);
+    ui.toast(next.text, next.kind);
+    releasing = window.setTimeout(release, 1100);
+  };
+  cine.listen('landingEnd', () => {
+    if (!releasing) release();
+  });
+  const say = (text: string | undefined, kind: 'unlock' | 'upgrade' | 'milestone' | 'info'): void => {
+    if (!text) return;
+    if (cine.on || cine.landing || releasing) held.push({ text, kind });
+    else ui.toast(text, kind);
   };
   game.on('unlock', (e) => {
     // A champion's join line is their one toast (below): no generic unlock toast on top of it. The

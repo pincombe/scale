@@ -166,6 +166,7 @@ export function createAbilities(scene: Scene, ui: UiRoot, dock: HTMLElement): vo
     btn.coach.classList.add('on');
     btn.wrap.classList.add('coached');
     coachTimer = window.setTimeout(endCoach, COACH_MS);
+    cine.signal('coachShown');
   };
 
   const queueCoach = (id: AbilityId): void => {
