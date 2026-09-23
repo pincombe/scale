@@ -116,10 +116,12 @@ describe('the Mountain upgrades', () => {
     s.units.lancer = 1;
     const l = unitDamage(s, 'lancer').toNumber();
     s.upgrades['couchedLances'] = 1;
-    expect(unitDamage(s, 'lancer').toNumber()).toBeCloseTo(l * 2, 9);
+    const couched = BALANCE.upgrades.couchedLances.effect;
+    expect(unitDamage(s, 'lancer').toNumber()).toBeCloseTo(l * (couched.kind === 'unitMult' ? couched.mult : NaN), 9);
     const p = unitPeriod(s, 'lancer');
     s.upgrades['destriers'] = 1;
-    expect(unitPeriod(s, 'lancer')).toBeCloseTo(p * 0.7, 9);
+    const destriers = BALANCE.upgrades.destriers.effect;
+    expect(unitPeriod(s, 'lancer')).toBeCloseTo(p * (destriers.kind === 'periodMult' ? destriers.mult : NaN), 9);
     s.gold = D(0);
   });
 });

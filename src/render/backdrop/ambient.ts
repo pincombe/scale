@@ -173,7 +173,7 @@ export class Ambient {
 }
 
 /** One flock of birds: a loose V of wingbeats, in screen px. */
-class Flock {
+export class Flock {
   private readonly dx = new Float32Array(BIRDS);
   private readonly dy = new Float32Array(BIRDS);
   private readonly phase = new Float32Array(BIRDS);

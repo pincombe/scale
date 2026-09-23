@@ -6,6 +6,13 @@
 import type { Out } from './synth/kit';
 import * as S from './sfxSounds';
 import { startWind } from './synth/ambience';
+import { HEART_DUB, tremorDuration, tremorStrength } from '../render/fx/dread';
+
+/** A tremor exactly as sfx.ts plays it after a kill at gauge `g`. */
+function tremorAt(o: Out, g: number): number {
+  const st = tremorStrength(g);
+  return S.sTremor(o, g, st, tremorDuration(st));
+}
 
 export interface SfxMeter {
   name: string;
@@ -79,10 +86,13 @@ const DEFS: Def[] = [
   { name: 'M2 boss tock (10 s left)', secs: 0.5, play: (o) => S.sBossTick(o, true, 0.6) },
   { name: 'M2 boss escape', secs: 4.5, play: (o) => S.sBossEscape(o, 1) },
   { name: 'M2 boss death', secs: 6, play: (o) => S.sBossDeath(o, 1) },
-  { name: 'M2 tremor 5%', secs: 2, play: (o) => S.sTremor(o, 0.05) },
-  { name: 'M2 tremor 50%', secs: 2.2, play: (o) => S.sTremor(o, 0.5) },
-  { name: 'M2 tremor 100%', secs: 2.5, play: (o) => S.sTremor(o, 1) },
+  { name: 'M2 tremor 5%', secs: 3, play: (o) => tremorAt(o, 0.05) },
+  { name: 'M2 tremor 50%', secs: 3, play: (o) => tremorAt(o, 0.5) },
+  { name: 'M2 tremor 100%', secs: 3.2, play: (o) => tremorAt(o, 1) },
+  { name: 'M2 heartbeat (calm)', secs: 1, play: (o) => S.sHeartbeat(o, 0, HEART_DUB) },
+  { name: 'M2 heartbeat (urgent)', secs: 1, play: (o) => S.sHeartbeat(o, 1, HEART_DUB) },
   { name: 'M2 eye opens', secs: 5, play: (o) => S.sEyeOpen(o, 1) },
+  { name: 'M2 eye repeat (Mountain)', secs: 5, play: (o) => S.sEyeOpen(o, 0.35, false) },
   { name: 'M2 zoom rally horns', secs: 3, play: S.sRallyHorns },
   { name: 'M2 army rush 1.9 s', secs: 3, play: (o) => S.sArmyRush(o, 1.9, 34) },
   { name: 'M2 zoom fusion rise', secs: 1.6, play: (o) => S.sFusionRise(o, 1.2) },

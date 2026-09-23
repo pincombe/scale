@@ -343,6 +343,10 @@ const REBAKE_UP = 1.02;
 const REBAKE_DOWN = 1.32;
 /** Extra layer width baked on each side (fraction of the visible width) to absorb pans. */
 const SLACK = 0.08;
+/** Largest side and area of a baked layer (device px): far above any real framing (a 5K window
+ *  at DPR 2 needs ~6,500 x 1,100), so only a debug camera at an absurd zoom ever hits them. */
+const MAX_BAKE_PX = 8192;
+const MAX_BAKE_AREA = 12e6;
 
 export interface Light {
   /** Sun position in this layer's coordinates. */
@@ -359,7 +363,7 @@ const BRUSH_H = 2.2;
 let brush: HTMLCanvasElement | null = null;
 
 /** Tileable dry-brush texture: light and dark horizontal strokes with fine grain, alpha only. */
-function brushTexture(): HTMLCanvasElement {
+export function brushTexture(): HTMLCanvasElement {
   if (brush) return brush;
   const N = BRUSH_PX;
   const c = makeCanvas(N, N);
@@ -457,6 +461,8 @@ export class RidgeCache {
   canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   bakeZ = 0;
+  /** The zoom the last bake asked for (equals bakeZ unless the size clamp softened it). */
+  private reqZ = 0;
   dpr = 0;
   x0 = 0;
   x1 = 0;
@@ -481,6 +487,17 @@ export class RidgeCache {
     this.palette = null;
   }
 
+  /** Release the backing store (the tier is off screen); the next need() re-bakes. */
+  free(): void {
+    if (this.canvas) {
+      this.canvas.width = 0;
+      this.canvas.height = 0;
+    }
+    this.canvas = null;
+    this.ctx = null;
+    this.palette = null;
+  }
+
   /** Effective bake DPR for a view DPR. */
   bakeDpr(dpr: number): number {
     return Math.min(dpr, this.def.maxDpr ?? dpr);
@@ -493,7 +510,7 @@ export class RidgeCache {
   need(zBase: number, vx0: number, vx1: number, dpr: number, pal: Palette, lightX: number): number {
     if (!this.canvas || this.palette !== pal || this.dpr !== this.bakeDpr(dpr)) return 2;
     if (vx0 < this.x0 || vx1 > this.x1) return 2;
-    if (zBase > this.bakeZ * REBAKE_UP || zBase < this.bakeZ / REBAKE_DOWN) return 1;
+    if (zBase > this.reqZ * REBAKE_UP || zBase < this.reqZ / REBAKE_DOWN) return 1;
     if (Math.abs(lightX - this.lightX) * zBase > SUN_MOVE_PX) return 1;
     return 0;
   }
@@ -519,7 +536,13 @@ export class RidgeCache {
     for (let x = x0; x <= x1; x += 0.04) hMax = Math.max(hMax, def.height(x));
     const top = -Math.min(def.maxH, hMax + def.decoH) - 0.06;
     const bottom = BOTTOM_PX / z;
-    const k = z * dpr;
+    let k = z * dpr;
+    // Extreme camera zooms (a debug camera, a cinematic) must never build a giant canvas: past
+    // MAX_BAKE_PX the bake gets softer instead of bigger. (Never hit at the director's framings.)
+    const big = Math.max((x1 - x0) * k, (bottom - top) * k) / MAX_BAKE_PX;
+    if (big > 1) k /= big;
+    const area = (x1 - x0) * (bottom - top) * k * k;
+    if (area > MAX_BAKE_AREA) k *= Math.sqrt(MAX_BAKE_AREA / area);
     const cw = Math.ceil((x1 - x0) * k);
     const ch = Math.ceil((bottom - top) * k);
     // Exact size (reuse the canvas when it is already within 3%, to avoid reallocating).
@@ -537,6 +560,8 @@ export class RidgeCache {
     ctx.clearRect(0, 0, this.canvas!.width, this.canvas!.height);
     ctx.setTransform(k, 0, 0, k, -x0 * k, -top * k);
 
+    this.x0 = x0;
+    this.x1 = x1;
     this.crest = toneColor(pal, def.tone);
     this.base = mixHex(toneColor(pal, def.baseTone), pal.sky[pal.sky.length - 1]!.color, def.baseSky ?? 0);
     this.rimColor = mixHex(pal.rim, pal.haze, 0.55 * (1 - def.tone));
@@ -622,7 +647,8 @@ export class RidgeCache {
     ctx.globalCompositeOperation = 'source-over';
 
     this.palette = pal;
-    this.bakeZ = z;
+    this.bakeZ = k / dpr;
+    this.reqZ = z;
     this.dpr = dpr;
     this.x0 = x0;
     this.x1 = x1;

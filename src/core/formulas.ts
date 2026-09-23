@@ -75,10 +75,15 @@ export function bossAt(tier: number): number {
   return Math.max(1, Math.round(tierNumber(tier, 'bossAt')));
 }
 
-/** Max HP of the nth dragon of a tier. */
+/**
+ * Max HP of the nth dragon of a tier. Dragon #0 is special: the Meadow's tutorial newt has
+ * `firstHp`; in every later tier it is the colossus's first opponent, with `arrivalHp` of its curve
+ * HP (it falls in a few strikes, then the curve takes over).
+ */
 export function dragonMaxHp(tier: number, index: number): Decimal {
-  if (tier === 0 && index === 0) return D(BALANCE.dragon.firstHp);
-  return fromLog10(hpLog10(index) + Math.log10(tierHpMult(tier)));
+  if (index === 0 && tier === 0) return D(BALANCE.dragon.firstHp);
+  const arrival = index === 0 ? Math.log10(BALANCE.dragon.arrivalHp) : 0;
+  return fromLog10(hpLog10(index) + Math.log10(tierHpMult(tier)) + arrival);
 }
 
 /** Kill reward before gold upgrades. */
@@ -115,9 +120,12 @@ export function dragonSize(tier: number, index: number): number {
   return (b * tierNumber(tier, 'firstSize')) / BALANCE.dragon.sizeAnchors[0]![1];
 }
 
-/** HP of the tier's boss: dragon #bossAt's × BALANCE.boss.hpMult (fixed per tier: an escape doesn't toughen it). */
+/**
+ * HP of the tier's boss: dragon #bossAt's × the tier's `bossHp` (fixed per tier: an escape doesn't
+ * toughen it). Per tier because each boss fight is tuned against its tier's army and clicks.
+ */
 export function bossMaxHp(tier: number): Decimal {
-  return wholeCeil(dragonMaxHp(tier, bossAt(tier)).mul(BALANCE.boss.hpMult));
+  return wholeCeil(dragonMaxHp(tier, bossAt(tier)).mul(tierNumber(tier, 'bossHp')));
 }
 
 /** The boss's kill reward before gold upgrades. */
@@ -150,6 +158,16 @@ export function enterDuration(size: number): number {
 export function dyingDuration(size: number): number {
   const p = BALANCE.phase;
   return p.dyingQuick + (p.dying - p.dyingQuick) * sizeBlend(size);
+}
+
+/** This dragon's entrance (s): a boss takes its own, grander time (BALANCE.boss.enter). */
+export function dragonEnterDuration(d: { size: number; boss: string | null }): number {
+  return d.boss ? BALANCE.boss.enter : enterDuration(d.size);
+}
+
+/** This dragon's death (s): a boss falls for longer (BALANCE.boss.dying). */
+export function dragonDyingDuration(d: { size: number; boss: string | null }): number {
+  return d.boss ? BALANCE.boss.dying : dyingDuration(d.size);
 }
 
 // ---- Upgrades ----

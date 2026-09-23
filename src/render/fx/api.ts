@@ -25,4 +25,10 @@ export interface FxApi {
    * scales the particle count (or the size, for shockwave/flare/glint/slash).
    */
   burst(preset: FxPreset, wx: number, wy: number, intensity?: number): void;
+  /**
+   * M2: the boss fight's heartbeat (the red vignette's pulse). Fires on every "lub" while a boss
+   * fights (and one last time when it escapes), with the urgency 0..1 (the timer's last 10 s), so
+   * audio can thump in sync. Optional so null objects stay valid. Returns an unsubscribe.
+   */
+  onHeartbeat?(fn: (urgency: number) => void): () => void;
 }

@@ -264,7 +264,7 @@ export interface CloudBank {
   x0: number;
 }
 
-interface CloudSpec {
+export interface CloudSpec {
   /** Base line (flat lit underside) as a fraction of view height. */
   y: number;
   /** Width and puff thickness as fractions of view height. */
@@ -342,10 +342,10 @@ function baseClip(spec: CloudSpec, cw: number, base: number, th: number): Path2D
   return clip;
 }
 
-export function bakeClouds(p: Palette, w: number, h: number, dpr: number): CloudBank[] {
+export function bakeClouds(p: Palette, w: number, h: number, dpr: number, specs: readonly CloudSpec[] = CLOUDS): CloudBank[] {
   const banks: CloudBank[] = [];
   const sky: RGB = { r: 0, g: 0, b: 0 };
-  for (const spec of CLOUDS) {
+  for (const spec of specs) {
     const th = spec.thick * h;
     const cw = spec.w * h;
     const ch = th * 4.2;

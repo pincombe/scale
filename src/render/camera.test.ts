@@ -94,3 +94,35 @@ describe('Camera', () => {
     expect(q.y).toBeCloseTo(p.y, 9);
   });
 });
+
+describe('camera sway (WP 2.2: the Wyrm Gauge tremor)', () => {
+  it('rolls up to its amplitude at low frequency, scaled by motionScale, and is off at 0', () => {
+    const c = new Camera();
+    c.setViewport(1440, 900);
+    c.sway = 8;
+    let peak = 0;
+    let maxStep = 0;
+    let prev = 0;
+    for (let i = 0; i < 180; i++) {
+      c.update(1 / 60);
+      peak = Math.max(peak, Math.abs(c.shakeY));
+      if (i > 0) maxStep = Math.max(maxStep, Math.abs(c.shakeY - prev));
+      prev = c.shakeY;
+    }
+    expect(peak).toBeGreaterThan(6);
+    expect(peak).toBeLessThanOrEqual(8.01);
+    // Low frequency: never more than ~2 px per frame at 8 px (no jitter).
+    expect(maxStep).toBeLessThan(2.7);
+    c.motionScale = 0.25;
+    let reduced = 0;
+    for (let i = 0; i < 180; i++) {
+      c.update(1 / 60);
+      reduced = Math.max(reduced, Math.abs(c.shakeY));
+    }
+    expect(reduced).toBeLessThanOrEqual(2.01);
+    c.sway = 0;
+    c.update(1 / 60);
+    expect(c.shakeY).toBe(0);
+    expect(c.shakeX).toBe(0);
+  });
+});

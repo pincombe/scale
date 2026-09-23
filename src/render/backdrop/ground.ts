@@ -243,6 +243,19 @@ export class Ground {
     }
   }
 
+  /** Release every tile (the tier is off screen); the next bake() rebuilds them. */
+  free(): void {
+    for (const c of this.tiles) c.width = c.height = 0;
+    for (const c of this.tuftTiles) c.width = c.height = 0;
+    if (this.fill) this.fill.width = this.fill.height = 0;
+    this.tiles = [];
+    this.tuftTiles = [];
+    this.levelK = [];
+    this.fill = null;
+    this.palette = null;
+    this.baseK = 0;
+  }
+
   bytes(): number {
     let b = this.fill ? this.fill.width * this.fill.height * 4 : 0;
     for (const c of this.tiles) b += c.width * c.height * 4;

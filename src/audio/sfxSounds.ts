@@ -2,7 +2,7 @@
 // reverb send, start time) and returns its end time. sfx.ts plays them live; sfxMeasure.ts renders
 // them offline to meter peak/RMS, so what is measured is exactly what is heard.
 import { crashesFor, expLerp, horsesFor, pentaHz } from './sfxMath';
-import { filterNode, gainNode, noiseHit, pick, rand, thump, toSend, type Out } from './synth/kit';
+import { filterNode, gainNode, noiseHit, pick, rand, softClip, thump, toSend, type Out } from './synth/kit';
 import { bell, clang, coin, ping, shimmer } from './synth/metal';
 import { arrowThud, boom, crumble, emberHiss, fireBreath, inhale, knightLand, twang, whoosh } from './synth/impact';
 import { dizzy, dragonVocal } from './synth/dragonVoice';
@@ -296,22 +296,45 @@ export function sBossDeath(o: Out, size: number): number {
   return Math.max(end, emberHiss(o, fall + 0.8, 1));
 }
 
-/** After an ordinary kill, the ground answers: a tremor scaled by the Wyrm Gauge `g` (0..1). */
-export function sTremor(o: Out, g: number): number {
-  return tremor(o, o.t, g, 0.15, stage(o, 1));
+/**
+ * After an ordinary kill, the ground answers: a tremor scaled by the Wyrm Gauge `g` (0..1), at
+ * the visual tremor's `strength` and length `dur` (render/fx/dread).
+ */
+export function sTremor(o: Out, g: number, strength: number, dur: number): number {
+  return tremor(o, o.t, g, strength, dur, 0.19, stage(o, 1));
+}
+
+/**
+ * The boss fight's heartbeat, under everything: a soft, low "lub-dub" (two saturated sine
+ * thumps ~50 Hz, the dub `dub` s later and softer), a touch louder and tighter as `urgency` (0..1,
+ * the timer's last 10 s) rises. All below ~200 Hz so it never masks a click.
+ */
+export function sHeartbeat(o: Out, urgency: number, dub: number): number {
+  const t = o.t;
+  const u = urgency < 0 ? 0 : urgency > 1 ? 1 : urgency;
+  const out = gainNode(o, 0.024 * (1 + 0.8 * u), o.dest);
+  const lp = filterNode(o, 'lowpass', 190, 0.7, out);
+  const ws = o.ctx.createWaveShaper();
+  ws.curve = softClip(2.5);
+  ws.connect(lp);
+  const tau = 0.1 - 0.03 * u;
+  let end = thump(o, t, 72, 46, 0.07, 1, tau, ws);
+  end = Math.max(end, thump(o, t + dub * (1 - 0.2 * u), 66, 44, 0.06, 0.6, tau * 0.9, ws));
+  return end;
 }
 
 /**
  * The eye in the hills opens: stone grinding far away and a huge, slow growl under it (the
- * dragon voice more than an octave down, heard through a mile of air). `amp` 1 = the first time.
+ * dragon voice more than an octave down, heard through a mile of air). `amp` 1 = the first time;
+ * repeats pass `growl` false (the grind alone, quiet).
  */
-export function sEyeOpen(o: Out, amp: number): number {
+export function sEyeOpen(o: Out, amp: number, growl = true): number {
   const t = o.t;
   const far = filterNode(o, 'lowpass', 700, 0.7, o.dest);
   toSend(o, far);
   const g = gainNode(o, amp * 0.78, far);
   let end = stoneGrind(o, t, 2.8, 0.55, g);
-  end = Math.max(end, dragonVocal({ ...o, dest: g, t: t + 0.35 }, 'growl', 1, 0.75, { pitch: 0.42, formant: 0.55, stretch: 2.6 }));
+  if (growl) end = Math.max(end, dragonVocal({ ...o, dest: g, t: t + 0.35 }, 'growl', 1, 0.75, { pitch: 0.42, formant: 0.55, stretch: 2.6 }));
   return end;
 }
 

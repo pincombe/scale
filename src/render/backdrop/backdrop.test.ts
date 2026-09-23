@@ -1,85 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import {
-  createEyeSchedule,
-  eyeClosed,
-  eyePose,
-  stepEyeSchedule,
-  EYE_DURATION,
-  EYE_FIRST_DELAY,
-  EYE_FIRST_KILLS,
-  EYE_MAX_GAP,
-  EYE_MIN_GAP,
-  type EyePose,
-} from './eyeTimeline';
+import { eyePose, EYE_DURATION, type EyePose } from './eyeTimeline';
 import { breeze, gust, wind } from './wind';
 import { MOUNTAINS } from './ridges';
 
-const K = EYE_FIRST_KILLS;
-
-describe('eye schedule', () => {
-  it(`stays shut before kill #${K}`, () => {
-    const s = createEyeSchedule();
-    for (let t = 0; t < 300; t += 1) expect(stepEyeSchedule(s, K - 1, t, false)).toBe(false);
-  });
-
-  it(`opens shortly after kill #${K}, then every 45-90 s`, () => {
-    const s = createEyeSchedule();
-    expect(stepEyeSchedule(s, K, 100, false)).toBe(false);
-    expect(stepEyeSchedule(s, K, 100 + EYE_FIRST_DELAY - 0.01, false)).toBe(false);
-    expect(stepEyeSchedule(s, K, 100 + EYE_FIRST_DELAY, false)).toBe(true);
-    expect(s.firstShown).toBe(true);
-    // Not again until it has closed and the gap has passed.
-    expect(stepEyeSchedule(s, K + 2, 200, false)).toBe(false);
-    eyeClosed(s, 112, 0.5);
-    const next = 112 + EYE_MIN_GAP + 0.5 * (EYE_MAX_GAP - EYE_MIN_GAP);
-    expect(s.nextAt).toBeCloseTo(next);
-    expect(stepEyeSchedule(s, K + 2, next - 1, false)).toBe(false);
-    expect(stepEyeSchedule(s, K + 2, next, false)).toBe(true);
-  });
-
-  it('a save loaded past the beat still gets its first opening', () => {
-    const s = createEyeSchedule();
-    expect(stepEyeSchedule(s, K + 40, 3, false)).toBe(false);
-    expect(stepEyeSchedule(s, K + 40, 3 + EYE_FIRST_DELAY, false)).toBe(true);
-  });
-
-  it('waits while the eye is already open (manual opening)', () => {
-    const s = createEyeSchedule();
-    stepEyeSchedule(s, K, 0, false);
-    expect(stepEyeSchedule(s, K, 10, true)).toBe(false);
-    expect(stepEyeSchedule(s, K, 11, false)).toBe(true);
-  });
-
-  it('restarts when kills drop (reset game / new tier)', () => {
-    const s = createEyeSchedule();
-    stepEyeSchedule(s, K, 0, false);
-    expect(stepEyeSchedule(s, K, EYE_FIRST_DELAY, false)).toBe(true);
-    eyeClosed(s, 20, 0);
-    expect(stepEyeSchedule(s, 0, 30, false)).toBe(false);
-    expect(s.firstShown).toBe(false);
-    expect(s.nextAt).toBe(Infinity);
-    // No random openings until the beat's kill again.
-    expect(stepEyeSchedule(s, K - 1, 20 + EYE_MAX_GAP + 1, false)).toBe(false);
-    stepEyeSchedule(s, K, 500, false);
-    expect(stepEyeSchedule(s, K, 500 + EYE_FIRST_DELAY, false)).toBe(true);
-  });
-
-  it('a manual opening before the first kill-triggered one schedules nothing', () => {
-    const s = createEyeSchedule();
-    eyeClosed(s, 50, 0.3);
-    expect(s.nextAt).toBe(Infinity);
-  });
-
-  it('keeps gaps within 45-90 s for any random draw', () => {
-    const s = createEyeSchedule();
-    s.firstShown = true;
-    for (const r of [0, 0.25, 1, 1.5, -1]) {
-      eyeClosed(s, 0, r);
-      expect(s.nextAt).toBeGreaterThanOrEqual(EYE_MIN_GAP);
-      expect(s.nextAt).toBeLessThanOrEqual(EYE_MAX_GAP);
-    }
-  });
-});
+// The eye's schedule is tested in eyeTimeline.test.ts (WP 2.2).
 
 describe('eye pose', () => {
   const p: EyePose = { open: 0, look: 0, pupil: 0, glow: 0, awake: 0 };

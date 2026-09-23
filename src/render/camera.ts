@@ -44,6 +44,12 @@ export class Camera {
   shakeFreq = 22;
   /** Global multiplier (settings.reduceMotion sets ~0.25). */
   motionScale = 1;
+  /**
+   * Low-frequency sway (CSS px, peak): a slow rolling ground tremor, unlike trauma's sharp shake.
+   * A level, not an impulse: its owner (render/fx, the Wyrm Gauge's tremors) writes it every frame
+   * (0 = none; 0 while the zoom cinematic flies the camera). Added to the shake, x motionScale.
+   */
+  sway = 0;
 
   // ---- derived after update()/derive() ----
   /** screen = [a c e; b d f] . [wx wy 1] (CSS px, no dpr). */
@@ -64,6 +70,7 @@ export class Camera {
   private punch = 0;
   private punchTarget = 0;
   private shakeT = 0;
+  private swayT = 0;
   private readonly noise = new Noise(0x5ca1e);
   private cos = 1;
   private sin = 0;
@@ -125,6 +132,14 @@ export class Camera {
       this.shakeRot = this.maxRoll * m * this.noise.n1(t + 131.7);
     } else {
       this.shakeX = this.shakeY = this.shakeRot = 0;
+    }
+    // Sway: two incommensurate low sines per axis (peak ~1, 2-3.4 Hz: rolling, never jittery).
+    const sw = this.sway * this.motionScale;
+    if (sw > 0.01) {
+      const t = (this.swayT += realDt) * Math.PI * 2;
+      this.shakeY += sw * (0.62 * Math.sin(t * 3.4) + 0.38 * Math.sin(t * 2.1 + 1.7));
+      this.shakeX += sw * 0.45 * (0.6 * Math.sin(t * 3.1 + 0.4) + 0.4 * Math.sin(t * 1.9 + 2.2));
+      this.shakeRot += (sw / Math.max(1, this.viewH)) * 0.3 * Math.sin(t * 2.3 + 0.9);
     }
 
     this.punch = damp(this.punch, this.punchTarget, 40, realDt);

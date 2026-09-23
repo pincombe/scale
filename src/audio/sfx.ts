@@ -9,7 +9,20 @@ import type { Scene } from '../app/scene';
 import type { Rect, Vec2 } from '../lib/vec';
 import { sel } from '../core';
 import type { ZoomBeat } from '../render/zoom/api';
-import { CoinRun, VoiceLimiter, bossTickInterval, bossTickLevel, panFor, voiceSize, type VoiceCap } from './sfxMath';
+// The fx's dread curves (pure, DOM-free): the rumble shares the camera sway's timing and strength.
+import { HEART_DUB, TREMOR_DELAY, tremorDuration, tremorStrength } from '../render/fx/dread';
+import {
+  AUTO_CAP,
+  CHAMP_CAP,
+  CoinRun,
+  VoiceLimiter,
+  bossTickInterval,
+  bossTickLevel,
+  panFor,
+  untilZoomTime,
+  voiceSize,
+  type VoiceCap,
+} from './sfxMath';
 import type { Out } from './synth/kit';
 import { startWind } from './synth/ambience';
 import * as S from './sfxSounds';
@@ -53,7 +66,8 @@ type Cat =
   | 'champ'
   | 'special'
   | 'seal'
-  | 'scales';
+  | 'scales'
+  | 'heart';
 
 const CAPS: Record<Cat, VoiceCap> = {
   strike: { max: 4, gap: 0.04 },
@@ -84,16 +98,17 @@ const CAPS: Record<Cat, VoiceCap> = {
   cine: { max: 4, gap: 0.1 },
   rush: { max: 1, gap: 0.5 },
   drum: { max: 1, gap: 0.5 },
-  auto: { max: 2, gap: 0.22 },
+  auto: AUTO_CAP,
   arrows: { max: 1, gap: 0.5 },
   rain: { max: 1, gap: 0.5 },
   hooves: { max: 2, gap: 0.6 },
   lance: { max: 1, gap: 0.25 },
   herald: { max: 1, gap: 1 },
-  champ: { max: 1, gap: 0.4 },
+  champ: CHAMP_CAP,
   special: { max: 1, gap: 0.3 },
   seal: { max: 1, gap: 0.12 },
   scales: { max: 1, gap: 0.3 },
+  heart: { max: 2, gap: 0.3 },
 };
 
 /**
@@ -139,6 +154,7 @@ const LEN: Record<Cat, number> = {
   special: 1.2,
   seal: 1.7,
   scales: 1.5,
+  heart: 0.6,
 };
 
 /** Reverb send per category (post-trim). */
@@ -181,6 +197,7 @@ const SEND: Record<Cat, number> = {
   special: 0.6,
   seal: 0.8,
   scales: 1.0,
+  heart: 0,
 };
 
 /**
@@ -212,7 +229,7 @@ const NODE_FACTORIES = [
 ] as const;
 
 /** Categories where a full cap steals the most-decayed voice instead of dropping the new one. */
-const STEAL: Partial<Record<Cat, true>> = { strike: true, ping: true, coin: true, buy: true };
+const STEAL: Partial<Record<Cat, true>> = { strike: true, ping: true, coin: true, buy: true, auto: true };
 
 /** A playing sound: its limiter slot and the handles needed to choke and release it. */
 interface Voice {
@@ -270,14 +287,16 @@ class Sfx {
   private hookedZoom: unknown = null;
   private unhookZoom: (() => void) | null = null;
   private hookedBackdrop: unknown = null;
+  private hookedHeart: unknown = null;
+  private unhookHeart: (() => void) | null = null;
   private unhookEye: (() => void) | null = null;
   /** Audio time of the last boss-clock tick (-Infinity while the clock isn't in its last 10 s). */
   private lastTick = -Infinity;
+  /** The last scheduled tick (up to ~120 ms ahead): choked if the boss dies or leaves first. */
+  private tickVoice: Voice | null = null;
   private tickCount = 0;
   /** Audio time of the zoom's reveal (the world wyrm's eye opening is part of it: no extra growl). */
   private lastReveal = -Infinity;
-  /** Between zoomBegin and zoomEnd (the resync at the switch lands inside). */
-  private inZoom = false;
   /** Tier whose eye already opened once (later looks, like the Mountain wyrm's, are softer). */
   private eyeTier = -1;
   /** The voice holding each limiter slot (for stealing). */
@@ -398,6 +417,7 @@ class Sfx {
           this.play('stagger', pan, S.sStagger, 0.06);
           break;
         case 'dying':
+          this.chokeTick();
           this.choke(this.windup, 0.06);
           this.choke(this.fire, 0.15);
           this.windup = null;
@@ -407,6 +427,7 @@ class Sfx {
           break;
         case 'leave':
           // An escaping boss (or a dragon leaving for a zoom) swallows its breath as it turns away.
+          this.chokeTick();
           this.choke(this.windup, 0.08);
           this.choke(this.fire, 0.2);
           this.windup = null;
@@ -425,7 +446,9 @@ class Sfx {
       const st = game.state;
       if (!st.dragon.boss && !st.wyrm.cleared) {
         const g = sel.gauge(st);
-        this.play('tremor', 0.15, (o) => S.sTremor(o, g), 0.45);
+        const strength = tremorStrength(g);
+        const dur = tremorDuration(strength);
+        this.play('tremor', 0.15, (o) => S.sTremor(o, g, strength, dur), TREMOR_DELAY);
       }
       // Fallback: if no coin reaches the counter soon, play a short rising cascade anyway.
       window.clearTimeout(this.fallbackTimer);
@@ -463,7 +486,7 @@ class Sfx {
     game.on('resync', () => {
       window.clearTimeout(this.fallbackTimer);
       // A zoom's switch resyncs mid-cinematic: its own sounds ride through; the old world's stop.
-      const zooming = this.inZoom || game.state.zoom.stage !== null || scene.zoom.active;
+      const zooming = game.state.zoom.stage !== null || scene.zoom.active;
       for (const [cat, held] of this.slots) {
         if (zooming && THROUGH_ZOOM[cat]) continue;
         for (const v of held) if (v) this.release(v);
@@ -491,11 +514,7 @@ class Sfx {
     const scene = this.scene;
     const game = scene.game;
 
-    game.on('zoomBegin', () => {
-      this.inZoom = true;
-      this.hookScene();
-    });
-    game.on('zoomEnd', () => (this.inZoom = false));
+    game.on('zoomBegin', () => this.hookScene());
 
     game.on('bossSummon', () => {
       this.hookScene();
@@ -532,7 +551,13 @@ class Sfx {
     });
 
     game.on('scalesGain', () => {
-      this.play('scales', 0, S.sScales, 0.05);
+      // Paid at the zoom's switch, under the flash and the music's hit: let it glint ~1 s into
+      // the pull-back instead, where the air is clear. Outside a zoom (debug), at once.
+      const zoom = scene.zoom;
+      const zooming = game.state.zoom.stage !== null || zoom.active;
+      const bt = zoom.beatTimes;
+      const delay = zooming ? untilZoomTime(bt ? bt.pullback + 1 : undefined, zoom.time, 1.2, 0.05, 4) : 0.05;
+      this.play('scales', 0, S.sScales, delay);
     });
 
     this.hookScene();
@@ -545,6 +570,13 @@ class Sfx {
       this.unhookZoom?.();
       this.hookedZoom = zoom;
       this.unhookZoom = zoom.onBeat((b) => this.onBeat(b));
+    }
+    const fx = this.scene.fx;
+    if (fx && fx !== this.hookedHeart && typeof fx.onHeartbeat === 'function') {
+      this.unhookHeart?.();
+      this.hookedHeart = fx;
+      // The red vignette's pulse: a soft lub-dub under the fight, quickening with it.
+      this.unhookHeart = fx.onHeartbeat((u) => this.play('heart', 0, (o) => S.sHeartbeat(o, u, HEART_DUB)));
     }
     const bd = this.scene.backdrop;
     if (bd && bd !== this.hookedBackdrop && typeof bd.onEyeOpen === 'function') {
@@ -567,7 +599,9 @@ class Sfx {
         this.play('rush', -0.3, (o) => S.sArmyRush(o, 1.9, 34), 0.15);
         break;
       case 'fusion': {
-        const dur = span('fusion', 'flash', 1.2);
+        // Ends exactly on the flash, measured on the cinematic's own clock (the beat can fire a frame late).
+        const z = this.scene.zoom;
+        const dur = untilZoomTime(bt?.flash, z.time, span('fusion', 'flash', 1.2), 0.3, 2.4);
         this.play('cine', 0, (o) => S.sFusionRise(o, dur));
         break;
       }
@@ -599,10 +633,15 @@ class Sfx {
     const now = this.now();
     // Inside the zoom the reveal's rumble and roar speak for the world wyrm.
     if (this.scene.zoom.active || now - this.lastReveal < 6) return;
-    const tier = this.scene.game.state.tier;
-    const amp = tier === this.eyeTier ? 0.55 : 1;
+    // While a boss is up the eye watches the fight: the horn, the footfalls and the clock speak.
+    const st = this.scene.game.state;
+    if (st.dragon.boss && st.dragon.phase !== 'dying' && st.dragon.phase !== 'leave') return;
+    const tier = st.tier;
+    // The first look per tier is the event; later ones (the Mountain wyrm's drowsy looks) are a
+    // quiet stone grind at the ambience's level, no growl.
+    const first = tier !== this.eyeTier;
     this.eyeTier = tier;
-    this.play('eye', 0.25, (o) => S.sEyeOpen(o, amp));
+    this.play('eye', 0.25, (o) => S.sEyeOpen(o, first ? 1 : 0.35, first));
   }
 
   /** The boss clock: in its last 10 s a wooden tick, speeding up (scheduled ~120 ms ahead). */
@@ -620,7 +659,14 @@ class Sfx {
     this.lastTick = at;
     const tock = this.tickCount++ % 2 === 1;
     const level = bossTickLevel(left);
-    this.play('tick', 0.2, (o) => S.sBossTick(o, tock, level), at - now - 0.004);
+    this.tickVoice = this.play('tick', 0.2, (o) => S.sBossTick(o, tock, level), at - now - 0.004);
+  }
+
+  /** Silence a boss-clock tick still scheduled ahead (the fight just ended). */
+  private chokeTick(): void {
+    this.choke(this.tickVoice, 0.005);
+    this.tickVoice = null;
+    this.lastTick = -Infinity;
   }
 
   private panDragon(): number {
@@ -906,7 +952,14 @@ class Sfx {
     });
     dbg.button('boss escape', () => this.play('roar', 0.3, (o) => S.sBossEscape(o, 1)));
     dbg.button('boss death', () => this.play('roar', 0.2, (o) => S.sBossDeath(o, 1)));
-    for (const g of [0.1, 0.5, 1]) dbg.button(`tremor ${g * 100}%`, () => this.play('tremor', 0.15, (o) => S.sTremor(o, g)));
+    for (const g of [0.1, 0.5, 1]) {
+      const st = tremorStrength(g);
+      dbg.button(`tremor ${g * 100}%`, () => this.play('tremor', 0.15, (o) => S.sTremor(o, g, st, tremorDuration(st))));
+    }
+    dbg.button('heartbeat calm/urgent', () => {
+      for (let i = 0; i < 4; i++) later(i * 1.15, () => this.play('heart', 0, (o) => S.sHeartbeat(o, 0, HEART_DUB)));
+      for (let i = 0; i < 8; i++) later(4.6 + i * 0.5, () => this.play('heart', 0, (o) => S.sHeartbeat(o, 1, HEART_DUB)));
+    });
     dbg.button('eye opens', () => this.play('eye', 0.25, (o) => S.sEyeOpen(o, 1)));
     dbg.button('zoom beats (nominal)', () => {
       const beats: [ZoomBeat, number][] = [

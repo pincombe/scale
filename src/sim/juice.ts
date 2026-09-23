@@ -5,9 +5,12 @@
 //   strike handler:  on a crit, if (wall clock - last crit >= CRIT_STOP_GAP)
 //                    hitStop(stagger ? STAGGER_HIT_STOP : CRIT_HIT_STOP); every crit resets the clock
 //   dragonDeath:     hitStop(KILL_HIT_STOP); slowMo(KILL_SLOW_MO, KILL_SLOW_MO_DUR)
+//   bossDefeated:    hitStop(BOSS_HIT_STOP); slowMo(BOSS_SLOW_MO, BOSS_SLOW_MO_DUR)   (fx/boss.ts, same
+//                    drain as the boss's dragonDeath: the hit-stops max-merge, the slower slow-mo wins)
+// The boss's arrival, engage and urgency add no time effects (they would eat the boss's timer).
 // TimeDirector itself caps a hit-stop at 0.12 s and ignores one within 0.3 s of the previous one.
 import { TimeDirector } from '../app/time';
-import { CRIT_HIT_STOP, CRIT_STOP_GAP, KILL_HIT_STOP, KILL_SLOW_MO, KILL_SLOW_MO_DUR, STAGGER_HIT_STOP } from '../render/fx/tuning';
+import { BOSS_HIT_STOP, BOSS_SLOW_MO, BOSS_SLOW_MO_DUR, CRIT_HIT_STOP, CRIT_STOP_GAP, KILL_HIT_STOP, KILL_SLOW_MO, KILL_SLOW_MO_DUR, STAGGER_HIT_STOP } from '../render/fx/tuning';
 import type { GameEvent } from '../core';
 
 /** The fx layer's time effects (wall s), as the sim applies them. */
@@ -17,6 +20,13 @@ export const JUICE = {
   killHitStop: KILL_HIT_STOP,
   killSlowMo: KILL_SLOW_MO,
   killSlowMoDur: KILL_SLOW_MO_DUR,
+} as const;
+
+/** The boss's fall (fx/boss.ts), kept apart from JUICE so M1's checks of it stay as they were. */
+export const BOSS_JUICE = {
+  hitStop: BOSS_HIT_STOP,
+  slowMo: BOSS_SLOW_MO,
+  slowMoDur: BOSS_SLOW_MO_DUR,
 } as const;
 
 /**
@@ -49,6 +59,9 @@ export class JuiceClock {
     } else if (e.type === 'dragonDeath') {
       this.time.hitStop(JUICE.killHitStop);
       this.time.slowMo(JUICE.killSlowMo, JUICE.killSlowMoDur);
+    } else if (e.type === 'bossDefeated') {
+      this.time.hitStop(BOSS_JUICE.hitStop);
+      this.time.slowMo(BOSS_JUICE.slowMo, BOSS_JUICE.slowMoDur);
     }
   }
 }

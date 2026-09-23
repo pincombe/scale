@@ -138,6 +138,16 @@ export class Foreground {
     }
   }
 
+  /** Release the clump sprites (the tier is off screen); the next draw re-bakes them. */
+  free(): void {
+    for (const c of this.clumps) {
+      c.hi.width = c.hi.height = 0;
+      c.lo.width = c.lo.height = 0;
+    }
+    this.clumps = [];
+    this.palette = null;
+  }
+
   bytes(): number {
     let b = 0;
     for (const c of this.clumps) b += (c.hi.width * c.hi.height + c.lo.width * c.lo.height) * 4;

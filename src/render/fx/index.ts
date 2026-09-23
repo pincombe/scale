@@ -22,6 +22,8 @@
 //
 // ---- Reactions ----
 //   strike       sparks, flare, slash streak across the impact, click number, tiny shake + zoom punch
+//     auto       (M2: Rally's auto-strikes, no impact point from core) small sparks on impactPoint(),
+//                  every other one a small slash, merged into the live click number, no punch
 //     crit       + white-gold sparks, glint, double shockwave, X-slash, a big gold number that slams
 //                  in (rapid crits merge into it), kick (chromatic split). A decaying "crit heat"
 //                  damps the kick and shake of a crit spree, and hit-stop (70 ms) only lands on the
@@ -42,6 +44,11 @@
 //   goldGain     (stagger) a few coins from the weak spot + gold number
 //   milestone / unlock(unit) / purchase(upgrade)   gold shimmer and light shafts rising over the army
 //                  (merged: one shimmer per frame however many events a purchase emits)
+//
+// Boss and gauge dread (./boss.ts, curves in ./dread.ts): tremors after every kill scaled by the
+// Wyrm Gauge; the boss's darkened sky (post.grade, painted at the end of backdrop.back through
+// BackdropApi.setGrade, so the dragon, army, sparks and weak spot keep full strength), red heartbeat
+// vignette, engage kick and push, urgency, grand fall and escape.
 //
 // Coach mark (./coach.ts, when: ./coachTimeline.ts): the ring + label at the live weak spot that
 // teaches the ×5 crit and then the stagger; drawn in fx.text under the numbers.
@@ -65,6 +72,7 @@ import { rect, vec2 } from '../../lib/vec';
 import { KNIGHT_HEIGHT } from '../world';
 import { buildPresets, type Presets } from './presets';
 import { createCoach } from './coach';
+import { createBossFx } from './boss';
 import { MICROCOPY, weakMult } from '../../core';
 import { fxSprites } from './sprites';
 import { NK_ARMY, NK_CALLOUT, NK_CLICK, NK_CRIT, NK_GOLD, NK_REWARD, NumberPool } from './numbers';
@@ -173,6 +181,11 @@ export function createFx(scene: Scene): FxRender {
   const screen = (): ParticleSystem => scene.particles.screen;
 
   const updateEmitters = (dt: number): void => {
+    // The zoom cinematic flies the camera: emitters sized for the old framing would read as blobs.
+    if (scene.zoom.active) {
+      eActive.fill(0);
+      return;
+    }
     if (dt <= 0) return;
     const w = world();
     const k = 1 / camera.zoomEff;
@@ -223,6 +236,19 @@ export function createFx(scene: Scene): FxRender {
   };
 
   let slashFlip = false;
+
+  /** Add trauma, but never push it past `cap` (sprees saturate instead of escalating). */
+  const shake = (t: number, cap: number): void => {
+    const room = cap - camera.trauma;
+    if (room > 0) camera.addTrauma(t < room ? t : room);
+  };
+
+  const boss = createBossFx(scene, {
+    post,
+    presets: P,
+    emitBody: (spec, rate, seconds, scale) => emit(spec, EM_BODY, 0, 0, 0, 0, rate, seconds, scale),
+    shake,
+  });
 
   const coach = createCoach(scene);
   let captionText = '';
@@ -288,12 +314,6 @@ export function createFx(scene: Scene): FxRender {
     }
   };
 
-  /** Add trauma, but never push it past `cap` (sprees saturate instead of escalating). */
-  const shake = (t: number, cap: number): void => {
-    const room = cap - camera.trauma;
-    if (room > 0) camera.addTrauma(t < room ? t : room);
-  };
-
   // ---- crit heat: a spree of crits damps kick/shake and skips hit-stop ----
   let critHeat = 0;
   let lastCrit = -10;
@@ -319,7 +339,28 @@ export function createFx(scene: Scene): FxRender {
   // ---- event reactions ----
   const frac = (damage: Decimal): number => damageFrac(damage, game.state.dragon.maxHp);
 
+  // Rally's auto-strikes (M2: ~8/s, x = y = 0 from core): a light flurry on the body, never a pile
+  // of numbers (they merge into the live click number), no punch, a whisper of shake.
+  let autoFlip = 0;
+  const autoStrike = (damage: Decimal): void => {
+    const p = P();
+    const w = world();
+    const k = 1 / camera.zoomEff;
+    scene.dragon.impactPoint(tmp);
+    w.burst(p.sparkSmall, tmp.x, tmp.y, 4, -Math.PI / 2, k);
+    w.burst(p.flare, tmp.x, tmp.y, 1, 0, k * 0.55);
+    autoFlip = (autoFlip + 1) & 3;
+    if (autoFlip === 0 || autoFlip === 2) slash(tmp.x, tmp.y, (autoFlip === 0 ? -0.5 : 0.5 + Math.PI) + (Math.random() - 0.5) * 0.5, k, 0.7);
+    numberAnchor(tmp.x, tmp.y, 30);
+    numbers.click(tmp2.x, tmp2.y, damage);
+    shake(hitTrauma(frac(damage), 'army'), 0.3);
+  };
+
   game.on('strike', (e) => {
+    if (e.auto) {
+      autoStrike(e.damage);
+      return;
+    }
     const p = P();
     const w = world();
     const k = 1 / camera.zoomEff;
@@ -421,8 +462,11 @@ export function createFx(scene: Scene): FxRender {
 
     w.burst(p.bloom, cx, cy, 1, 0, k * (0.24 + 1.0 * m));
     if (m > 0.3) w.burst(p.glint, cx, cy, 1, 0, k * (0.6 + 0.8 * m));
-    ring(cx, cy, k, 0.7 + 1.3 * m, 0.4);
-    if (m > 0.25) ring(cx, cy, k, 1.6 + 2 * m, 0.8);
+    // A boss's shockwaves are its own (./boss.ts: softer as they grow, sized to the corpse).
+    if (!game.state.dragon.boss) {
+      ring(cx, cy, k, 0.7 + 1.3 * m, 0.4);
+      if (m > 0.25) ring(cx, cy, k, 1.6 + 2 * m, 0.8);
+    }
     const embers = Math.round(20 + 40 * m);
     for (let j = 0; j < embers; j++) {
       scene.dragon.impactPoint(tmp);
@@ -579,6 +623,7 @@ export function createFx(scene: Scene): FxRender {
       };
     },
     burst,
+    onHeartbeat: (fn) => boss.onHeartbeat(fn),
   };
 
   // ---- debug ----
@@ -599,10 +644,16 @@ export function createFx(scene: Scene): FxRender {
     const p = d.weakSpot(tmp) ?? d.headPoint(tmp);
     game.dispatch({ type: 'strike', weak: true, aimed: true, x: p.x, y: p.y });
   });
+  dbg.watch('dread', () => boss.status());
+  dbg.button('tremor 10%', () => boss.tremor(0.02));
+  dbg.button('tremor 50%', () => boss.tremor(0.29));
+  dbg.button('tremor 90%', () => boss.tremor(0.83));
   dbg.button('milestone fx', () => {
     armyShimmer(1);
     post.flash(scene.palette.accent.gold, 0.08, 0.35);
   });
+
+  let gradeHooked = false;
 
   // ---- the fx.text layer ----
   const text: Layer = {
@@ -611,6 +662,13 @@ export function createFx(scene: Scene): FxRender {
     update(v: View) {
       clock += v.realDt;
       coach.update(v);
+      boss.update(v);
+      // The boss's darkened sky paints over the backdrop's own art only (read lazily: the backdrop
+      // is wired after fx).
+      if (!gradeHooked && scene.backdrop.setGrade) {
+        scene.backdrop.setGrade(post.grade);
+        gradeHooked = true;
+      }
       numbers.setDpr(v.dpr);
       numbers.update(v.realDt);
       updateEmitters(v.dt);

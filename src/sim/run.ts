@@ -1,5 +1,6 @@
-// Balance simulator CLI (WP 1.9). Plays the real core with three bot profiles over many seeds,
-// prints a pacing table (median and worst seed), then PASS/FAIL per M1 target. Exits 1 on a FAIL.
+// Balance simulator CLI (WP 1.9; M2 pacing: WP 2.7). Plays the real core with four bot profiles
+// over many seeds, through the Meadow, the first zoom and the Mountain to Grimmaw, prints a pacing
+// table (median and worst seed), then PASS/FAIL per target (targets.ts). Exits 1 on a FAIL.
 //
 //   npm run sim                                         all profiles, 20 seeds, table + targets
 //   npm run sim -- --seeds 50                           more seeds

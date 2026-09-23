@@ -1,4 +1,5 @@
-// BALANCE: every tunable economy number in one place. The balance sim (WP 1.9) tunes this file.
+// BALANCE: every tunable economy number in one place. The balance sim (WP 1.9, M2 pacing: WP 2.7)
+// tunes this file: `npm run sim` checks the pacing it produces (src/sim/targets.ts).
 // Formulas that read it live in core/formulas.ts; content/index.ts merges it with text.ts.
 // Units: seconds, meters, gold. Economy values are plain numbers here and become Decimals in
 // formulas.ts (they are small; growth is what makes them huge).
@@ -67,6 +68,8 @@ export interface TierBalance {
   firstSize: number;
   /** Scales the zoom out of this tier pays, before pushing past the boss. */
   scales: number;
+  /** The tier's boss has dragon #bossAt's HP × this. */
+  bossHp: number;
 }
 
 /** What one level of a heraldic charge does (UI writes the effect line from this). */
@@ -125,6 +128,7 @@ export interface Balance {
   dragon: {
     firstHp: number;
     firstGold: number;
+    arrivalHp: number;
     hpBase: number;
     hpGrowthEarly: number;
     hpGrowthLate: number;
@@ -134,7 +138,7 @@ export interface Balance {
     sizeGrowthAfter: number;
   };
   tiers: TierBalance[];
-  boss: { hpMult: number; goldMult: number; sizeMult: number; timer: number; escapeCharge: number };
+  boss: { goldMult: number; sizeMult: number; timer: number; escapeCharge: number; enter: number; dying: number };
   zoom: { pushScales: number; fusionPerSqrtUnit: number; heightExp: number };
   heraldry: Record<ChargeId, ChargeBalance>;
   abilities: Record<AbilityId, AbilityBalance> & {
@@ -180,6 +184,12 @@ export const BALANCE: Balance = {
     firstHp: 10,
     firstGold: 10,
     /**
+     * Dragon #0 of every tier after the Meadow (the colossus's first opponent, right after the zoom)
+     * has this share of its curve HP, so the colossus fells it in a few seconds (its gold stays on
+     * the curve: the first purse rebuilds the army).
+     */
+    arrivalHp: 0.6,
+    /**
      * HP curve for dragons #1+ (and #0 of later tiers). Each dragon has `growth` × the previous
      * one's HP, where growth fades from hpGrowthEarly to hpGrowthLate over ~hpGrowthFade kills:
      * steep while clicks and first upgrades carry the player, steady once the army does.
@@ -201,34 +211,44 @@ export const BALANCE: Balance = {
   },
 
   /**
-   * Per tier (tiers past the table extrapolate each number geometrically from the last two). WP 2.0
-   * first values, tuned by WP 2.7:
-   * - The Meadow's boss comes after 30 kills (engaged ~3:05, just after the 3:00 size check).
-   * - The Mountain is the Meadow scaled: HP ×150, gold and costs ×60, so what the player buys
-   *   there is 2.5× weaker against the dragons than in the Meadow, which the upgrades they keep, the
-   *   Fusion Bonus, heraldry, abilities and champions make up for. Its dragon #0 is 1.8 m of world
-   *   (a knight's height: 200 m on the display) and grows ×1.12 per dragon like the newts.
+   * Per tier (tiers past the table extrapolate each number geometrically from the last two). Tuned
+   * by WP 2.7 (sim, 20 seeds, juiced, median):
+   * - The Meadow's boss comes after 30 kills (engaged 3:06, just after the 3:00 size check); the
+   *   Elder Newt has dragon #30's HP ×1.4: engaged fight 8.6 s (summon → kill, incl. its 2.6 s
+   *   entrance), casual ~15 s; the first zoom begins at 3:19 (casual 4:57, worst 5:17).
+   * - The Mountain: HP ×100, gold ×60, costs ×45, so what the player buys there is ~1.7× weaker
+   *   against the dragons than in the Meadow, which the upgrades they keep, the Fusion Bonus,
+   *   heraldry, abilities and champions make up for; its army upgrades (pikeWall, yewLongbows,
+   *   couchedLances) are strong so the army rebuilds fast and matters (engaged: 20 units 51 s after
+   *   the zoom; clicks 52% / army ~33% / champions 15% of the Mountain's damage). Dragon #0 is 1.8 m
+   *   of world (a knight: 200 m on the display) and grows ×1.12 per dragon like the newts. Its gauge
+   *   fills at 31 kills and Grimmaw has dragon #31's HP ×1.3 (about #30's ×1.6): engaged summons it
+   *   at 7:14 and beats it at 7:27 in a 12 s fight; casual beats it at ~12:00, nonAimer ~11:20.
    * - Scales: the first zoom pays 6 (three first-level charges); the Mountain's zoom 24.
+   * The boss fights are the tightest numbers here: an engaged fight ≥ 12 s and a slow player's
+   * worst fight (every ability on cooldown) ≤ ~27 s (the 30 s dead-end check) leave ~1 s of room.
    */
   tiers: [
-    { bossAt: 30, baseHeight: 1.8, hpMult: 1, goldMult: 1, costMult: 1, firstSize: 0.5, scales: 6 },
-    { bossAt: 30, baseHeight: 200, hpMult: 150, goldMult: 60, costMult: 60, firstSize: 1.8, scales: 24 },
+    { bossAt: 30, baseHeight: 1.8, hpMult: 1, goldMult: 1, costMult: 1, firstSize: 0.5, scales: 6, bossHp: 1.4 },
+    { bossAt: 31, baseHeight: 200, hpMult: 100, goldMult: 60, costMult: 45, firstSize: 1.8, scales: 24, bossHp: 1.3 },
   ],
 
   /**
-   * The tier's boss (the Wyrm Gauge's payoff). HP and gold are those of the tier's dragon #bossAt ×
-   * these, fixed per tier; its size is the current dragon's × sizeMult. The timer (s) runs only
-   * while it can be hit; on timeout the gauge drops back to escapeCharge × bossAt and the refill
-   * replays the dragons leading up to the boss (the same indices), so a retry is never harder than
-   * the first approach and the army has grown meanwhile: no dead end.
+   * The tier's boss (the Wyrm Gauge's payoff). HP is the tier's dragon #bossAt's × the tier's
+   * `bossHp`, gold its × goldMult, both fixed per tier; its size is the current dragon's × sizeMult.
+   * It takes `enter` s to arrive and `dying` s to fall (grander than a dragon's 1.6 s; the first
+   * zoom begins when the fall ends). The timer (s) runs only while it can be hit (not during the
+   * entrance); on timeout the gauge drops back to escapeCharge × bossAt and the refill replays the
+   * dragons leading up to the boss (the same indices), so a retry is never harder than the first
+   * approach and the army has grown meanwhile: no dead end.
    */
-  boss: { hpMult: 2, goldMult: 4, sizeMult: 1.5, timer: 30, escapeCharge: 0.75 },
+  boss: { goldMult: 4, sizeMult: 1.5, timer: 30, escapeCharge: 0.75, enter: 2.6, dying: 3.0 },
 
   /**
    * The zoom's reward. Scales = the tier's `scales` × pushScales^(kills since the boss fell),
    * rounded down. Fusion Bonus = 1 + fusionPerSqrtUnit × √(units fused) × Crown; an engaged
-   * player's ~90 units at the Elder Newt give ~×1.9. Height = the next tier's baseHeight ×
-   * fusion^heightExp (×1.9 → 220 m).
+   * player's ~120 units at the Elder Newt give ~×2.1. Height = the next tier's baseHeight ×
+   * fusion^heightExp (×2.1 → 224 m).
    */
   zoom: { pushScales: 1.15, fusionPerSqrtUnit: 0.1, heightExp: 0.15 },
 
@@ -245,17 +265,19 @@ export const BALANCE: Balance = {
   /**
    * Abilities (keys 1-3). Charge!: army and champion damage × chargeMult for `dur` s. Rally:
    * rallyRate auto-strikes/s at plain click damage for `dur` s. Dragonbane Volley: one volley of
-   * volleySeconds × army DPS (at least volleyMinClicks plain clicks/s' worth, so it hits even with
-   * no army), landing volleyFlight s later. Charge and Rally unlock on arriving in the Mountain,
-   * the Volley at its 10th kill.
+   * volleySeconds × (army + champion) DPS (at least volleyMinClicks plain clicks/s' worth, so it
+   * hits even with no army), landing volleyFlight s later. Charge and Rally unlock on arriving in
+   * the Mountain, the Volley at its 10th kill (engaged 4:38). Charge! is a short, frequent ×3 (6 s
+   * every 45 s) and the Volley 10 s of damage, so a boss fight isn't decided by whether a burst
+   * happens to be ready when it arrives (a 10 s Charge! halved the fight when it lined up).
    */
   abilities: {
-    charge: { dur: 10, cooldown: 60, unlock: { stat: 'kills', at: 0, tier: 1 } },
+    charge: { dur: 6, cooldown: 45, unlock: { stat: 'kills', at: 0, tier: 1 } },
     rally: { dur: 8, cooldown: 75, unlock: { stat: 'kills', at: 0, tier: 1 } },
-    volley: { dur: 0, cooldown: 120, unlock: { stat: 'kills', at: 10, tier: 1 } },
+    volley: { dur: 0, cooldown: 90, unlock: { stat: 'kills', at: 10, tier: 1 } },
     chargeMult: 3,
     rallyRate: 8,
-    volleySeconds: 25,
+    volleySeconds: 10,
     volleyMinClicks: 5,
     volleyArrows: 60,
     volleyFlight: 1.1,
@@ -265,14 +287,17 @@ export const BALANCE: Balance = {
    * Champions join by themselves (level 1, free) and persist through zooms. A blow lands on every
    * footman melee beat (with or without footmen) and a special every specialEvery s; both deal a
    * share of the current dragon's max HP (× stagger ×2 and Charge! ×3 when they land; the Fusion
-   * Bonus and Lion don't apply). Aldric at level 1: blows 0.4%, specials 2%; mastered (level 15):
-   * 1.2% and 6%. An engaged player's champion does ~8-15% of the damage in each tier. Levels cost
-   * gold (baseCost × tier costMult × costGrowth^(level-1)). Ser Aldric joins at the Meadow's 20th
-   * kill (~2:00 engaged), Dame Brunhild at the Mountain's 12th.
+   * Bonus and Lion don't apply). Aldric at level 1: blows 0.65%, specials 3.25%; mastered (level
+   * 15): 1% and 5%. Brunhild hits rarely but hard: a 2.5% → 4% special every 15 s that visibly
+   * chunks the HP bar, tiny blows. Share-of-HP damage helps slower players most (casual 11% of the
+   * Meadow's damage after Aldric joins, 26% of the Mountain's; engaged 6% / 15%), which is what lets
+   * a non-aiming player beat Grimmaw inside its timer. Levels cost gold (baseCost × tier costMult ×
+   * costGrowth^(level-1)). Ser Aldric joins at the Meadow's 20th kill (~2:00 engaged), Dame
+   * Brunhild at the Mountain's 12th (engaged 4:51).
    */
   champions: {
-    aldric: { unlock: { stat: 'kills', at: 20, tier: 0 }, blow: [0.008, 0.012], special: [0.04, 0.06], levelCurve: 0.7, maxLevel: 15, baseCost: 6000, costGrowth: 1.3, specialEvery: 9 },
-    brunhild: { unlock: { stat: 'kills', at: 12, tier: 1 }, blow: [0.002, 0.005], special: [0.012, 0.03], levelCurve: 0.7, maxLevel: 15, baseCost: 15000, costGrowth: 1.3, specialEvery: 8 },
+    aldric: { unlock: { stat: 'kills', at: 20, tier: 0 }, blow: [0.0065, 0.01], special: [0.0325, 0.05], levelCurve: 0.7, maxLevel: 15, baseCost: 6000, costGrowth: 1.3, specialEvery: 9 },
+    brunhild: { unlock: { stat: 'kills', at: 12, tier: 1 }, blow: [0.0005, 0.0015], special: [0.025, 0.04], levelCurve: 0.7, maxLevel: 15, baseCost: 15000, costGrowth: 1.3, specialEvery: 15 },
   },
 
   click: {
@@ -309,10 +334,17 @@ export const BALANCE: Balance = {
   /**
    * Tuned by the balance sim (juiced engaged player, median of 20 seeds, bought at): pointySwords
    * 0:06, keenEye 0:18, drillSergeant 0:34, bounty 0:48, fletching 1:12, heroicExample 1:17,
-   * warHorns 1:52, quickNock 2:15, grindstone 2:48 (the last push before the boss). A casual
+   * warHorns 1:42, quickNock 2:13, grindstone 2:50 (the last push before the boss). A casual
    * player (shops every 10 s, never saves) gets pointySwords ~0:16, heroicExample ~2:06 and
-   * warHorns ~3:06. quickNock unlocks early (15 archers) so a casual player sees it by ~2:45. Most
-   * unlock 10–30 s before they're affordable, so the panel usually has something to save for.
+   * warHorns ~2:51 (unlocked at 25 footmen, so it lands before the boss). quickNock unlocks early
+   * (15 archers) so a casual player sees it by ~2:45. Most unlock 10–30 s before they're
+   * affordable, so the panel usually has something to save for. heroicExample's share is
+   * multiplied by every click upgrade and the weak-spot crit, so it sets how much clicks outweigh
+   * the army once the army is big (engaged: clicks 47% of the Meadow's damage, 52% of the
+   * Mountain's).
+   * The Mountain's set (engaged, bought at): highForge 4:00 (a modest ×1.25: the Meadow's ×6 click
+   * chain already came along), pikeWall 4:19, yewLongbows 4:52, mountainTithe 5:02, couchedLances
+   * 5:32, destriers 5:37; lancers unlock at 4:10 and the first is hired at ~5:15.
    */
   upgrades: {
     pointySwords: { cost: 25, unlock: { stat: 'footman', at: 1 }, effect: { kind: 'clickMult', mult: 2 } },
@@ -320,16 +352,16 @@ export const BALANCE: Balance = {
     drillSergeant: { cost: 250, unlock: { stat: 'footman', at: 5 }, effect: { kind: 'unitMult', unit: 'footman', mult: 2 } },
     bounty: { cost: 600, unlock: { stat: 'kills', at: 6 }, effect: { kind: 'goldMult', mult: 1.5 } },
     fletching: { cost: 2500, unlock: { stat: 'archer', at: 3 }, effect: { kind: 'unitMult', unit: 'archer', mult: 2 } },
-    warHorns: { cost: 15000, unlock: { stat: 'footman', at: 40 }, effect: { kind: 'armyMult', mult: 1.5 } },
-    heroicExample: { cost: 3000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.0175 } },
+    warHorns: { cost: 10000, unlock: { stat: 'footman', at: 25 }, effect: { kind: 'armyMult', mult: 1.5 } },
+    heroicExample: { cost: 3000, unlock: { stat: 'kills', at: 13 }, effect: { kind: 'clickArmyShare', share: 0.015 } },
     quickNock: { cost: 40000, unlock: { stat: 'archer', at: 15 }, effect: { kind: 'periodMult', unit: 'archer', mult: 0.7 } },
     grindstone: { cost: 90000, unlock: { stat: 'kills', at: 27 }, effect: { kind: 'clickMult', mult: 3 } },
-    // The Mountain's set (tier 1 only; costs in tier-0 gold, × the tier's costMult = 60).
-    highForge: { cost: 300, unlock: { stat: 'kills', at: 1, tier: 1 }, effect: { kind: 'clickMult', mult: 3 } },
-    pikeWall: { cost: 800, unlock: { stat: 'kills', at: 3, tier: 1 }, effect: { kind: 'unitMult', unit: 'footman', mult: 3 } },
-    yewLongbows: { cost: 3000, unlock: { stat: 'archer', at: 5, tier: 1 }, effect: { kind: 'unitMult', unit: 'archer', mult: 3 } },
+    // The Mountain's set (tier 1 only; costs in tier-0 gold, × the tier's costMult = 45).
+    highForge: { cost: 300, unlock: { stat: 'kills', at: 1, tier: 1 }, effect: { kind: 'clickMult', mult: 1.25 } },
+    pikeWall: { cost: 800, unlock: { stat: 'kills', at: 3, tier: 1 }, effect: { kind: 'unitMult', unit: 'footman', mult: 4 } },
+    yewLongbows: { cost: 3000, unlock: { stat: 'archer', at: 5, tier: 1 }, effect: { kind: 'unitMult', unit: 'archer', mult: 4 } },
     mountainTithe: { cost: 5000, unlock: { stat: 'kills', at: 8, tier: 1 }, effect: { kind: 'goldMult', mult: 2 } },
-    couchedLances: { cost: 8000, unlock: { stat: 'lancer', at: 3, tier: 1 }, effect: { kind: 'unitMult', unit: 'lancer', mult: 2 } },
+    couchedLances: { cost: 8000, unlock: { stat: 'lancer', at: 3, tier: 1 }, effect: { kind: 'unitMult', unit: 'lancer', mult: 3 } },
     destriers: { cost: 40000, unlock: { stat: 'lancer', at: 10, tier: 1 }, effect: { kind: 'periodMult', unit: 'lancer', mult: 0.7 } },
   },
 

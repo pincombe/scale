@@ -194,6 +194,17 @@ export function bossTickLevel(left: number): number {
   return 0.6 + 0.4 * (1 - u);
 }
 
+/**
+ * Rally's auto-strikes (~8/s): the merge gap keeps every other one (~4/s) and three stealing slots
+ * keep that an even roll (a new strike takes over the most-decayed clang instead of being dropped).
+ */
+export const AUTO_CAP: VoiceCap = { max: 3, gap: 0.22 };
+/**
+ * A champion's blow, once per footman melee beat (1 s, ~0.5 s with the drill upgrades); its clang
+ * rings ~0.7–1.1 s, so three slots never drop one.
+ */
+export const CHAMP_CAP: VoiceCap = { max: 3, gap: 0.4 };
+
 /** Galloping horses to voice for a lancer charge of `riders` (1 → 1 horse, 16 → 4). */
 export function horsesFor(riders: number): number {
   if (!(riders > 0)) return 1;
@@ -204,4 +215,15 @@ export function horsesFor(riders: number): number {
 export function crashesFor(riders: number): number {
   if (!(riders > 0)) return 1;
   return Math.max(1, Math.min(3, 1 + Math.floor(riders / 6)));
+}
+
+/**
+ * Seconds from now until `at` s into the zoom cinematic, given the cinematic's clock `time` (-1 or
+ * undefined when unknown). Falls back to `fallback` when the clock or the target is unknown, and
+ * clamps to [lo, hi] so a late or bogus clock never schedules nonsense.
+ */
+export function untilZoomTime(at: number | undefined, time: number | undefined, fallback: number, lo: number, hi: number): number {
+  const d = at !== undefined && time !== undefined && time >= 0 ? at - time : fallback;
+  if (!Number.isFinite(d)) return fallback;
+  return d < lo ? lo : d > hi ? hi : d;
 }

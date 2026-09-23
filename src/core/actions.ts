@@ -13,7 +13,8 @@ import {
   championLevelsLeft,
   championMaxAffordable,
   clickDamage,
-  dyingDuration,
+  dragonDyingDuration,
+  dragonEnterDuration,
   enterDuration,
   heraldryCost,
   maxAffordable,
@@ -152,7 +153,7 @@ function levelChampion(state: GameState, a: Extract<Action, { type: 'levelChampi
 function defaultDur(state: GameState, phase: DragonPhase): number {
   switch (phase) {
     case 'enter':
-      return enterDuration(state.dragon.size);
+      return dragonEnterDuration(state.dragon);
     case 'idle':
       return PHASE.idleMax;
     case 'windup':
@@ -164,7 +165,7 @@ function defaultDur(state: GameState, phase: DragonPhase): number {
     case 'stagger':
       return PHASE.stagger;
     case 'dying':
-      return dyingDuration(state.dragon.size);
+      return dragonDyingDuration(state.dragon);
     case 'leave':
       return enterDuration(state.dragon.size);
   }

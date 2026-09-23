@@ -379,6 +379,17 @@ export class WyrmEye {
     ctx.globalAlpha = 1;
   }
 
+  /** Release the buffers and baked art (the tier is off screen); ensure() rebuilds them. */
+  dispose(): void {
+    for (const c of [this.buf, this.light, this.face, this.dust, this.pebbleSprite]) if (c) c.width = c.height = 0;
+    this.buf = this.light = this.face = this.dust = this.pebbleSprite = null;
+    this.bctx = null;
+    this.palette = null;
+    this.k = 0;
+    this.dLife.fill(0);
+    this.live = false;
+  }
+
   bytes(): number {
     const cv = (c: HTMLCanvasElement | null): number => (c ? c.width * c.height * 4 : 0);
     return cv(this.buf) + cv(this.light) + cv(this.face) + cv(this.dust) + cv(this.pebbleSprite);

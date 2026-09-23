@@ -28,8 +28,8 @@ import {
   scalesForZoom,
   unitsFused,
   clickDamage,
-  dyingDuration,
-  enterDuration,
+  dragonDyingDuration,
+  dragonEnterDuration,
   hasUpgrade,
   killGold,
   maxAffordable,
@@ -163,7 +163,7 @@ export function clickDps(s: GameState, clicksPerSec: number, weakRate = 0): Deci
 export function goldPerSec(s: GameState, clicksPerSec = 0, weakRate = 0): Decimal {
   const dps = armyDps(s).add(championsDps(s)).add(clickDps(s, clicksPerSec, weakRate));
   if (dps.lte(0)) return D(0);
-  const killTime = s.dragon.maxHp.div(dps).toNumber() + dyingDuration(s.dragon.size) + enterDuration(s.dragon.size);
+  const killTime = s.dragon.maxHp.div(dps).toNumber() + dragonDyingDuration(s.dragon) + dragonEnterDuration(s.dragon);
   return killGold(s).div(killTime);
 }
 

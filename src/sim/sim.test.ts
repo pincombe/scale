@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { PROFILES, SHOP_PAUSE_BASE, SHOP_PAUSE_PER_BUY, shopPause } from './bots';
 import { JUICE, JuiceClock } from './juice';
 import { CRIT_HIT_STOP, CRIT_STOP_GAP, KILL_HIT_STOP, KILL_SLOW_MO, KILL_SLOW_MO_DUR, STAGGER_HIT_STOP } from '../render/fx/tuning';
-import { FRAME_DT, runGame } from './play';
+import { FINALE_TAIL, FRAME_DT, runGame } from './play';
 import { clock, median, never } from './stats';
 import { TARGETS, checkTargets, metric } from './targets';
-import { D } from '../core';
-import type { GameEvent } from '../core';
+import { BALANCE, D, bossAt, dragonSize } from '../core';
+import type { ChargeId, GameEvent } from '../core';
 
 const strike = (crit: boolean, stagger = false): GameEvent => ({ type: 'strike', damage: D(1), crit, weak: crit, stagger, aimed: true, x: 0, y: 0 });
 
@@ -142,5 +142,80 @@ describe('balance sim', () => {
     };
     const failed = checkTargets(runs).filter((r) => r.target.stat === 'worst' && !r.ok);
     expect(failed.map((r) => `${r.target.profile}: ${r.target.note} (${r.value})`)).toEqual([]);
+  });
+});
+
+describe('M2 runs (WP 2.7)', () => {
+  const engaged = [1, 2, 3].map((seed) => runGame(PROFILES.engaged, seed));
+
+  it('records the Meadow boss, the zoom, the Mountain and Grimmaw in order', () => {
+    for (const r of engaged) {
+      expect(r.firstBoss).toBeGreaterThan(0);
+      expect(r.firstBossKill).toBeGreaterThan(r.firstBoss);
+      expect(r.firstBossFight).toBeLessThanOrEqual(r.firstBossKill - r.firstBoss + 1e-9);
+      expect(r.firstZoom).toBeGreaterThan(r.firstBossKill);
+      expect(r.zoomEnd).toBeGreaterThan(r.firstZoom);
+      expect(r.mountainFirstKill).toBeGreaterThan(0);
+      expect(r.lancersUnlocked).toBeGreaterThan(r.zoomEnd);
+      expect(r.volleyUnlocked).toBeGreaterThan(r.lancersUnlocked);
+      expect(r.brunhildJoins).toBeGreaterThan(r.volleyUnlocked);
+      expect(r.secondBoss).toBeGreaterThan(r.brunhildJoins);
+      expect(r.secondBossKill).toBeGreaterThan(r.secondBoss);
+      expect(r.runKillGap).toBeGreaterThanOrEqual(r.longestKillGap);
+      for (const x of [r.meadowClickShare, r.meadowChampShare, r.mountainClickShare, r.mountainChampShare]) {
+        expect(x).toBeGreaterThan(0);
+        expect(x).toBeLessThan(1);
+      }
+    }
+  });
+
+  it('a run stops FINALE_TAIL s after the last boss falls (what follows is informational)', () => {
+    for (const r of engaged) {
+      const lastMinute = r.killsByMinute.length * 60;
+      expect(lastMinute).toBeLessThanOrEqual(r.secondBossKill + FINALE_TAIL + 1e-6);
+    }
+  });
+
+  it('the size checkpoints measure ordinary dragons only, never the ×1.5 boss', () => {
+    const ordinary = Array.from({ length: bossAt(0) + 60 }, (_, i) => dragonSize(0, i));
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const r = runGame(PROFILES.engaged, seed, { seconds: 200 });
+      for (const m of r.sizeAt) expect(ordinary.some((o) => Math.abs(o - m) < 1e-9)).toBe(true);
+    }
+  });
+
+  it("'onCooldown' players press a ready ability after a reaction delay, not instantly", () => {
+    const delays: number[] = [];
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+      let endAt = -1;
+      let charged = false;
+      runGame(PROFILES.engaged, seed, {
+        seconds: 240,
+        onEvent: (e, s) => {
+          if (e.type === 'zoomEnd') endAt = s.t;
+          if (e.type === 'abilityUse' && e.id === 'charge' && endAt >= 0 && !charged) {
+            charged = true;
+            delays.push(s.t - endAt);
+          }
+        },
+      });
+    }
+    expect(delays.length).toBe(6);
+    // Charge! is ready the moment the Mountain starts: used within the delay, and not all at once.
+    for (const d of delays) expect(d).toBeLessThanOrEqual(PROFILES.engaged.abilityDelay + 0.5);
+    expect(Math.max(...delays) - Math.min(...delays)).toBeGreaterThan(0.5);
+  });
+
+  it('every profile ranks each heraldic charge once; the idle player takes Tower first', () => {
+    const ids = Object.keys(BALANCE.heraldry).sort();
+    for (const p of Object.values(PROFILES)) expect([...p.heraldry].sort()).toEqual(ids);
+    let first: ChargeId | null = null;
+    runGame(PROFILES.idle, 1, {
+      seconds: 720,
+      onEvent: (e) => {
+        if (e.type === 'purchase' && e.kind === 'heraldry' && !first) first = e.id as ChargeId;
+      },
+    });
+    expect(first).toBe('tower');
   });
 });

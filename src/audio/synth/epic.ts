@@ -31,17 +31,19 @@ function saturate(o: Out, drive: number, to: AudioNode): WaveShaperNode {
 }
 
 /**
- * The ground trembling after a kill, scaled by the Wyrm Gauge `g` (0..1): at first a faint, short
- * low murmur; near full a longer, shaking, sub-heavy rumble with pebbles rattling and a deep thud.
- * Short either way (0.7–1.7 s) and band-limited below ~200 Hz so it never muddies the fight.
+ * The ground trembling after a kill. `g` is the Wyrm Gauge (0..1: the timbre, shake and pebbles),
+ * `strength` 0..1 the tremor's strength and `dur` its length (both from render/fx/dread, so the
+ * rumble swells and dies with the camera's sway): at first a faint low murmur; near full a
+ * shaking, sub-heavy rumble with pebbles rattling and a deep thud. Band-limited below ~200 Hz so
+ * it never muddies the fight.
  */
-export function tremor(o: Out, at: number, g: number, amp: number, to: AudioNode): number {
-  const dur = 0.7 + 1.0 * g;
+export function tremor(o: Out, at: number, g: number, strength: number, dur: number, amp: number, to: AudioNode): number {
   const out = gainNode(o, 0, to);
-  const lvl = amp * (0.1 + 0.9 * Math.pow(g, 1.6));
+  const lvl = amp * (0.1 + 0.9 * strength);
+  // Envelope like the sway's: a soft swell over the first 18%, then a long decay.
   out.gain.setValueAtTime(0, at);
-  out.gain.linearRampToValueAtTime(lvl, at + 0.1 + 0.1 * g);
-  out.gain.setTargetAtTime(0, at + 0.2 + dur * 0.3, dur * 0.2);
+  out.gain.linearRampToValueAtTime(lvl, at + dur * 0.18);
+  out.gain.setTargetAtTime(0, at + dur * 0.18, dur * 0.17);
   const end = at + dur + 0.1;
   // The shake: a 6–9 Hz wobble on the rumble's level, deeper when the gauge is high.
   const shake = gainNode(o, 1 - 0.3 * g, out);

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction } from './actions';
 import { BALANCE, BOSS_TEXT } from './content';
-import { TICK_DT, bossAt, bossGold, bossMaxHp, dragonGold, dragonMaxHp, dragonSize, enterDuration, goldMult } from './formulas';
+import { TICK_DT, bossAt, bossGold, bossMaxHp, dragonGold, dragonMaxHp, dragonSize, dyingDuration, enterDuration, goldMult } from './formulas';
 import * as sel from './selectors';
 import { createInitialState } from './state';
 import { tick } from './tick';
@@ -40,6 +40,10 @@ describe('the Wyrm Gauge', () => {
     expect(s.wyrm.bossT).toBe(BALANCE.boss.timer);
     expect(s.wyrm.bossDur).toBe(BALANCE.boss.timer);
     expect(sel.bossTimeLeft(s)).toBe(BALANCE.boss.timer);
+    // A grander entrance than an ordinary dragon's (the timer doesn't run during it).
+    expect(d.phaseDur).toBe(BALANCE.boss.enter);
+    expect(ofType(events, 'dragonPhase').at(-1)).toEqual({ type: 'dragonPhase', id: d.id, phase: 'enter', dur: BALANCE.boss.enter });
+    expect(BALANCE.boss.enter).toBeGreaterThan(enterDuration(d.size));
   });
 
   it('the boss is tougher and richer than the dragon before it, and fixed per tier', () => {
@@ -47,7 +51,7 @@ describe('the Wyrm Gauge', () => {
       const at = bossAt(tier);
       expect(bossMaxHp(tier).gt(dragonMaxHp(tier, at - 1))).toBe(true);
       expect(bossGold(tier).gt(dragonGold(tier, at - 1))).toBe(true);
-      expect(bossMaxHp(tier).div(dragonMaxHp(tier, at)).toNumber()).toBeCloseTo(BALANCE.boss.hpMult, 3);
+      expect(bossMaxHp(tier).div(dragonMaxHp(tier, at)).toNumber()).toBeCloseTo(BALANCE.tiers[tier]!.bossHp, 3);
     }
     const s = withBoss();
     expect(s.dragon.maxHp.eq(bossMaxHp(0))).toBe(true);
@@ -118,6 +122,10 @@ describe('beating the boss', () => {
     expect(types.indexOf('bossDefeated')).toBe(types.indexOf('dragonDeath') + 1);
     expect(ofType(events, 'dragonDeath')[0]!.gold.eq(gold)).toBe(true);
     expect(ofType(events, 'bossDefeated')).toEqual([{ type: 'bossDefeated', boss: 'elderNewt', first: true }]);
+    // The boss falls for longer than an ordinary dragon dies.
+    expect(s.dragon.phase).toBe('dying');
+    expect(s.dragon.phaseDur).toBe(BALANCE.boss.dying);
+    expect(BALANCE.boss.dying).toBeGreaterThan(dyingDuration(s.dragon.size));
     expect(s.wyrm.cleared).toBe(true);
     expect(s.wyrm.clearedAt).toBe(s.kills);
     expect(s.wyrm.bossT).toBe(0);

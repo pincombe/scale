@@ -87,6 +87,21 @@ describe('dragon curves', () => {
     expect(dragonGold(1, 20).div(dragonGold(0, 20)).toNumber() / tierGoldMult(1)).toBeCloseTo(1, 3);
   });
 
+  it("a later tier's dragon #0 (the colossus's first opponent) has arrivalHp of its curve HP, and full gold", () => {
+    const a = BALANCE.dragon.arrivalHp;
+    expect(a).toBeGreaterThan(0);
+    expect(a).toBeLessThan(1);
+    const curve0 = BALANCE.dragon.hpBase * tierHpMult(1); // dragon #0 on the curve
+    expect(dragonMaxHp(1, 0).toNumber()).toBeCloseTo(curve0 * a, 6);
+    // Only #0: #1 is back on the curve (and so still tougher than #0), gold is never cut.
+    // (tier-0 #1 is rounded to a whole 21 HP, hence the loose tolerance; the cut would show as 0.6)
+    expect(dragonMaxHp(1, 1).div(dragonMaxHp(0, 1)).toNumber() / tierHpMult(1)).toBeCloseTo(1, 1);
+    expect(dragonMaxHp(1, 1).gt(dragonMaxHp(1, 0))).toBe(true);
+    expect(dragonGold(1, 0).toNumber()).toBeCloseTo(BALANCE.dragon.hpBase * BALANCE.dragon.goldPerHp * tierGoldMult(1), 6);
+    // The Meadow's tutorial newt keeps its own HP.
+    expect(dragonMaxHp(0, 0).eq(BALANCE.dragon.firstHp)).toBe(true);
+  });
+
   it('names come from dragonName() and are deterministic per seed', () => {
     const a = createInitialState(77);
     const b = createInitialState(77);

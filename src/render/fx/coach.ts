@@ -8,7 +8,10 @@
 // Placement: the label hangs below-left of the spot (over the dark foreground grass for a newt, the
 // dark body for a big dragon), since numbers rise ABOVE impacts. It's clamped to the uncovered
 // stage (panel inset, HUD band) and kept clear of the lone Hire button and the hint caption (UI
-// anchors 'hire' and 'hint', registered by ui/hints.ts); it flips to the right if there's no room.
+// anchors 'hire' and 'hint', registered by ui/hints.ts) and, from M2, the abilities bar and the Zoom
+// button at the bottom of the stage ('abilities', 'zoom') and the Wyrm Gauge under the dragon bar
+// ('gauge', which extends the HUD band down); it flips to the right if there's no room. Anchors that
+// don't exist (yet) are skipped.
 // The ring tracks the spot with a damped follow and fades whenever the spot isn't live.
 //
 // Learning the lesson snaps the ring into the spot with a small local flash (none with
@@ -49,6 +52,14 @@ const HIRE_HW = 152;
 const HIRE_HH = 44;
 const HINT_HW = 290;
 const HINT_HH = 22;
+/** M2 keep-outs (generous: anchors are centers only). The abilities bar (3 slots of ~64 px plus
+ * gaps and key labels), the Zoom button (~260 x 72 px), and the gauge's half-height under the
+ * dragon bar (the label stays below it). */
+const ABILITIES_HW = 150;
+const ABILITIES_HH = 52;
+const ZOOM_HW = 150;
+const ZOOM_HH = 48;
+const GAUGE_HH = 18;
 /** Snap-into-the-spot animation when the lesson is learned. */
 const SNAP_DUR = 0.34;
 
@@ -344,7 +355,8 @@ export function createCoach(scene: Scene): Coach {
     const cam = v.camera;
     const left = EDGE;
     const right = v.width - cam.insetRight - EDGE;
-    const top = HUD_BOTTOM;
+    const gauge = scene.ui.anchor('gauge', anc);
+    const top = gauge ? Math.max(HUD_BOTTOM, gauge.y + GAUGE_HH + 8) : HUD_BOTTOM;
     const bottom = v.height - EDGE;
     const d = R + 4;
     if (fresh) {
@@ -360,6 +372,10 @@ export function createCoach(scene: Scene): Coach {
     if (hire) avoid(hire.x, hire.y, HIRE_HW, HIRE_HH, l.w, l.h, minY);
     const hint = scene.ui.anchor('hint', anc);
     if (hint) avoid(hint.x, hint.y, HINT_HW, HINT_HH, l.w, l.h, minY);
+    const abilities = scene.ui.anchor('abilities', anc);
+    if (abilities) avoid(abilities.x, abilities.y, ABILITIES_HW, ABILITIES_HH, l.w, l.h, minY);
+    const zoom = scene.ui.anchor('zoom', anc);
+    if (zoom) avoid(zoom.x, zoom.y, ZOOM_HW, ZOOM_HH, l.w, l.h, minY);
     // Stage bounds last (they win).
     if (side === 0) tx = Math.min(right, Math.max(left + l.w, tx));
     else tx = Math.max(left, Math.min(right - l.w, tx));

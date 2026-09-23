@@ -5,7 +5,7 @@ import { D } from './decimal';
 import type { Decimal } from './decimal';
 import { nextFloat, nextRange, nextU32, seedRng } from '../lib/rng';
 import { BALANCE, BOSS_TEXT, PHASE, dragonName, speciesOf } from './content';
-import { bossAt, bossMaxHp, bossOf, canZoom, dragonMaxHp, dragonSize, dyingDuration, enterDuration, killGold } from './formulas';
+import { bossAt, bossMaxHp, bossOf, canZoom, dragonDyingDuration, dragonEnterDuration, dragonMaxHp, dragonSize, enterDuration, killGold } from './formulas';
 import { beginZoom } from './zoom';
 import type { DragonAttack, DragonPhase, DragonState, Emit, GameState } from './types';
 
@@ -50,7 +50,7 @@ export function makeDragon(state: GameState, index: number, phase: DragonPhase, 
 
 export function spawnDragon(state: GameState, index: number, emit: Emit, boss: string | null = null): void {
   const d = makeDragon(state, index, 'enter', 0, boss);
-  d.phaseDur = enterDuration(d.size);
+  d.phaseDur = dragonEnterDuration(d);
   state.dragon = d;
   emit({ type: 'dragonSpawn', id: d.id });
   emit({ type: 'dragonPhase', id: d.id, phase: 'enter', dur: d.phaseDur });
@@ -193,7 +193,7 @@ export function killDragon(state: GameState, emit: Emit): void {
   } else if (!w.cleared) {
     w.charge = Math.min(bossAt(state.tier), w.charge + 1);
   }
-  setPhase(state, 'dying', dyingDuration(d.size), emit);
+  setPhase(state, 'dying', dragonDyingDuration(d), emit);
 }
 
 /** A dragon that can take damage: not dying, not leaving (an escaping boss or a zoom's retreat). */

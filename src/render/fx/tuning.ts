@@ -57,6 +57,24 @@ export const KILL_HIT_STOP = 0.08;
 /** Kill slow-mo: starts at this time scale and eases back to 1 over KILL_SLOW_MO_DUR. */
 export const KILL_SLOW_MO = 0.25;
 export const KILL_SLOW_MO_DUR = 0.55;
+/**
+ * The boss's fall (on `bossDefeated`, the same drain as its `dragonDeath`): the kill's freeze (the
+ * ARCHITECTURE §2 cap of 80 ms) and a much slower, ~3x longer slow-mo. The boss is dead by then, so
+ * this never eats its timer; it only stretches the collapse (and delays the first zoom by ~1 s of
+ * wall time). The boss's arrival, engage and urgency add NO time effects: slow-mo during the fight
+ * would eat the timer.
+ */
+export const BOSS_HIT_STOP = 0.08;
+export const BOSS_SLOW_MO = 0.12;
+export const BOSS_SLOW_MO_DUR = 1.8;
+/**
+ * The Wyrm Gauge's tremor after an ordinary kill (fx/boss.ts; SFX matches them): it rolls in
+ * TREMOR_DELAY wall s after the kill (the kill's own juice lands first), with strength
+ * gauge^TREMOR_EXP (0.02 at 10%, 0.29 at 50%, 0.83 at 90%, 1 when the boss is next). Visual and
+ * audio only: no time effect.
+ */
+export const TREMOR_DELAY = 0.45;
+export const TREMOR_EXP = 1.8;
 /** Crit heat: +1 per crit, cools this much per second, capped. */
 export const CRIT_COOL = 3;
 export const CRIT_HEAT_MAX = 3;

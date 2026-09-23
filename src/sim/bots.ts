@@ -43,12 +43,26 @@ export interface Profile {
   shop: ShopPolicy;
   /**
    * Abilities (M2): 'onCooldown' uses each one the moment it's ready (and the dragon can be hit);
-   * 'sometimes' uses what's ready on a shopping trip, half the time; 'never'.
+   * 'sometimes' uses what's ready on a shopping trip, half the time (always against a boss); 'never'.
    */
   abilities: 'onCooldown' | 'sometimes' | 'never';
-  /** Wall seconds to play. */
+  /**
+   * 'onCooldown': a player notices a ready ability after a reaction delay, drawn uniformly from
+   * [0, abilityDelay] wall s per use (instant use would phase-lock Charge!'s 60 s cooldown onto the
+   * boss's arrival on most seeds, which no human does).
+   */
+  abilityDelay: number;
+  /** Heraldry charges in the order this player prefers them (ties in price go to the earlier one). */
+  heraldry: readonly ChargeId[];
+  /**
+   * Wall seconds to play at most (runs stop FINALE_TAIL s after the build's last boss falls): long
+   * enough for every profile to reach its M2 targets (idle: the Elder Newt within 30 minutes).
+   */
   seconds: number;
 }
+
+/** Damage and gold first (the active players' pick). */
+const POWER_FIRST: readonly ChargeId[] = ['lion', 'sun', 'crown', 'wyvern', 'stag', 'tower'];
 
 export const PROFILES: Record<ProfileName, Profile> = {
   engaged: {
@@ -63,7 +77,9 @@ export const PROFILES: Record<ProfileName, Profile> = {
     shopEvery: 0.5,
     shop: 'greedy',
     abilities: 'onCooldown',
-    seconds: 540,
+    abilityDelay: 8,
+    heraldry: POWER_FIRST,
+    seconds: 600,
   },
   casual: {
     name: 'casual',
@@ -78,7 +94,9 @@ export const PROFILES: Record<ProfileName, Profile> = {
     shopEvery: 10,
     shop: 'cheapest',
     abilities: 'sometimes',
-    seconds: 420,
+    abilityDelay: 0,
+    heraldry: POWER_FIRST,
+    seconds: 1200,
   },
   // Clicks a lot but never aims (ignores the glowing spot) and shops like the engaged player: the
   // pacing must not depend on weak-spot skill.
@@ -94,7 +112,9 @@ export const PROFILES: Record<ProfileName, Profile> = {
     shopEvery: 0.5,
     shop: 'greedy',
     abilities: 'onCooldown',
-    seconds: 240,
+    abilityDelay: 8,
+    heraldry: POWER_FIRST,
+    seconds: 1200,
   },
   idle: {
     name: 'idle',
@@ -108,7 +128,11 @@ export const PROFILES: Record<ProfileName, Profile> = {
     shopEvery: 60,
     shop: 'cheapest',
     abilities: 'never',
-    seconds: 600,
+    abilityDelay: 0,
+    // Tower first: the charge that plays for you (every tier starts with troops). Without it the
+    // zoom leaves an idle player with no army, and only the champions' blows fell the first wyvern.
+    heraldry: ['tower', 'lion', 'sun', 'crown', 'wyvern', 'stag'],
+    seconds: 1800,
   },
 };
 
@@ -245,14 +269,11 @@ function greedyBuy(s: GameState, p: Profile): Action | null {
   return s.gold.gte(cost) ? { type: 'buyUnit', unit: best, amount: 1 } : null;
 }
 
-/** Heraldry the bots like best first (ties in price go to the earlier one). */
-const CHARGE_PRIORITY: readonly ChargeId[] = ['lion', 'sun', 'crown', 'wyvern', 'stag', 'tower'];
-
-/** The cheapest affordable charge, or null. */
-function heraldryBuy(s: GameState): Action | null {
+/** The cheapest affordable charge (ties go to the player's preferred one), or null. */
+function heraldryBuy(s: GameState, p: Profile): Action | null {
   let best: ChargeId | null = null;
   let bestCost: Decimal | null = null;
-  for (const id of CHARGE_PRIORITY) {
+  for (const id of p.heraldry) {
     if (!sel.heraldryAffordable(s, id)) continue;
     const c = sel.heraldryCost(s, id);
     if (!bestCost || c.lt(bestCost)) {
@@ -288,7 +309,7 @@ export function shop(s: GameState, p: Profile, apply: (a: Action) => void): numb
   if (s.zoom.stage !== null) return 0;
   let buys = 0;
   for (let k = 0; k < MAX_BUYS_PER_TRIP; k++) {
-    const a = heraldryBuy(s);
+    const a = heraldryBuy(s, p);
     if (!a) break;
     apply(a);
     buys++;

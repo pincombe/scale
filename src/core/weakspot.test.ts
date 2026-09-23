@@ -35,11 +35,13 @@ describe('weak-spot rule', () => {
     }
   });
 
-  it('is hittable except while the dragon is still arriving or dying', () => {
+  it('is hittable except while the dragon is still arriving, dying or leaving', () => {
     expect(weakSpotLive('enter', 0)).toBe(false);
     expect(weakSpotLive('enter', ENTER_WEAK_FROM)).toBe(false);
     expect(weakSpotLive('enter', ENTER_WEAK_FROM + 0.01)).toBe(true);
     expect(weakSpotLive('dying', 0.5)).toBe(false);
+    // A leaving dragon (an escaping boss, or one sent away by a zoom) can't be crit, at any point.
+    for (const k of [0, 0.5, 1]) expect(weakSpotLive('leave', k)).toBe(false);
     for (const ph of ['idle', 'windup', 'breath', 'swipe', 'stagger'] as const) {
       expect(weakSpotLive(ph, 0)).toBe(true);
       expect(weakSpotLive(ph, 1)).toBe(true);

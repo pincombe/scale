@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTO_CAP,
   BOSS_TICK_FROM,
+  CHAMP_CAP,
   CoinRun,
   VoiceLimiter,
   bossTickInterval,
@@ -10,7 +12,9 @@ import {
   horsesFor,
   panFor,
   pentaHz,
+  untilZoomTime,
   voiceSize,
+  type VoiceCap,
 } from './sfxMath';
 
 describe('pentaHz', () => {
@@ -185,5 +189,51 @@ describe('lancer voicing', () => {
     expect(crashesFor(6)).toBe(2);
     expect(crashesFor(16)).toBe(3);
     expect(crashesFor(NaN)).toBe(1);
+  });
+});
+
+/**
+ * Mirror of sfx.ts's play(): claim (or steal) a slot at the voice's start with the provisional
+ * length, then re-time it to its real end + 0.1 s. Returns the start times that sounded.
+ */
+function simulate(cap: VoiceCap, steal: boolean, times: number[], len: (i: number) => number): number[] {
+  const l = new VoiceLimiter({ c: cap });
+  const played: number[] = [];
+  times.forEach((t, i) => {
+    const slot = steal ? l.claimOrSteal('c', t, 1.2) : l.claim('c', t, 1.2);
+    if (slot < 0) return;
+    l.setEnd('c', slot, t + len(i) + 0.1);
+    played.push(t);
+  });
+  return played;
+}
+
+/** Deterministic spread of clang lengths over [lo, hi]. */
+const spread = (lo: number, hi: number) => (i: number) => lo + (hi - lo) * ((i * 0.618034) % 1);
+
+describe('M2 voice caps', () => {
+  it("Rally's 8 auto-strikes/s come out as an even ~4/s roll", () => {
+    const times = Array.from({ length: 64 }, (_, i) => i / 8);
+    const played = simulate(AUTO_CAP, true, times, spread(0.7, 1.1));
+    expect(played.length).toBeGreaterThanOrEqual(30);
+    for (let i = 1; i < played.length; i++) expect(played[i]! - played[i - 1]!).toBeLessThanOrEqual(0.26);
+  });
+  it('never drops a champion blow on the 1 s melee beat', () => {
+    const times = Array.from({ length: 40 }, (_, i) => i * 1.0);
+    expect(simulate(CHAMP_CAP, false, times, spread(0.71, 1.08))).toHaveLength(40);
+    // Even at a sped-up 0.5 s beat (Pike Wall, Charge!).
+    const fast = Array.from({ length: 40 }, (_, i) => i * 0.5);
+    expect(simulate(CHAMP_CAP, false, fast, spread(0.71, 1.08))).toHaveLength(40);
+  });
+});
+
+describe('untilZoomTime', () => {
+  it('counts down on the cinematic clock, clamped, with a fallback', () => {
+    expect(untilZoomTime(2.2, 1.05, 1.2, 0.3, 2.4)).toBeCloseTo(1.15, 9);
+    expect(untilZoomTime(2.2, -1, 1.2, 0.3, 2.4)).toBe(1.2);
+    expect(untilZoomTime(undefined, 1, 1.2, 0.3, 2.4)).toBe(1.2);
+    expect(untilZoomTime(2.2, 2.19, 1.2, 0.3, 2.4)).toBe(0.3);
+    expect(untilZoomTime(3.4, 2.2, 1.2, 0.05, 4)).toBeCloseTo(1.2, 9);
+    expect(untilZoomTime(NaN, 0, 1.2, 0.05, 4)).toBe(1.2);
   });
 });

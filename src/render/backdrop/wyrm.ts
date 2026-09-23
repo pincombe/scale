@@ -119,6 +119,13 @@ export interface FaceColors {
   crest: string;
   shade: string;
   rimColor: string;
+  /** The sun's x in the layer's units at bake time (RidgeCache sets it before painting). */
+  lightX?: number;
+  /** The layer's base (valley haze) color at bake time. */
+  base?: string;
+  /** The x range being baked (layer units), so painters can skip what is off the canvas. */
+  x0?: number;
+  x1?: number;
 }
 
 /** The face's shadow and lit-edge colors: the layer's own shade and rim, hazed like the layer. */

@@ -7,7 +7,7 @@
 //   windup (swipe)      'tail'     the tail base, glowing as the tail loads
 //   everything else     'scale'    the loose scale
 //   enter               none until ENTER_WEAK_FROM of the entrance (the dragon is still arriving)
-//   dying               none
+//   dying, leave        none (a dying or leaving dragon, boss or not, can't be crit)
 import type { DragonAttack, DragonPhase, DragonState } from './types';
 
 export type WeakSpotKind = 'scale' | 'throat' | 'tail';
@@ -23,7 +23,7 @@ export function weakSpotFor(phase: DragonPhase, attack: DragonAttack): WeakSpotK
 
 /** Whether a weak spot can be hit in this phase at progress k (0..1 of the phase). */
 export function weakSpotLive(phase: DragonPhase, k: number): boolean {
-  if (phase === 'dying') return false;
+  if (phase === 'dying' || phase === 'leave') return false;
   if (phase === 'enter') return k > ENTER_WEAK_FROM;
   return true;
 }

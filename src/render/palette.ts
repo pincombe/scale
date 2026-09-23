@@ -100,10 +100,44 @@ export const MEADOW: Palette = {
 };
 
 /**
- * The Mountain (tier 1): alpenglow dusk. PLACEHOLDER (a copy of the Meadow) until WP 2.3 sets the
- * real values.
+ * The Mountain (tier 1): alpenglow dusk (WP 2.3). The sun has just set behind the far coils: a
+ * warm band on the horizon under a sky running rose -> violet -> deep blue, the first stars. The
+ * afterglow sits low, right of the stage center (the backdrop places it at stageCX + 0.14 * viewH,
+ * 0.655 * viewH), so rims are rose-gold and nearly horizontal; shadows lean blue-violet.
  */
-export const MOUNTAIN: Palette = { ...MEADOW, name: 'mountain' };
+export const MOUNTAIN: Palette = {
+  name: 'mountain',
+  sky: [
+    { at: 0, color: '#0b0f2c' },
+    { at: 0.22, color: '#1b1d4a' },
+    { at: 0.46, color: '#3d2f66' },
+    { at: 0.66, color: '#7c4675' },
+    { at: 0.82, color: '#c9627a' },
+    { at: 0.93, color: '#f08d78' },
+    { at: 1, color: '#ffc38c' },
+  ],
+  horizon: 0.66,
+  sun: { x: 0.64, y: 0.655, radius: 0.05, color: '#ffe2b8', glow: '#ff9866', glowRadius: 0.62 },
+  haze: '#b27796',
+  depthTint: '#3b3668',
+  silhouette: '#110b16',
+  rim: '#ffb596',
+  rimWidth: 1.8,
+  light: unit(0.9, -0.44),
+  ground: '#19111f',
+  vignette: '#08061a',
+  vignetteStrength: 0.6,
+  accent: {
+    gold: '#ffd35a',
+    fire: '#ff7a1f',
+    ember: '#ff4a14',
+    weak: '#ffe07a',
+    banner: '#b3202a',
+    heraldBlue: '#2d4f93',
+    glow: '#fff1c4',
+  },
+  ambient: '#ece6ff',
+};
 
 /** Palettes by tier (M3 adds the Kingdom, Sky and World). */
 export const PALETTES: readonly Palette[] = [MEADOW, MOUNTAIN];

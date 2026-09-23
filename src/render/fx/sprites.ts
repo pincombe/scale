@@ -2,6 +2,7 @@
 //   slash  - a hot crescent streak (colored: white core, gold glow), points along +x
 //   star   - a 4-point glint (white, tint it)
 //   beam   - a soft vertical light shaft laid along +x (rotate -PI/2 to stand it up)
+//   groundRing - a flat, ground-hugging shockwave ellipse (white, tint it; WP 2.2)
 //   coin   - COIN_FRAMES consecutive frames of a spinning gold coin (a particle `ramp`)
 import type { SpriteAtlas } from '../atlas';
 import { context2d, makeCanvas } from '../atlas';
@@ -17,6 +18,7 @@ export interface FxSprites {
   slash: number;
   star: number;
   beam: number;
+  groundRing: number;
   /** First of COIN_FRAMES consecutive ids. */
   coin: number;
 }
@@ -29,6 +31,7 @@ export function fxSprites(atlas: SpriteAtlas): FxSprites {
     slash: atlas.register('fx.slash', 256, 88, drawSlash),
     star: atlas.register('fx.star', 64, 64, drawStar),
     beam: atlas.register('fx.beam', 256, 48, drawBeam),
+    groundRing: atlas.register('fx.groundRing', 256, 40, drawGroundRing),
     coin: registerCoin(atlas),
   };
   cached = { atlas, ids };
@@ -66,6 +69,21 @@ function drawSlash(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   g.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
+}
+
+/** A thin elliptical ring (aspect ~0.14) with a soft glow: a shockwave seen low across the ground. */
+function drawGroundRing(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.scale(1, (h - 12) / (w - 12));
+  ctx.shadowColor = 'rgba(255,255,255,0.9)';
+  ctx.shadowBlur = 8;
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.arc(0, 0, (w - 12) / 2 - 4, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawStar(ctx: CanvasRenderingContext2D, w: number, h: number): void {
