@@ -2,13 +2,15 @@
 // in the wind (drawn as vertical strips of a baked cloth texture, each strip offset by a travelling
 // wave and shaded lit / base / shadow by the wave's phase, so it reads as folds catching the sun).
 //
-// Heraldry: drawEmblem() is the ONE place a coat of arms is painted. M1 flies a placeholder (red
-// field, gold sword); the M2 Heraldry WP swaps the description and extends drawEmblem.
+// Heraldry: every banner and the hero's shield fly the player's coat of arms (render/heraldry
+// drawCoat). The cloth is re-baked once per coat change (BannerArt.update); nothing per frame.
 import { context2d, makeCanvas } from '../atlas';
 import { mixHex } from '../../lib/color';
 import type { Palette } from '../palette';
 import type { Heraldry } from './api';
 import { fmt } from '../../core/format';
+import { M1_COAT } from '../heraldry/coat';
+import { drawCoat, tinctureColor } from '../heraldry/draw';
 
 export type { Heraldry } from './api';
 
@@ -20,39 +22,34 @@ export const FLAG_SMALL = 0.72;
 export const POLE_UP = 108;
 export const POLE_DOWN = 34;
 
+/** Fraction of the flag's length taken by the swallowtail at the fly end. */
+const NOTCH = 0.2;
+
 export function defaultHeraldry(p: Palette): Heraldry {
-  return { field: p.accent.banner, tincture: p.accent.gold, charge: 'sword' };
+  return { field: p.accent.banner, tincture: p.accent.gold, charge: 'sword', coat: M1_COAT };
 }
 
 /**
- * Paint a coat of arms into the rect (0, 0, w, h): the field, then the charge. Shared by banners
- * and the hero's shield. Charges M1 knows: 'sword' (default), 'none'.
+ * Paint a coat of arms into the rect (0, 0, w, h) (a banner of arms). Legacy descriptions without
+ * a `coat` paint a plain field and the M1 sword.
  */
 export function drawEmblem(ctx: CanvasRenderingContext2D, h: Heraldry, w: number, hh: number): void {
+  if (h.coat) {
+    drawCoat(ctx, h.coat, w / 2, hh / 2, hh, { shape: 'banner', aspect: w / hh });
+    return;
+  }
   ctx.fillStyle = h.field;
   ctx.fillRect(0, 0, w, hh);
   if (h.charge === 'none') return;
-  // A sword, point down: a gold cross from afar, a blade up close.
-  const cx = w * 0.5;
-  const s = Math.min(w, hh);
-  const top = hh * 0.5 - s * 0.4;
-  const bot = hh * 0.5 + s * 0.42;
-  const bw = s * 0.07;
-  ctx.fillStyle = h.tincture;
-  ctx.beginPath();
-  ctx.moveTo(cx - bw, top + s * 0.2);
-  ctx.lineTo(cx + bw, top + s * 0.2);
-  ctx.lineTo(cx + bw * 0.8, bot - s * 0.1);
-  ctx.lineTo(cx, bot);
-  ctx.lineTo(cx - bw * 0.8, bot - s * 0.1);
-  ctx.closePath();
-  ctx.fill();
-  // Crossguard, grip, pommel.
-  ctx.fillRect(cx - s * 0.24, top + s * 0.14, s * 0.48, s * 0.075);
-  ctx.fillRect(cx - bw * 0.7, top + s * 0.02, bw * 1.4, s * 0.14);
-  ctx.beginPath();
-  ctx.arc(cx, top + s * 0.01, s * 0.06, 0, Math.PI * 2);
-  ctx.fill();
+  drawCoat(ctx, M1_COAT, w / 2, hh / 2, hh, { shape: 'banner', aspect: w / hh, finish: false });
+}
+
+/**
+ * The hero's kite shield face: the coat centred on (cx, cy), `height` tall (ctx units), mirrored so
+ * its beasts face the way the hero does (toward the dragon).
+ */
+export function drawShieldFace(ctx: CanvasRenderingContext2D, h: Heraldry, cx: number, cy: number, height: number): void {
+  drawCoat(ctx, h.coat ?? M1_COAT, cx, cy, height, { shape: 'kite', mirror: true });
 }
 
 /** Baked flag cloth: [size][shade] with size 0 = near, 1 = far; shade 0 (deep fold) .. 2 (base) .. 4 (lit). */
@@ -60,22 +57,29 @@ export class BannerArt {
   readonly tex: HTMLCanvasElement[][] = [];
   /** Device px per figure unit each size was baked at. */
   static readonly SCALE = [3.2, 0.9] as const;
+  /** Milliseconds the last (re)bake took (debug readout). */
+  bakeMs = 0;
   private her: Heraldry | null = null;
   private pal: Palette | null = null;
 
   /** (Re)bake if the heraldry or palette object changed (compared by identity: no per-frame work). */
   update(h: Heraldry, p: Palette): void {
     if (h === this.her && p === this.pal) return;
+    const t0 = performance.now();
     this.her = h;
     this.pal = p;
     this.tex.length = 0;
-    for (const s of BannerArt.SCALE) this.tex.push(bakeCloth(h, p, Math.ceil(FLAG_W * s), Math.ceil(FLAG_H * s)));
+    for (let i = 0; i < BannerArt.SCALE.length; i++) {
+      const s = BannerArt.SCALE[i]!;
+      this.tex.push(bakeCloth(h, p, Math.ceil(FLAG_W * s), Math.ceil(FLAG_H * s), i === 0 ? undefined : 0));
+    }
+    this.bakeMs = performance.now() - t0;
   }
 }
 
 function clothPath(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   // Hoist at the right edge (x = w), swallowtail fly end at the left.
-  const notch = w * 0.2;
+  const notch = w * NOTCH;
   ctx.beginPath();
   ctx.moveTo(w, 0);
   ctx.lineTo(0, 0);
@@ -85,26 +89,33 @@ function clothPath(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.closePath();
 }
 
-function bakeCloth(h: Heraldry, p: Palette, w: number, hh: number): HTMLCanvasElement[] {
+function bakeCloth(h: Heraldry, p: Palette, w: number, hh: number, lod?: 0 | 1 | 2): HTMLCanvasElement[] {
   const base = makeCanvas(w, hh);
   const b = context2d(base);
   clothPath(b, w, hh);
   b.save();
   b.clip();
-  // The emblem centered on the body of the flag (away from the swallowtail notch).
-  const ew = w * 0.72;
-  b.save();
-  b.translate(w - ew, 0);
-  drawEmblem(b, h, ew, hh);
-  b.restore();
-  b.fillStyle = h.field;
-  b.fillRect(0, 0, w - ew + 1, hh);
-  // Trim: gold edge along the top and bottom, a dark sleeve at the hoist.
-  const t = Math.max(1, hh * 0.07);
-  b.fillStyle = mixHex(h.tincture, h.field, 0.35);
+  // A banner of arms: the coat fills the cloth, mirrored so its beasts face the hoist (and the
+  // dragon), the principal centred on the body of the flag (away from the swallowtail notch).
+  const coat = h.coat;
+  if (coat) {
+    drawCoat(b, coat, w / 2, hh / 2, hh, { shape: 'banner', aspect: w / hh, mirror: true, openFly: true, focus: (1 + NOTCH * 1.2) / 2, px: hh, lod });
+  } else {
+    const ew = w * 0.72;
+    b.save();
+    b.translate(w - ew, 0);
+    drawEmblem(b, h, ew, hh);
+    b.restore();
+    b.fillStyle = h.field;
+    b.fillRect(0, 0, w - ew + 1, hh);
+  }
+  // Trim: a gilt edge along the top and bottom, a dark sleeve at the hoist.
+  const field = coat ? tinctureColor(coat.field) : h.field;
+  const t = Math.max(1, hh * 0.05);
+  b.fillStyle = mixHex(coat ? tinctureColor('or') : h.tincture, field, 0.3);
   b.fillRect(0, 0, w, t);
   b.fillRect(0, hh - t, w, t);
-  b.fillStyle = mixHex(h.field, p.silhouette, 0.55);
+  b.fillStyle = mixHex(field, p.silhouette, 0.55);
   b.fillRect(w - Math.max(1.5, w * 0.06), 0, w, hh);
   // Soft vertical shading: the cloth sags away from the edges.
   const g = b.createLinearGradient(0, 0, 0, hh);

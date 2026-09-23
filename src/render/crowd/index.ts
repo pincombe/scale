@@ -598,7 +598,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       return out;
     },
     setHeraldry(h: Heraldry) {
-      heraldry = { field: h.field, tincture: h.tincture, charge: h.charge };
+      heraldry = { ...h };
       customHeraldry = true;
     },
   };

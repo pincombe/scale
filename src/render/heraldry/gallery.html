@@ -1,0 +1,287 @@
+<!doctype html>
+<!-- Dev-only heraldry gallery (not part of the build). On a dev server open
+     /src/render/heraldry/gallery.html            every charge, then coats with 0-6 charges
+     /src/render/heraldry/gallery.html?only=charges | coats | flags
+     /src/render/heraldry/gallery.html?zoom=2      magnify everything
+     /src/render/heraldry/gallery.html?only=small  true device-px renders, magnified
+     /src/render/heraldry/gallery.html?only=big&kinds=lion,sun&size=600
+     /src/render/heraldry/gallery.html?only=coats&pick=2,3,4   chosen compositions
+     Light ground on the left of each row, dark ground on the right. Bake timings are printed at the
+     bottom and in the console. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>heraldry gallery</title>
+    <style>
+      html, body { margin: 0; background: #111; color: #ddd; font: 13px/1.3 Georgia, serif; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <script type="module">
+      import { coatOf, M1_COAT, SIGNATURE, LEVEL, CHARGE_KINDS } from './coat.ts';
+      import { drawCoat, CREST_RISE, HEATER_ASPECT } from './draw.ts';
+      import { heraldryFor } from './index.ts';
+      import { BannerArt, FLAG_H, FLAG_W, drawFlag, drawShieldFace } from '../crowd/banner.ts';
+      import { MEADOW } from '../palette.ts';
+
+      const q = new URLSearchParams(location.search);
+      const only = q.get('only');
+      const Z = Number(q.get('zoom') ?? 1);
+      const dpr = devicePixelRatio;
+      const W = Math.round(innerWidth);
+      const LIGHT = '#e8dcc0';
+      const DARK = '#1b1316';
+
+      const single = (kind, rank, detail) => ({
+        ...M1_COAT,
+        key: kind + rank + detail,
+        field: SIGNATURE[kind].field,
+        principal: { kind, tincture: SIGNATURE[kind].charge, detail: detail ? SIGNATURE[kind].detail : null, rank },
+      });
+      const her = (order, lv = 1, over = {}) => {
+        const levels = { lion: 0, sun: 0, wyvern: 0, stag: 0, tower: 0, crown: 0 };
+        for (const id of order) levels[id] = lv;
+        Object.assign(levels, over);
+        return { levels, order: [...order] };
+      };
+
+      // Rows: { label, draw(ctx, x, y, lightW) , h }
+      const rows = [];
+      const timings = [];
+
+      if (!only || only === 'charges') {
+        for (const kind of CHARGE_KINDS) {
+          rows.push({
+            h: 230,
+            label: kind + ': rank 0 plain · rank 1 + detail · rank 2 + detail · 48 · 16 px',
+            draw(ctx, x, y, half) {
+              const small = (ox) => {
+                let sx = ox;
+                for (const s of [48, 16]) {
+                  for (const [r, d] of [[0, false], [2, true]]) {
+                    drawCoat(ctx, single(kind, r, d), sx + s * 0.43 * Z, y + 110 * Z, s * Z);
+                    sx += (s * 0.86 + 10) * Z;
+                  }
+                }
+              };
+              let cx = x + 14;
+              for (const [r, d] of [[0, false], [1, true], [2, true]]) {
+                drawCoat(ctx, single(kind, r, d), cx + 82 * Z, y + 112 * Z, 190 * Z);
+                cx += 178 * Z;
+              }
+              small(cx);
+              cx = half + 14;
+              drawCoat(ctx, single(kind, 2, true), cx + 82 * Z, y + 112 * Z, 190 * Z);
+              small(cx + 178 * Z);
+            },
+          });
+        }
+      }
+
+      if (only === 'big') {
+        // Large inspection: ?only=big&kinds=lion,sun&size=420
+        const kinds = (q.get('kinds') ?? 'lion').split(',');
+        const size = Number(q.get('size') ?? 420);
+        for (const kind of kinds) {
+          rows.push({
+            h: size + 30,
+            label: kind + ' at ' + size + ' px: rank 0 · rank 2 + detail',
+            draw(ctx, x, y, half) {
+              drawCoat(ctx, single(kind, 0, false), x + 20 + size * 0.43, y + size / 2 + 20, size);
+              drawCoat(ctx, single(kind, 2, true), half + 20 + size * 0.43, y + size / 2 + 20, size);
+            },
+          });
+        }
+      }
+
+      if (only === 'small') {
+        // True device-pixel renders (16, 24, 32 px tall), magnified x5 with no smoothing:
+        // ?only=small  (heater shields and the far banner texture as baked).
+        const M = Number(q.get('mag') ?? 5);
+        const list = [...CHARGE_KINDS.map((k) => [k, single(k, 0, false)]), ...[
+          ['L,S', coatOf(her(['lion', 'sun']))],
+          ['L,S,T', coatOf(her(['lion', 'sun', 'tower']))],
+          ['all six', coatOf(her(['lion', 'sun', 'tower', 'stag', 'crown', 'wyvern']))],
+          ['W,C high', coatOf(her(['wyvern', 'crown'], 6))],
+        ]];
+        for (const [label, coat] of list) {
+          rows.push({
+            h: 40 * M / dpr + 10,
+            label: '',
+            draw(ctx, x, y, half) {
+              const off = document.createElement('canvas');
+              off.width = 200;
+              off.height = 40;
+              const o = off.getContext('2d');
+              let ox = 2;
+              for (const s of [16, 24, 32]) {
+                drawCoat(o, coat, ox + s * 0.43, 3 + s / 2, s, { crest: false });
+                ox += s + 4;
+              }
+              // The far flag texture as the crowd bakes it (0.9 px per figure unit).
+              const art = new BannerArt();
+              art.update(heraldryFor(coat), MEADOW);
+              o.drawImage(art.tex[1][2], ox, 3);
+              ox += art.tex[1][2].width + 4;
+              o.drawImage(art.tex[0][2], ox, 0, art.tex[0][2].width * 0.3, art.tex[0][2].height * 0.3);
+              ctx.save();
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              ctx.imageSmoothingEnabled = false;
+              ctx.drawImage(off, 10 * dpr, (y + 6) * dpr, 200 * M, 40 * M);
+              ctx.fillStyle = '#4a3a30';
+              ctx.font = 26 + 'px Georgia';
+              ctx.fillText(label, 10 * dpr + 200 * M + 20, (y + 30) * dpr);
+              ctx.restore();
+            },
+          });
+        }
+      }
+
+      const orders = [
+        ['M1 (no charges)', her([])],
+        ['lion', her(['lion'])],
+        ['lion, sun', her(['lion', 'sun'])],
+        ['lion, sun, tower', her(['lion', 'sun', 'tower'])],
+        ['lion, sun, tower, stag', her(['lion', 'sun', 'tower', 'stag'])],
+        ['lion, sun, tower, stag, crown', her(['lion', 'sun', 'tower', 'stag', 'crown'])],
+        ['all six', her(['lion', 'sun', 'tower', 'stag', 'crown', 'wyvern'])],
+        ['lion L2 (armed and langued)', her(['lion'], 2)],
+        ['lion L3 (crowned)', her(['lion'], 3)],
+        ['lion L4 (semé of crosslets)', her(['lion'], 4)],
+        ['lion L5 (double-queued)', her(['lion'], 5)],
+        ['lion L6 (diapered)', her(['lion'], 6)],
+        ['wyvern L1, crown L3 (coronet crest)', her(['wyvern', 'crown'], 1, { crown: 3 })],
+        ['sun, wyvern high', her(['sun', 'wyvern'], 6)],
+        ['stag, tower, lion high', her(['stag', 'tower', 'lion'], 6)],
+        ['tower, crown, sun, lion high', her(['tower', 'crown', 'sun', 'lion'], 6)],
+        ['crown L6, stag, sun, wyvern, lion (royal crest)', her(['crown', 'stag', 'sun', 'wyvern', 'lion'], 5, { crown: 6 })],
+        ['all six high (L6)', her(['wyvern', 'lion', 'sun', 'crown', 'stag', 'tower'], 6)],
+      ];
+
+      if (only === 'bigcoat') {
+        // ?only=bigcoat&pick=6&size=560: a composition large, heater (light) and banner (dark).
+        const size = Number(q.get('size') ?? 560);
+        const pick = (q.get('pick') ?? '6').split(',').map(Number);
+        for (const i of pick) {
+          const [label, h] = orders[i];
+          const coat = coatOf(h);
+          rows.push({
+            h: size * (1 + CREST_RISE) + 30,
+            label,
+            draw(ctx, x, y, half) {
+              drawCoat(ctx, coat, x + 20 + size * 0.43, y + size * (0.5 + CREST_RISE) + 20, size);
+              drawCoat(ctx, coat, half + 30 + size * 0.55, y + size * (0.5 + CREST_RISE) + 20, size * 0.8, { shape: 'banner', aspect: 1.35, mirror: true });
+            },
+          });
+        }
+      }
+
+      if (!only || only === 'coats' || only === 'flags') {
+        const pick = q.get('pick') ? q.get('pick').split(',').map(Number) : null;
+        for (const [label, h] of orders.filter((_, i) => !pick || pick.includes(i))) {
+          const coat = coatOf(h);
+          const H = heraldryFor(coat);
+          // Bake the real banner cloth and the hero's shield face, timed.
+          const art = new BannerArt();
+          art.update(H, MEADOW);
+          const t0 = performance.now();
+          const sh = document.createElement('canvas');
+          sh.width = 120;
+          sh.height = 216;
+          const sx = sh.getContext('2d');
+          drawShieldFace(sx, H, 60, 23 * 4 + 4 * 1.008 * 4, 42 * 1.008 * 4);
+          const heroMs = performance.now() - t0;
+          timings.push([label, art.bakeMs, heroMs]);
+          const flagsOnly = only === 'flags';
+          rows.push({
+            h: flagsOnly ? 150 : 300,
+            label: label + '  ·  bake: banners ' + art.bakeMs.toFixed(2) + ' ms, shield ' + heroMs.toFixed(2) + ' ms',
+            draw(ctx, x, y, half) {
+              const mid = y + (flagsOnly ? 70 : 150) * Z;
+              let cx = x + 20;
+              if (!flagsOnly) {
+                drawCoat(ctx, coat, cx + 95 * Z, mid + 20 * Z, 220 * Z);
+                cx += 210 * Z;
+              }
+              drawCoat(ctx, coat, cx + 25 * Z, mid, 60 * Z);
+              drawCoat(ctx, coat, cx + 70 * Z, mid, 32 * Z);
+              drawCoat(ctx, coat, cx + 100 * Z, mid, 16 * Z);
+              cx += 130 * Z;
+              // Flags as the crowd draws them (mirrored banners of arms, rippling), near and far.
+              const flag = (fx, fy, k, size) => {
+                const t = 0.35;
+                ctx.save();
+                drawFlag(ctx, art, size, k * dpr, 0, 0, k * dpr, fx * dpr, fy * dpr, FLAG_W, 0, 1, t, 0, 12, 0.1);
+                ctx.restore();
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+              };
+              const fl = (ox) => {
+                flag(ox, mid - 40 * Z, 2.6 * Z, 0);
+                flag(ox + 140 * Z, mid - 12 * Z, 1.0 * Z, 0);
+                flag(ox + 200 * Z, mid - 6 * Z, 0.5 * Z, 1);
+                flag(ox + 230 * Z, mid - 4 * Z, 0.34 * Z, 1);
+              };
+              fl(cx);
+              if (!flagsOnly) {
+                // The hero's shield face (as baked; the hero darkens it a little in shade).
+                ctx.drawImage(sh, half - 110 * Z, mid - 60 * Z, 60 * Z, 108 * Z);
+              }
+              let dx = half + 30;
+              if (!flagsOnly) {
+                drawCoat(ctx, coat, dx + 95 * Z, mid + 20 * Z, 220 * Z);
+                dx += 210 * Z;
+              }
+              drawCoat(ctx, coat, dx + 25 * Z, mid, 60 * Z);
+              drawCoat(ctx, coat, dx + 70 * Z, mid, 32 * Z);
+              drawCoat(ctx, coat, dx + 100 * Z, mid, 16 * Z);
+              fl(dx + 130 * Z);
+            },
+          });
+        }
+      }
+
+      const total = rows.reduce((s, r) => s + r.h * Z + 22, 40) + 60;
+      const o = document.getElementById('c');
+      o.style.width = W + 'px';
+      o.style.height = total + 'px';
+      o.width = W * dpr;
+      o.height = total * dpr;
+      const ctx = o.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const half = Math.round(W / 2);
+      let y = 20;
+      for (const r of rows) {
+        const h = r.h * Z;
+        ctx.fillStyle = LIGHT;
+        ctx.fillRect(0, y, half, h + 22);
+        ctx.fillStyle = DARK;
+        ctx.fillRect(half, y, W - half, h + 22);
+        ctx.fillStyle = '#4a3a30';
+        ctx.font = '13px Georgia';
+        ctx.fillText(r.label, 10, y + 15);
+        ctx.fillStyle = '#9d8f86';
+        ctx.fillText(r.label, half + 10, y + 15);
+        const t0 = performance.now();
+        r.draw(ctx, 0, y + 12, half);
+        r.ms = performance.now() - t0;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        y += h + 22;
+      }
+      ctx.fillStyle = '#ddd';
+      if (timings.length) {
+        const avgB = timings.reduce((s, t) => s + t[1], 0) / timings.length;
+        const maxB = Math.max(...timings.map((t) => t[1]));
+        const avgH = timings.reduce((s, t) => s + t[2], 0) / timings.length;
+        const maxH = Math.max(...timings.map((t) => t[2]));
+        const line = `re-bake: banners avg ${avgB.toFixed(2)} ms (max ${maxB.toFixed(2)}), hero shield avg ${avgH.toFixed(2)} ms (max ${maxH.toFixed(2)})`;
+        ctx.fillText(line, 10, y + 20);
+        console.table(timings);
+        console.log(line);
+        document.title = 'heraldry gallery · ' + line;
+      }
+      window.__gallery = { rows, timings };
+    </script>
+  </body>
+</html>

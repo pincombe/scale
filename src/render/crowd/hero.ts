@@ -8,7 +8,7 @@ import { clamp01 } from '../../lib/math';
 import type { Palette } from '../palette';
 import type { View } from '../types';
 import { KNIGHT_HEIGHT } from '../world';
-import { drawEmblem, type Heraldry } from './banner';
+import { drawShieldFace, type Heraldry } from './banner';
 import { Joints, Pose, SHIELD_SCALE, bladeLength, copyPose, drawDetails, drawFigure, lerpPose, shieldPath, solve } from './rig';
 
 export const HERO_SCALE = 1.1;
@@ -348,7 +348,7 @@ export class Hero {
     this.artPal = p;
     this.artHer = h;
     // Shield face: the coat of arms in the kite, turned away from the sun (so in shade).
-    const s = 4;
+    const s = 6;
     const c = makeCanvas(30 * s, 54 * s);
     const x = context2d(c);
     x.setTransform(s, 0, 0, s, 15 * s, 23 * s);
@@ -359,7 +359,8 @@ export class Hero {
     x.save();
     x.clip();
     x.setTransform(1, 0, 0, 1, 0, 0);
-    drawEmblem(x, h, c.width, c.height);
+    const k = SHIELD_SCALE * 0.9;
+    drawShieldFace(x, h, 15 * s, (23 + 4 * k) * s, 42 * k * s);
     x.fillStyle = p.silhouette;
     x.globalAlpha = 0.34;
     x.fillRect(0, 0, c.width, c.height);

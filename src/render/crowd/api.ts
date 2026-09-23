@@ -1,6 +1,7 @@
 // Contract: what the rest of the game may ask of the knight crowd renderer (scene.crowd).
 // Owned by render/crowd. Add methods freely; never change or remove existing ones.
 import type { Rect, Vec2 } from '../../lib/vec';
+import type { Coat } from '../heraldry/coat';
 
 export interface CrowdView {
   /** The hero knight's chest (world m): origin for sword arcs and hero effects. */
@@ -26,12 +27,17 @@ export interface CrowdView {
   setFused?(fused: boolean): void;
 }
 
-/** A coat of arms (M1: placeholder red field, gold sword; the M2 Heraldry WP extends it). */
+/** A coat of arms (M1: placeholder red field, gold sword; M2 adds the full `coat`). */
 export interface Heraldry {
-  /** Field color (CSS hex). */
+  /** Field color (CSS hex): the coat's main field. */
   field: string;
-  /** Charge color (CSS hex). */
+  /** Charge color (CSS hex): the principal charge's tincture. */
   tincture: string;
-  /** Charge id: 'sword' | 'none' in M1. */
+  /** Principal charge id: 'sword' | 'none' in M1; any ChargeKind in M2. */
   charge: string;
+  /**
+   * M2: the full composition (render/heraldry coatOf). When present, banners and the hero's
+   * shield paint it with drawCoat and the three fields above are summaries (plumes, trims).
+   */
+  coat?: Coat;
 }
