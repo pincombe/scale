@@ -1,7 +1,12 @@
 // Public surface of the core. Other folders import from 'core' (this file) or core/decimal,
 // core/format, core/content, core/formulas. Everything in core is pure: no DOM, canvas, audio.
 export type {
+  AbilityId,
+  AbilityState,
   Action,
+  ChampionId,
+  ChampionState,
+  ChargeId,
   DebugAction,
   DragonAttack,
   DragonPhase,
@@ -11,9 +16,14 @@ export type {
   GameEvent,
   GameEventType,
   GameState,
+  HeraldryState,
   Stats,
   UnitId,
   UpgradeId,
+  WyrmState,
+  ZoomReward,
+  ZoomStage,
+  ZoomState,
 } from './types';
 export { Decimal, D } from './decimal';
 export { createInitialState, STATE_VERSION } from './state';

@@ -37,4 +37,9 @@ export interface Ui extends UiAnchors {
   toast(text: string, kind?: 'unlock' | 'upgrade' | 'milestone' | 'info'): void;
   /** Run fn ~10 times per second (wall clock): the place for DOM text updates. */
   onRefresh(fn: () => void): void;
+  /**
+   * M2: cinematic mode (the zoom). true fades out the HUD, the panel and toasts and makes them
+   * non-interactive; false brings them back. Optional until the zoom WP implements it.
+   */
+  setCinematic?(on: boolean): void;
 }

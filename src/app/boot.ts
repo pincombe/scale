@@ -9,17 +9,20 @@ import { Settings } from './settings';
 import { Input } from './input';
 import { createDebug } from './debug';
 import { installDebugTools } from './debugTools';
-import { NULL_CROWD, NULL_DRAGON, NULL_FX, type Scene } from './scene';
+import { NULL_BACKDROP, NULL_CROWD, NULL_DRAGON, NULL_FX, NULL_MUSIC, NULL_ZOOM, type Scene } from './scene';
 import { Camera } from '../render/camera';
 import { CameraDirector } from '../render/director';
 import { Renderer } from '../render/renderer';
 import { SpriteAtlas, registerBuiltinSprites } from '../render/atlas';
 import { ParticleSystem, createParticleLayer } from '../render/particles';
-import { MEADOW } from '../render/palette';
+import { paletteFor } from '../render/palette';
 import { createBackdrop } from '../render/backdrop';
 import { createDragon } from '../render/dragon';
 import { createCrowd } from '../render/crowd';
 import { createFx } from '../render/fx';
+import { createZoom } from '../render/zoom';
+import { createHeraldry } from '../render/heraldry';
+import { createMusic } from '../audio/music';
 import { AudioEngine } from '../audio/engine';
 import { createSfx } from '../audio/sfx';
 import { UiRoot } from '../ui/mount';
@@ -55,7 +58,7 @@ export async function boot(): Promise<void> {
   const game = new Game(createInitialState(seed));
   const time = new TimeDirector();
   const camera = new Camera();
-  const renderer = new Renderer(canvas, camera, MEADOW, game.state);
+  const renderer = new Renderer(canvas, camera, paletteFor(game.state.tier), game.state);
   const atlas = new SpriteAtlas();
   const sprites = registerBuiltinSprites(atlas);
   const particles = {
@@ -73,15 +76,18 @@ export async function boot(): Promise<void> {
     camera,
     director: null as unknown as CameraDirector,
     renderer,
-    palette: MEADOW,
+    palette: paletteFor(game.state.tier),
     particles,
     atlas,
     sprites,
     dragon: NULL_DRAGON,
     crowd: NULL_CROWD,
     fx: NULL_FX,
+    backdrop: NULL_BACKDROP,
+    zoom: NULL_ZOOM,
     ui,
     audio,
+    music: NULL_MUSIC,
     input: null as unknown as Input,
     debug,
   };
@@ -89,12 +95,15 @@ export async function boot(): Promise<void> {
   scene.input = new Input(scene, canvas);
 
   const backdrop = createBackdrop(scene);
+  scene.backdrop = backdrop;
   const dragon = createDragon(scene);
   scene.dragon = dragon.view;
   const crowd = createCrowd(scene);
   scene.crowd = crowd.view;
   const fx = createFx(scene);
   scene.fx = fx.api;
+  const zoom = createZoom(scene);
+  scene.zoom = zoom.api;
 
   renderer.setLayers([
     backdrop.back,
@@ -102,13 +111,16 @@ export async function boot(): Promise<void> {
     crowd.layer,
     createParticleLayer('particles.world', particles.world),
     backdrop.front,
+    zoom.layer,
     fx.text,
     fx.post,
     // Real clock: coins to the HUD must arrive on schedule through hit-stop and slow-mo.
     createParticleLayer('particles.screen', particles.screen, 'real'),
   ]);
 
+  createHeraldry(scene);
   createSfx(scene);
+  scene.music = createMusic(scene);
   createHud(scene, ui);
   createPanel(scene, ui);
   createTitle(scene, ui);
@@ -122,6 +134,8 @@ export async function boot(): Promise<void> {
     if (key === 'notation') setNotation(s.notation);
   });
   game.on('resync', () => {
+    // A new tier (zoom switch, debug jump, load) brings its palette; layers read view.palette.
+    scene.palette = paletteFor(game.state.tier);
     scene.director.snap();
     ui.refreshNow();
   });

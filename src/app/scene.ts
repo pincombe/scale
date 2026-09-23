@@ -17,6 +17,9 @@ import type { CrowdView } from '../render/crowd/api';
 import type { FxApi } from '../render/fx/api';
 import type { Ui } from '../ui/api';
 import type { AudioEngine } from '../audio/engine';
+import type { BackdropApi } from '../render/backdrop/api';
+import type { ZoomApi } from '../render/zoom/api';
+import type { MusicApi } from '../audio/music/api';
 import type { Rect, Vec2 } from '../lib/vec';
 
 export interface Scene {
@@ -36,8 +39,14 @@ export interface Scene {
   dragon: DragonView;
   crowd: CrowdView;
   fx: FxApi;
+  /** M2: the backdrop's services (eye hooks, the zoom's transition mode, the world wyrm). */
+  backdrop: BackdropApi;
+  /** M2: the zoom director (active while the cinematic owns the screen; beat hooks). */
+  zoom: ZoomApi;
   ui: Ui;
   audio: AudioEngine;
+  /** M2: the generative music engine. */
+  music: MusicApi;
   input: Input;
   debug: DebugApi;
 }
@@ -56,6 +65,19 @@ export const NULL_CROWD: CrowdView = {
   heroPoint: (out: Vec2) => ((out.x = -0.8), (out.y = -1.2), out),
   frontX: () => -0.3,
   bounds: (out: Rect) => ((out.x = -1.4), (out.y = -1.9), (out.w = 1.1), (out.h = 1.9), out),
+};
+
+export const NULL_BACKDROP: BackdropApi = {
+  openEye: () => undefined,
+};
+
+export const NULL_ZOOM: ZoomApi = {
+  active: false,
+  onBeat: () => () => undefined,
+};
+
+export const NULL_MUSIC: MusicApi = {
+  playing: false,
 };
 
 export const NULL_FX: FxApi = {

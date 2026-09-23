@@ -1,6 +1,6 @@
 // Pooled particle system: struct-of-arrays, fixed capacity, zero allocations per spawn, update
 // and draw. Two systems exist: `world` (meters, drawn through the camera, layer slot 3) and
-// `screen` (CSS px, drawn on top of everything, slot 7: coins flying to the HUD).
+// `screen` (CSS px, drawn on top of everything, slot 8: coins flying to the HUD).
 //
 // Spawning: build a ParticleSpec ONCE (module scope / constructor) with particleSpec({...}), then
 //   ps.burst(spec, x, y, count[, angle, scale])  - randomized burst from the spec's ranges

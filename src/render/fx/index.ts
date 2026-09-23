@@ -1,5 +1,5 @@
 // Juice (WP 1.4): every click, hit and kill should feel great. createFx(scene) returns the FxApi
-// (./api.ts) plus the layers 'fx.text' (slot 5: damage numbers and callouts) and 'post' (slot 6:
+// (./api.ts) plus the layers 'fx.text' (slot 6: damage numbers and callouts) and 'post' (slot 7:
 // ../post.ts). Effects key off game events, the scene.dragon / scene.crowd services and the camera,
 // never off another module's internals.
 //

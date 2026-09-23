@@ -4,8 +4,8 @@ import { makeDragon } from './dragon';
 import { seedRng } from '../lib/rng';
 import type { DragonState, GameState } from './types';
 
-/** Save schema version. Bump it (and add a migration in M3) whenever GameState's shape changes. */
-export const STATE_VERSION = 3;
+/** Save schema version. Bump it (and add a migration in M3) whenever GameState's shape changes. v4: M2 tiers, zoom, Scales, heraldry, abilities, champions. */
+export const STATE_VERSION = 4;
 
 export function createInitialState(seed: number): GameState {
   const upgrades: Record<string, number> = {};
@@ -24,6 +24,14 @@ export function createInitialState(seed: number): GameState {
     flags: {},
     stats: { strikes: 0, crits: 0, staggers: 0 },
     dragon: null as unknown as DragonState,
+    height: 1.8,
+    scales: D(0),
+    lifetimeScales: D(0),
+    wyrm: { charge: 0, bossT: 0, bossDur: 0, escapes: 0, cleared: false },
+    zoom: { stage: null, count: 0, fusion: 1, pending: null },
+    heraldry: { levels: { lion: 0, sun: 0, wyvern: 0, stag: 0, tower: 0, crown: 0 }, order: [] },
+    abilities: { charge: { active: 0, cooldown: 0 }, rally: { active: 0, cooldown: 0 }, volley: { active: 0, cooldown: 0 } },
+    champions: { aldric: { level: 0, specialT: 0 }, brunhild: { level: 0, specialT: 0 } },
     nextDragonId: 1,
     army: { meleeT: UNITS.footman.interval, volleyT: UNITS.archer.interval, volleys: [] },
   };

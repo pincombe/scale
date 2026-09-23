@@ -15,9 +15,10 @@ export const LAYER_ORDER = [
   'crowd', //         2 hero, footmen, archers, arrows, banners                  (render/crowd)
   'particles.world', // 3                                                        (render/particles)
   'backdrop.front', // 4 foreground grass, fog                                   (render/backdrop)
-  'fx.text', //       5 damage numbers                                           (render/fx)
-  'post', //          6 vignette, grain, flash, chromatic kick                   (render/post.ts)
-  'particles.screen', // 7 coins flying to the HUD                               (render/particles)
+  'zoom', //          5 the zoom cinematic: snapshot, hide, colossus (M2)        (render/zoom)
+  'fx.text', //       6 damage numbers                                           (render/fx)
+  'post', //          7 vignette, grain, flash, chromatic kick                   (render/post.ts)
+  'particles.screen', // 8 coins flying to the HUD                               (render/particles)
 ] as const;
 
 /** Last world slot (backdrop.front): drawScene(ctx, view, 0, WORLD_LAST) skips text, post and HUD coins. */

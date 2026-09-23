@@ -14,6 +14,16 @@ export interface CrowdView {
    * Optional so null stand-ins stay valid; the real crowd always implements it.
    */
   setHeraldry?(h: Heraldry): void;
+  /**
+   * M2 zoom, rally beat: every knight (hero included) rushes toward world x with banners high,
+   * arriving and piling up there within `seconds`. Implemented by the crowd M2 WP; optional.
+   */
+  rally?(x: number, seconds: number): void;
+  /**
+   * M2 zoom, fusion beat: true hides the whole army (it has become the colossus the zoom draws);
+   * false brings the crowd back as state says (the new tier's colossus-hero and its troops).
+   */
+  setFused?(fused: boolean): void;
 }
 
 /** A coat of arms (M1: placeholder red field, gold sword; the M2 Heraldry WP extends it). */

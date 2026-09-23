@@ -98,3 +98,17 @@ export const MEADOW: Palette = {
   },
   ambient: '#ffe9a8',
 };
+
+/**
+ * The Mountain (tier 1): alpenglow dusk. PLACEHOLDER (a copy of the Meadow) until WP 2.3 sets the
+ * real values.
+ */
+export const MOUNTAIN: Palette = { ...MEADOW, name: 'mountain' };
+
+/** Palettes by tier (M3 adds the Kingdom, Sky and World). */
+export const PALETTES: readonly Palette[] = [MEADOW, MOUNTAIN];
+
+/** The palette of a tier (the last one for tiers without their own yet). */
+export function paletteFor(tier: number): Palette {
+  return PALETTES[Math.max(0, Math.min(PALETTES.length - 1, Math.floor(tier)))]!;
+}

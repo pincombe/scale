@@ -36,6 +36,7 @@ export function makeDragon(state: GameState, index: number, phase: DragonPhase, 
     phaseDur,
     attack: 'breath',
     staggers: 0,
+    boss: null,
   };
 }
 

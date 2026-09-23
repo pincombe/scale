@@ -1,4 +1,4 @@
-// Post FX layer (slot 6), owned by the juice WP (1.4). In order:
+// Post FX layer (slot 7), owned by the juice WP (1.4). In order:
 //   1. Chromatic kick: for big moments the red and blue channels split radially from the stage
 //      center for ~0.3 s (a lens "hit"). Pure Canvas 2D compositing, no ctx.filter: the frame so
 //      far is copied into two half-res buffers, each masked to one channel with 'multiply'; the
@@ -7,7 +7,7 @@
 //      full-res and sharp. Only runs while a kick is live.
 //   2. Vignette: an elliptical radial gradient baked once per size/palette into a small canvas.
 //      It stays in canvas (one source-over drawImage of a cached 256 px canvas, no blend mode)
-//      because the HUD coin fountain (particles.screen, slot 7) must fly OVER it into the
+//      because the HUD coin fountain (particles.screen, slot 8) must fly OVER it into the
 //      top-left gold counter at full brightness; a CSS vignette would dim every coin as it lands.
 //   3. Flash: a full-screen additive wash that fades out (the stronger of overlapping flashes wins).
 // Film grain is NOT a canvas pass: it's a CSS overlay (fx/grain.ts), composited for free and kept

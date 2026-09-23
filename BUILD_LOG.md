@@ -3,21 +3,23 @@
 The lead's resume document. A fresh lead should be able to pick up from this file alone. PLAN.md is the design, KICKOFF.md the lead's rules, ARCHITECTURE.md the code contracts (build against it, not against other modules' internals).
 
 ## Resume here
-- **Milestone:** **M1 First Blood ★ is closed.** The user's M1 feedback (2026-09-23) is fully dealt with: WP 1.11 (teach the weak spot) and WP 1.12 (the eye belongs to the mountain) are accepted, committed and pushed. Per KICKOFF rule 8 the second lead session handed off and stopped here. **Next: M2 The Zoom ★, in a new session.**
-- **Snapshot (2026-09-23, HEAD = the hand-off commit after 9a0b8d2):**
-  - Tests: 261 pass. Typecheck: clean.
-  - `npm run sim`: 40/40 targets PASS (the new one: the eye first opens at a 2:18 engaged median).
-  - Build: `dist/index.html` 445 KB raw / 197 KB gzip, of which fonts are 98 KB.
-  - Nothing is in flight; no agents are running. The working tree is clean after the hand-off commit.
-- **Done, reviewed and fixed:** 0.1, 0.2, 0.3 and 1.1–1.12. Details are in Work packages and Log.
+- **Milestone:** **M2 The Zoom ★ in progress** (third lead session, started 2026-09-23). M1 is closed (its feedback is done; don't redo it).
+- **Where M2 stands:** the lead wrote the M2 contract skeleton (ARCHITECTURE §14; `core/types.ts` schema v4; stub folders `render/zoom`, `render/heraldry`, `audio/music`; `render/backdrop/api.ts`; the `zoom` layer slot 5; `paletteFor(tier)`). Wave 1 is launched (see M2 plan). Check the WP table for what's in flight.
+- **If you are a fresh lead mid-M2:** the old agents can't be messaged. Read "M2 plan" and "M2 design reference" below, the WP table, then `git log` since 8301c92. Re-brief any WP that has no commit from its folder's current state.
+- **Snapshot at M2 start (2026-09-23, 8301c92):** 261 tests pass, typecheck clean, `npm run sim` 40/40, build 445 KB raw / 197 KB gzip (fonts 98 KB).
 - **GitHub is live:** https://github.com/pincombe/scale (public), deployed by Actions to https://pincombe.github.io/scale/ on every push to main. The user won't share the URL until M4. See Open issue 7.
-- **Playing the build:**
-  - Open `dist/index.html` directly (self-contained, works from `file://`), or run `npm run preview` and go to http://localhost:4173.
-  - Add `?debug` for the FPS panel and state jumps (ARCHITECTURE §10).
-- **If you are a fresh lead in a new session:** the old agents can't be messaged.
-  1. M1 is closed and its feedback is done (Playtest feedback). Don't redo it.
-  2. Plan M2: read PLAN §4.5 and §14 (M2 WPs), "M2 notes from M1 reviews" (including the feedback-round notes), Open issues, and Next steps. Write the M2 WPs into Work packages before launching agents.
-  3. The user's standing preferences: clear recommendations work well; they playtest at each ★; the source is public but unshared until M4.
+- **Playing the build:** open `dist/index.html` directly, or `npm run preview` → http://localhost:4173. `?debug` for the FPS panel and jumps (ARCHITECTURE §10).
+- **The user's standing preferences:** clear recommendations work well; they playtest at each ★; the source is public but unshared until M4.
+
+## M2 plan (lead, 2026-09-23)
+**Goal (PLAN §9):** "Is the zoom a wow?" Bosses, the zoom cinematic and fusion, the Mountain, Scales and Heraldry v1, abilities, champions v1, music v1, and the sim on tier 0–1 pacing (engaged zooms at ~3:30 and ~7:30; casual's first zoom before 5:00).
+
+**Waves.** Wave 1 runs now on disjoint folders against the §14 contract. Wave 2 starts when the core (2.0) lands, because it needs real rules. Wave 3 integrates the zoom with everything, then reviews, the lead's art passes and the milestone review.
+- Wave 1: 2.0 core · 2.1A zoom prototype · 2.3 Mountain backdrop · 2.4 heraldry renderer · 2.6 music · 2.8 wyvern and bosses
+- Wave 2: 2.2 boss and gauge presentation · 2.5 UI · 2.7 sim · 2.9 crowd · 2.10 SFX v2 · 2.11 text
+- Wave 3: 2.1B zoom integration and polish · reviews · milestone review · ★
+
+**Checkpoints.** 2.1A stops after the prototype with key frames for the lead's art review, then continues as 2.1B. Every max/high WP gets a `reviewer` pass before it's accepted.
 
 ## How the M1 visual WPs were built (reference)
 - **1.2 Dragon rig v1 + newt** (builder-max, owns `src/render/dragon/**`). ✅ Landed in 57a9402 and now in review; kept here as reference. As built: weak spot min `WEAK_HIT_MIN_PX = 11`; on small dragons the loose scale sits on the tail; throat only during breath windups, tail base during swipe windups; the swipe is a quick turnaround with the tail lashing through the front ranks at ~50–450 ms plus a dust shockwave; the dragon adds its own small shake on tail slams and on footsteps of dragons ≥ 5 m; `setOverride` on the returned object is for mutations; optional `DragonView.tailPoint`/`breathReachX`. **Adding a species:** add a `SpeciesDef` with `young`/`old` parameter sets, blended by size on a log scale. The sets cover proportions and posture; head shape (eye, brow, teeth, horns, gills, whiskers, frill); leg pairs; wings; crest; tail fin, spade or club; head count; per-individual variation; and behavior tuning. Set a feature to 0 to switch it off.
@@ -241,6 +243,29 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 - All text lives in `src/core/content/text.ts` (`UNIT_TEXT`, `UPGRADE_TEXT`, `dragonName(rand, species, index)`, `sizeWord`, `MICROCOPY`).
 - The UI generates effect lines from data; flavor text never restates the effect.
 
+## M2 design reference (lead decisions, 2026-09-23)
+**The judge's first 8 minutes (target, engaged):** M1's beats to ~2:00 · the gauge appears (~1:00) · Ser Aldric joins (~2:00) · the eye opens (gauge-tied, ~2:15–2:45, with a time fallback so every player sees it before the boss) · gauge full → the Elder Newt (horn, darkened sky, 30 s timer) ~3:00–3:15 · boss falls → **the first zoom plays by itself** ~3:30 · the Mountain: the colossus stands alone, Heraldry opens with Scales to spend, Charge! and Rally unlock, wyverns glide in · lancers ~4:30 · Dame Brunhild ~5:30 · Dragonbane Volley ~5:00 · Grimmaw ~7:00 → beaten ~7:30 → the Zoom button offers the Kingdom ("next build" in M2).
+
+**Rules** (ARCHITECTURE §14 has the contract)
+- **Upgrades persist through zooms**; each tier adds its own set (no re-buying Pointier Swords). Gold, units, kills and the gauge reset; champions, heraldry, Scales and flags persist.
+- **The first zoom of a save starts by itself** when the first boss's death finishes. Later zooms are the player's choice (push further = more Scales and a bigger Fusion Bonus).
+- **Bosses:** timer ~30 s while hittable; on timeout the boss leaves (new `leave` phase), the gauge drops back to ~75%, ordinary dragons resume. No dead end.
+- **Heraldry v1:** lion (damage), sun (gold), wyvern (crits), stag (cooldowns), tower (starting troops), crown (Fusion Bonus). Eagle and moon come with golden dragons and offline progress (M3); seneschal and herald with automation (M3).
+- **Abilities on keys 1–3:** Charge! (army ×N), Rally (auto-strikes), Dragonbane Volley (one huge volley). Key 4 stays free.
+- **M2 ends at Grimmaw.** The Zoom button then says the Kingdom arrives in the next build; that's a milestone boundary, not placeholder art.
+
+**The zoom's art direction** (the brief for 2.1; PLAN §4.5)
+- **Geometry:** one continuous exponential pull-back by exactly the knight-height ratio (e.g. 1.8 m → ~200 m ≈ ×111). The colossus is that many times a meadow knight, so in the meadow's own framing its boots fill the screen; at the end it's the Mountain's hero at the base framing, and the meadow snapshot is one small scale near its feet. Scale the snapshot about a focal point that moves smoothly to its final spot.
+- **Beats:** the boss falls (music drops out) → rally (~1 s: horn, knights rush in with banners high, the ground trembles) → fusion (~1.2 s: the pile rises and glows, flash, sub hit) → boots fill the screen → pull-back (~4 s: greaves, tabard with the coat of arms, helm and plume; the meadow shrinks into a scale; neighboring scales; the flank; the flank's top edge is the ridge line the colossus stands on; the dorsal spines are the range) → reveal (~1.5 s: the world wyrm's head rises over the ridge, its eye opens, it roars; snow slides off the peaks) → card: **II · THE MOUNTAIN**, then *Every dragon is a scale on a bigger dragon.* → play resumes as the first wyvern glides in.
+- **Who draws what:** the zoom owns the colossus (a high-detail vector knight matching the crowd hero, drawn direct at any size, never from the 2048 px hero buffer), the close-up hide and the snapshot. The Mountain backdrop owns the world wyrm's head (posed by the zoom through `wyrmPose`) and the scaly ground. The crowd owns rally and fusion (`rally`, `setFused`). The zoom must hand back to the live Mountain with no visible pop (the colossus becomes the crowd's hero at the same spot, size and pose).
+- **Seams:** mist, streaks, the flash and motion hide them; no per-frame palette blending (the palette switches at `switch`, under cover).
+
+**The Mountain (2.3):** alpenglow dusk. The range is the world wyrm's spine: dorsal plates as peaks, curving into the distance. The ground band is the wyrm's back, scaled. Knights are ~200 m tall, so clouds drift at their knees and pine forests are moss. The world wyrm's head rests at one end of the range: it's the Mountain's "eye in the hills" and the reveal's actor.
+
+**Music (2.6):** D-centric, agreeing with the SFX's D major pentatonic. Meadow: lute and flute in D Mixolydian over a drone in fifths. Mountain: horns and drone (D Dorian). Boss: frame drum, timpani, horn stabs. Zoom: the music drops out at the boss's fall, a choir swell rises through the fusion, a sub hit on the flash, and the Mountain theme enters under the card. It sits under the SFX (never masks clicks).
+
+**Size budget:** 445 KB at M2 start. M2 should land near 600 KB; investigate past 700 KB.
+
 ## Decisions
 | Date | Decision |
 |---|---|
@@ -287,6 +312,23 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 | 1.11 Teach the weak spot (M1 feedback 3): coach mark anchored on the live spot, "Weak spot ×5" cause caption on the first crits, stagger coach on early windups; `hintWeakSpot`/`hintStagger` captions retired | builder-high (+ writer pass) | `src/ui/hints.ts`, `src/ui/styles.css` (hint rules), `src/render/fx/**`, MICROCOPY in `text.ts` (+ narrow grants: `createHireButton` in `ui/hud.ts`, additive `DragonView.weakRadius()`) | ✅ accepted after review (1 high + 1 medium + 2 low fixed: a lethal first crit ate the caption; Hire keep-out measured mid-animation; DPR < 1 labels; hit-radius copy → `DragonView.weakRadius()`) + lead note (line 1 now 700 17px over italic 16px); writer pass done | a423526 |
 | 1.12 The eye belongs to the mountain (M1 feedback 4): carved under a rock brow, hazed like its layer, smaller, the head readable when open, life touches, first opening at ~2:00–2:30 | builder-high | `src/render/backdrop/**` (+ MEADOW in `palette.ts`) | ✅ accepted after review (3 medium + 4 low fixed: art rebaked inside draw(); invisible tremor → 0.22/0.26; invisible steam → removed; the timing test moved into the sim as a target; hard pebbles; snout step; flock pop; face baked at the layer's 160 px/unit). New `wyrm.ts` + `eye.ts`; 0.75× size; first opening 2.2 s after kill 23 (engaged median 2:18); ~0.06–0.08 ms/frame open; narrow grant: `src/sim/play.ts`, `targets.ts` | 9a0b8d2 |
 
+### M2: The Zoom ★ (in progress)
+| WP | Agent | Owns | Needs | Status |
+|---|---|---|---|---|
+| 2.0 M2 core: tiers, gauge, bosses (+`leave`), zoom stages, Scales, Fusion, heraldry, abilities, champions, lancers, text shapes, save v4, debug ops; sim kept green | builder-high | `src/core/**`; `src/sim/**` only to keep targets green; M2 debug controls in `src/app/debugTools.ts`; ARCHITECTURE §4/§14 wording | contract (done) | 🔨 wave 1 |
+| 2.1A Zoom director prototype: snapshot, exponential pull-back, colossus, hide, hand-back; stops with key frames for review | builder-max | `src/render/zoom/**`, `src/ui/tierCard.ts` (+ its CSS), `setCinematic` in `src/ui/mount.ts`/`api.ts` | contract | 🔨 wave 1 |
+| 2.1B Zoom integration and polish: core stages, crowd rally/fuse, Mountain backdrop and world wyrm, beats for audio | builder-max (same agent if alive) | as 2.1A | 2.0, 2.3, 2.9 | ⏳ wave 3 |
+| 2.2 Boss and gauge presentation: gauge HUD, boss arrival (horn cue, darkened sky, red vignette pulse), timer, boss bar, tremors by gauge, the eye tied to the gauge + time fallback + `onEyeOpen`, Zoom button | builder-high | new `src/ui/gauge.ts`, `src/ui/boss.ts` (+ CSS), `src/render/fx/**`, `src/render/post.ts`, `backdrop/eyeTimeline.ts` (narrow) | 2.0, 2.3 | ⏳ wave 2 |
+| 2.3 Mountain backdrop: tier-aware backdrop, alpenglow palette, the range as the wyrm's spine, scaly ground, knee-high clouds, the world wyrm's head (`wyrmPose`), `setTransition`, memory per tier | builder-high | `src/render/backdrop/**` (not `eyeTimeline.ts`), `MOUNTAIN` in `src/render/palette.ts` | contract | 🔨 wave 1 |
+| 2.4 Heraldry renderer: coat of arms from `state.heraldry`, charges as vector art, banners/shield bake, `createHeraldry` | builder-high | `src/render/heraldry/**`, `src/render/crowd/banner.ts`, the `Heraldry` type in `crowd/api.ts` | contract | 🔨 wave 1 |
+| 2.5 UI M2: panel tabs (Champions, Heraldry), abilities bar (1–3), Scales counter, the height headline, heraldry tab with the big coat | builder-medium | `src/ui/panel.ts`, `hud.ts`, new `src/ui/abilities.ts`, `champions.ts`, `heraldry.ts` (+ CSS), `app/input.ts` onAbility | 2.0, 2.4 | ⏳ wave 2 |
+| 2.6 Generative music engine v1 | builder-max | `src/audio/music/**` (engine.ts only if the music bus needs it: flag it) | contract | 🔨 wave 1 |
+| 2.7 Sim: tier 0–1 pacing (zooms ~3:30 / ~7:30, casual < 5:00), tune `BALANCE` | builder-high | `src/sim/**`, `BALANCE` | 2.0 | ⏳ wave 2 |
+| 2.8 Wyvern species and bosses: wings as forelegs, craggy plates, glide-in, wing hits + `weakRadius`, `leave`, Elder Newt and Grimmaw dressing, cache keyed by tier | builder-max | `src/render/dragon/**` | contract | 🔨 wave 1 |
+| 2.9 Crowd M2: lancers (cavalry), champions (Aldric, Brunhild), ability reactions, `rally`/`setFused` | builder-high | `src/render/crowd/**` except `banner.ts` | 2.0, 2.4 | ⏳ wave 2 |
+| 2.10 SFX v2: boss horn, tremors, the eye's rumble, zoom beats, abilities, lancers, champions, heraldry | builder-high | `src/audio/sfx*.ts`, `src/audio/synth/**` | 2.0, 2.1A beats | ⏳ wave 2 |
+| 2.11 M2 text: tier cards, bosses, champions, charges, abilities, lancer, tier-1 upgrades, height words, microcopy | writer | `src/core/content/text.ts` | 2.0 | ⏳ wave 2 |
+
 ## Process notes (how this build runs)
 **Agents and reviews**
 - The lead plans, briefs, verifies and commits. Builders implement, and each owns one folder.
@@ -322,16 +364,11 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - a ~200-word report format
 
 ## Next steps
-**M1: done.** All WPs landed, reviewed and fixed; the ★ playtest feedback is dealt with (1.11, 1.12); handed off 2026-09-23.
-
-**M2 The Zoom ★** (next, in a new session; PLAN §14)
-- 2.1 Zoom director + fusion cinematic (max; prototype first; use the snapshot rule in Decisions).
-- 2.2 Bosses + Wyrm Gauge by kill count, tremors and the eye (high). Re-tie the eye's first opening to the gauge with a time-based fallback for casual players, and give it a sound (see the feedback-round notes in M2 notes).
-- 2.3 Mountain tier: backdrop + wyvern species as a new rig parameter set (high).
-- 2.4 Scales + Heraldry v1 + coat-of-arms renderer, feeding the crowd's banner-emblem function (high).
-- 2.5 Abilities (keys 1–4 via `input.onAbility`) + champions v1 (medium).
-- 2.6 Generative music engine (max; D major pentatonic home key).
-- 2.7 Sim for tier 0–1 pacing (engaged zoom at ~3:30 / 7:30).
+**M2 The Zoom ★** (in progress; see M2 plan and the M2 WP table)
+1. Wave 1 in flight: 2.0 core, 2.1A zoom prototype, 2.3 Mountain backdrop, 2.4 heraldry renderer, 2.6 music, 2.8 wyvern and bosses.
+2. When 2.0 lands: review it, commit, launch wave 2 (2.2, 2.5, 2.7, 2.9, 2.10, 2.11).
+3. When 2.1A reports: the lead's art review of its key frames, then 2.1B.
+4. Wave 3: integration, reviews, milestone review, lead art pass at 1440×900, then the ★ hand-off.
 
 ## Log
 - 2026-09-22: Kickoff. Open questions answered. Git initialized, plan committed (4403f84).
@@ -358,3 +395,4 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 - 2026-09-23: WP 1.11 accepted (a423526). Review: a lethal first crit ate the "Weak spot ×5" caption (now only shown captions count), the Hire keep-out was measured mid-animation (static wrapper anchor), DPR < 1 labels, and the hit-radius copy became `DragonView.weakRadius()`. Lead note: line 1 of the coach now dominates (700 17px). Writer strings: "Strike where it glows" / "×5 damage. It's a sore spot."; "Strike now!" / "Interrupt it for bonus gold"; "Weak spot ×5".
 - 2026-09-23: WP 1.12 accepted (9a0b8d2). The valley wall is a sleeping stone wyrm's head; the eye is soft, hazed and carved under a brow, first opening at 2:18 (engaged median). Review fixes: side-effect-free draw, a felt tremor, steam removed, the timing test moved into the sim (40/40), soft pebbles, a smooth snout, no flock pop. Lead art check at 1440×900 and at 3.3× magnification: premium.
 - 2026-09-23: Repo live. The user created `pincombe/scale` (public) and enabled Pages; the lead added `origin` and pushed. First CI and Pages runs passed. Added the `snapshot` launch config (port 4180, `.vite/snapshot/`) for lead checks. **M1 closed; hand-off per KICKOFF rule 8.** M2 starts in a new session.
+- 2026-09-23: Third lead session (M2). Baseline green at 8301c92 (261 tests, sim 40/40, 445 KB). The lead wrote the M2 contract skeleton: `core/types.ts` schema v4 (tiers, wyrm gauge, `leave`, zoom stages, Scales, heraldry, abilities, champions), stub folders `render/zoom` (auto-completes zooms until 2.1), `render/heraldry`, `audio/music`, `render/backdrop/api.ts`, the `zoom` layer slot 5, `paletteFor(tier)` with a placeholder MOUNTAIN, `CrowdView.rally/setFused`, `Ui.setCinematic`, ARCHITECTURE §14. M2 plan and WPs written; wave 1 launched.

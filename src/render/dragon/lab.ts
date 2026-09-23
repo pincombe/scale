@@ -31,7 +31,7 @@ const num = (k: string, d: number): number => {
   return Number.isFinite(n) ? n : d;
 };
 
-const DUR: Record<DragonPhase, number> = { enter: 1.6, idle: 5, windup: 1.2, breath: 1.5, swipe: 0.9, stagger: 1.4, dying: 1.6 };
+const DUR: Record<DragonPhase, number> = { enter: 1.6, idle: 5, windup: 1.2, breath: 1.5, swipe: 0.9, stagger: 1.4, dying: 1.6, leave: 1.6 };
 const palette = MEADOW;
 const atlas = new SpriteAtlas();
 const sprites = registerBuiltinSprites(atlas);

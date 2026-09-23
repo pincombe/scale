@@ -17,6 +17,9 @@ The code contracts. PLAN.md is the design, BUILD_LOG.md the status. If a contrac
 | `src/audio/` | `engine.ts` (graph, lead); `sfx.ts` → `createSfx(scene)` | 1.7 (`sfx*`) |
 | `src/ui/` | `mount.ts` (UiRoot: regions, anchors, inset, toasts, refresh), placeholder `hud.ts`, `panel.ts`, `title.ts`, `styles.css` | 1.6 |
 | `src/sim/` | Headless runs of the real core (`npm run sim`, in CI) | 1.9 |
+| `src/render/zoom/` (M2) | `createZoom(scene) → { layer, api: ZoomApi }`: the zoom cinematic (layer slot 5) | 2.1 |
+| `src/render/heraldry/` (M2) | `createHeraldry(scene)`: the coat of arms from `state.heraldry`, drawn for banners, shields and the panel | 2.4 |
+| `src/audio/music/` (M2) | `createMusic(scene) → MusicApi`: generative, adaptive music on `audio.music` | 2.6 |
 
 Each stub folder has an `api.ts` (the contract other folders use: extend it, never break it) and an `index.ts` factory (replace freely, keep the factory signature and layer names).
 
@@ -100,7 +103,7 @@ Melee beats skip `enter`/`breath`/`swipe`/`dying` (knights are scattered or flun
 
 ## 5. Scene (`app/scene.ts`)
 
-Every factory gets the same `scene`: `{ game, time, settings, camera, director, renderer, palette, particles: { world, screen }, atlas, sprites, dragon: DragonView, crowd: CrowdView, fx: FxApi, ui: Ui, audio, input, debug }`. Read other services **lazily** (in update/draw/handlers, never in your factory body): `dragon`, `crowd` and `fx` are wired after construction (null objects until then). `scene.palette` is the current tier palette; layers read `view.palette`.
+Every factory gets the same `scene`: `{ game, time, settings, camera, director, renderer, palette, particles: { world, screen }, atlas, sprites, dragon: DragonView, crowd: CrowdView, fx: FxApi, backdrop: BackdropApi, zoom: ZoomApi, ui: Ui, audio, music: MusicApi, input, debug }`. Read other services **lazily** (in update/draw/handlers, never in your factory body): `dragon`, `crowd`, `fx`, `backdrop`, `zoom` and `music` are wired after construction (null objects until then). `scene.palette` is the current tier palette (`paletteFor(state.tier)`, reset on every `resync`); layers read `view.palette`.
 
 ## 6. Layers and the stack (`render/types.ts`, `render/renderer.ts`)
 
@@ -109,10 +112,10 @@ interface Layer { readonly name: string; visible: boolean;
   resize?(w, h, dpr): void; update?(view: View): void; draw(ctx: CanvasRenderingContext2D, view: View): void }
 interface View { state; alpha; dt; time; realDt; realTime; camera; palette; width; height /*CSS px*/; dpr; frame }
 ```
-Order (names are checked by `renderer.setLayers`): **0** `backdrop.back` (must paint every pixel) · **1** `dragon` · **2** `crowd` · **3** `particles.world` · **4** `backdrop.front` · **5** `fx.text` · **6** `post` · **7** `particles.screen`.
+Order (names are checked by `renderer.setLayers`): **0** `backdrop.back` (must paint every pixel) · **1** `dragon` · **2** `crowd` · **3** `particles.world` · **4** `backdrop.front` · **5** `zoom` (M2: the cinematic) · **6** `fx.text` · **7** `post` · **8** `particles.screen`.
 - `update(view)` runs once per frame for every layer (even hidden ones) before any draw; it's where state advances.
 - `draw(ctx, view)` must be **re-entrant and side-effect free**. Use only `ctx` and `view` (never the main canvas or a cached camera). Each layer draws inside its own `save()`/`restore()`, starting from `setTransform(dpr,0,0,dpr,0,0)`, alpha 1, `source-over`, so you draw in CSS px and clips, shadows, dashes or smoothing never leak. `view.camera.apply(ctx)` switches to world meters.
-- `renderer.drawScene(ctx, view, first = 0, last = 7)` paints slots `first..last`. M2's zoom director snapshots only the world, `drawScene(snapCtx, renderer.view, 0, WORLD_LAST /*4*/)` (no `fx.text`, `post`, `particles.screen`), of the outgoing tier **before** switching state, at the main view size. A view whose `state` differs from the live one is not supported: layers keep per-tier animation state.
+- `renderer.drawScene(ctx, view, first = 0, last = 8)` paints slots `first..last`. M2's zoom director snapshots only the world, `drawScene(snapCtx, renderer.view, 0, WORLD_LAST /*4*/)` (no `fx.text`, `post`, `particles.screen`), of the outgoing tier **before** switching state, at the main view size. A view whose `state` differs from the live one is not supported: layers keep per-tier animation state.
 - Offscreen buffers: `makeCanvas(w, h)` (`document.createElement`; no OffscreenCanvas). No `ctx.filter` or other Chrome-only canvas APIs. Cache static art on `resize` (or lazily, keyed by size + palette).
 
 ## 7. World and camera
@@ -202,3 +205,39 @@ URL params (with `?debug`): `seed=N dragon=N footman=N archer=N gold=N speed=X p
 - **SFX**: click once to unlock audio, then `?debug&footman=30&archer=20` for a steady stream of events; subscribe with `game.on`.
 - **Economy**: `npm test`, `npm run sim` (headless), and `?debug&speed=10` to watch pacing live.
 - **HUD/UI**: `panel=1`, `G` for gold, `F`/`A` for purchases; `__scale.scene.ui.anchor('gold', {x:0,y:0})`.
+
+## 14. M2 contract: tiers, the Wyrm Gauge, bosses, the zoom, Scales, heraldry, abilities, champions
+
+The types are in `core/types.ts` (schema v4). Core (WP 2.0) implements the rules; everyone else builds against this section. Numbers live in `BALANCE` and are tuned by the sim (WP 2.7).
+
+**Tiers.** `TIERS` (core content): per tier `{ id, species, boss, bossAt /*kills to fill the gauge*/, baseHeight /*display m*/, units, champion }`. M2 has two: **0 Meadow** (newt · The Elder Newt · footman, archer · Ser Aldric) and **1 Mountain** (wyvern · Grimmaw of the Peaks · lancer · Dame Brunhild). Zooming past the last tier is refused (in M2 the Zoom button after Grimmaw says the Kingdom comes in the next build). World units stay tier-local meters: a knight is always `KNIGHT_HEIGHT` = 1.8 world m, and `state.height` is its **display** height (1.8 in the Meadow; the colossus's height after a zoom: the headline number). A length's display value is `m × state.height / 1.8` (`sel.displayMeters`).
+
+**Wyrm Gauge and bosses.** Each ordinary kill adds 1 to `wyrm.charge`; `sel.gauge(s)` = charge / bossAt, 0..1. When the gauge is full, the next dragon to spawn is the boss (`bossSummon {boss, dur}`, then its `dragonSpawn`; `dragon.boss` = the boss id). A boss is a dragon in every respect (all phases, weak spots, staggers) but bigger, tougher and named from `BOSS_TEXT`. Its timer `wyrm.bossT` counts down from `wyrm.bossDur` only while it can be hit (not during `enter`, `dying`, `leave` or a hold).
+- Timer out: `bossEscaped`; the boss plays `leave`; the gauge drops back (to ~75%, `BALANCE`); the next ordinary dragon spawns after the leave. No dead end: a few more kills bring it back, and the army has grown.
+- Boss killed: its `dragonDeath` (a big reward), then `bossDefeated {boss, first}`, and `wyrm.cleared = true`.
+- After a boss kill: in a save that has never zoomed (`zoom.count === 0`), core **begins the zoom by itself** when the boss's `dying` ends (no new dragon spawns). Otherwise ordinary dragons keep coming (still growing), and the UI offers the Zoom button (`sel.canZoom(s)`): zoom now, or push further for a mightier colossus.
+
+**The zoom** (`{type: 'zoom', stage}`; the director in render/zoom drives it):
+1. `begin`: needs `sel.canZoom(s)`. Sets `zoom.stage = 'begin'` (a **hold**: dragon phases don't transition, the army doesn't act, abilities and champions pause, strikes and purchases are ignored; a fighting dragon switches to `leave` and its phaseT still runs so the animation finishes). Fixes `zoom.pending` = `{scales, fusion, height}` and emits `zoomBegin {from, to, scales, fusion, height}`.
+2. `switch`: render dispatches it after snapshotting the old tier (§6). Pays the reward and swaps in the next tier: `tier + 1`, `height`, `scales`/`lifetimeScales` += pending (a `scalesGain`), `zoom.fusion *= pending.fusion`, `zoom.count + 1`; **resets** gold, units (Tower heraldry grants starting troops), army timers and volleys, `kills`, `wyrm`, ability actives and cooldowns; **keeps** upgrades (each tier adds its own set), heraldry, champions (levels), Scales, stats, flags, lifetimeGold. The new tier's dragon #0 spawns in `enter` at phaseT 0 and stays frozen. Emits `zoomSwitch {tier}` then `resync`. `zoom.stage = 'switched'`.
+3. `end`: `zoom.stage = null`; play resumes and dragon #0 makes its entrance. Emits `zoomEnd {tier}`.
+Actions in the wrong stage are no-ops. The sim dispatches `switch` and `end` after a modeled cinematic delay.
+
+**Scales and the Fusion Bonus.** `sel.scalesForZoom(s)` (what zooming now pays: grows with the tier and with how far you pushed past the boss) and `sel.fusionForZoom(s)` (grows with the army you fuse; Crown heraldry adds to it). The colossus's height (the new tier's `height`) = the tier's `baseHeight` scaled by the fusion bonus (so a mightier army stands taller: "212 m"). `zoom.fusion` multiplies all damage for the rest of the loop.
+
+**Heraldry** (`buyHeraldry {id}`, costs Scales: `sel.heraldryCost(s, id)`): `heraldry.levels[id]` + 1; the first purchase of a charge appends it to `heraldry.order` (order[0] is the principal charge on the shield). Effects by level: **lion** all damage, **sun** gold, **wyvern** weak-spot crits, **stag** ability cooldowns, **tower** starting troops each tier, **crown** Fusion Bonus. Unlocked by the first zoom (`feature.heraldry`). Emits `purchase {kind: 'heraldry'}`. render/heraldry derives the coat of arms from `state.heraldry` alone.
+
+**Abilities** (`useAbility {id}`; flags `ability.<id>`; the Mountain unlocks charge and rally at once, volley later): ready when unlocked, `cooldown === 0` and not holding. **charge** (Charge!): army damage × N while active. **rally**: auto-strikes at a fixed rate while active, at plain click damage (`strike` events with `auto: true`, `aimed: false`, never crits). **volley** (Dragonbane Volley): one huge archer volley (a `volley` event, then its `armyHit`), even with no archers. Emits `abilityUse {id, dur}`, `abilityEnd`, `abilityReady`. Stag heraldry shortens cooldowns. Keys 1–3 (`input.onAbility`).
+
+**Champions** (`champion.<id>` flags; `levelChampion {id, amount}` costs gold, `sel.championCost`): each tier's champion joins by itself at a kill count (`championJoin`, level 1, free): Ser Aldric in the Meadow (~2:00), Dame Brunhild in the Mountain. They persist through zooms. A champion adds damage to the army (scaling with level) and every few seconds lands a special move (`championSpecial {id, damage}`: damage already applied).
+
+**Lancers** (Mountain, `unit.lancer`): `UnitDef.kind = 'cavalry'`. Every interval they charge: `cavalry {unit, riders, travel}`, and the matching `armyHit {unit: 'lancer'}` lands `travel` s later (dropped if the dragon is gone or dying).
+
+**Text** (writer; shapes owned by core): `TIER_TEXT[tier] {name, numeral, card}`, `BOSS_TEXT[id] {name, epithet, arrive, fall}`, `CHAMPION_TEXT[id] {name, title, special, join, quips}`, `CHARGE_TEXT[id] {name, flavor}`, `ABILITY_TEXT[id] {name, flavor}`, `heightWord(displayMeters)` (the knight-height comparison), plus `MICROCOPY` keys.
+
+**Render and app services (M2).**
+- `scene.zoom: ZoomApi` (`render/zoom/api.ts`): `active`, `onBeat(fn)` with beats `rally · fusion · flash · pullback · reveal · roar · card · done`. On `zoomBegin` the director sets `scene.director.enabled = false`, `scene.ui.setCinematic?.(true)`, `scene.backdrop.setTransition?.(true)`; rally/fusion play on the old tier (`scene.crowd.rally?`, `setFused?`); it snapshots the old tier with `renderer.drawScene(snap, renderer.view, 0, WORLD_LAST)`, **then** dispatches `switch`; after the reveal and the card it dispatches `end` and hands everything back. The layer `zoom` (slot 5) draws the snapshot, the hide and the colossus over the world. Until WP 2.1 lands, a stub completes every zoom at once.
+- `scene.backdrop: BackdropApi` (`render/backdrop/api.ts`): `openEye()`, `onEyeOpen?(fn)`, `setTransition?(on)` (no re-bakes while the zoom flies the camera), `wyrmPose?(pose | null)` (the Mountain's world wyrm: rise, eye, jaw).
+- `scene.music: MusicApi` (`audio/music/api.ts`): the engine reads state every frame (tier, boss, zoom stage) and listens to game events and zoom beats.
+- `CrowdView.rally?(x, seconds)`, `CrowdView.setFused?(fused)`; `Ui.setCinematic?(on)`.
+- `paletteFor(tier)` (`render/palette.ts`); the dragon's resource cache must be keyed by tier or palette name, never rebuilt per frame (no per-frame palette blending: the palette switches at `switch`, under the zoom's cover).
