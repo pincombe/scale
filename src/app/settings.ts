@@ -27,10 +27,23 @@ export const DEFAULT_SETTINGS: Readonly<SettingsValues> = {
 
 const KEY = 'scale.settings.v1';
 
+/**
+ * The OS "reduce motion" preference. Until the M3 settings UI lets players choose, it's the default
+ * for both reduceMotion and reduceFlashes (the zoom's flash and the boss's pulse are flash-like);
+ * a stored choice always wins.
+ */
+function prefersReducedMotion(): boolean {
+  try {
+    return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+}
+
 type Listener = (s: Readonly<SettingsValues>, key: keyof SettingsValues) => void;
 
 export class Settings {
-  private values: SettingsValues = { ...DEFAULT_SETTINGS };
+  private values: SettingsValues = { ...DEFAULT_SETTINGS, reduceMotion: prefersReducedMotion(), reduceFlashes: prefersReducedMotion() };
   private listeners: Listener[] = [];
 
   constructor(private readonly storage: Storage | null = safeStorage()) {
