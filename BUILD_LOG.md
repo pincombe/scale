@@ -3,20 +3,21 @@
 The lead's resume document. A fresh lead should be able to pick up from this file alone. PLAN.md is the design, KICKOFF.md the lead's rules, ARCHITECTURE.md the code contracts (build against it, not against other modules' internals).
 
 ## Resume here
-- **Milestone:** M1 First Blood ★. **The M1 playtest build was handed to the user on 2026-09-23. We're waiting for their feedback.** Don't start M2. KICKOFF rule 8: once the ★ feedback is dealt with, let agents finish, update this file, commit, tell the user, and stop. The next milestone starts in a new session.
-- **Snapshot (2026-09-23, HEAD dc2ed52 + this log):**
-  - Tests: 237 pass. Typecheck: clean.
-  - `npm run sim`: 39/39 targets PASS.
-  - Build: `dist/index.html` 427 KB raw / 190 KB gzip, of which fonts are 98 KB.
-  - The working tree is clean; nothing is in flight.
-- **Done, reviewed and fixed:** 0.1, 0.2, 0.3 and 1.1–1.10. Details are in Work packages and Log.
+- **Milestone:** **M1 First Blood ★ is closed.** The user's M1 feedback (2026-09-23) is fully dealt with: WP 1.11 (teach the weak spot) and WP 1.12 (the eye belongs to the mountain) are accepted, committed and pushed. Per KICKOFF rule 8 the second lead session handed off and stopped here. **Next: M2 The Zoom ★, in a new session.**
+- **Snapshot (2026-09-23, HEAD = the hand-off commit after 9a0b8d2):**
+  - Tests: 261 pass. Typecheck: clean.
+  - `npm run sim`: 40/40 targets PASS (the new one: the eye first opens at a 2:18 engaged median).
+  - Build: `dist/index.html` 445 KB raw / 197 KB gzip, of which fonts are 98 KB.
+  - Nothing is in flight; no agents are running. The working tree is clean after the hand-off commit.
+- **Done, reviewed and fixed:** 0.1, 0.2, 0.3 and 1.1–1.12. Details are in Work packages and Log.
+- **GitHub is live:** https://github.com/pincombe/scale (public), deployed by Actions to https://pincombe.github.io/scale/ on every push to main. The user won't share the URL until M4. See Open issue 7.
 - **Playing the build:**
   - Open `dist/index.html` directly (self-contained, works from `file://`), or run `npm run preview` and go to http://localhost:4173.
   - Add `?debug` for the FPS panel and state jumps (ARCHITECTURE §10).
 - **If you are a fresh lead in a new session:** the old agents can't be messaged.
-  1. Read the **Playtest feedback** section. If it has the user's M1 feedback, turn it into WPs.
-  2. Otherwise ask the user for their M1 feedback.
-  3. For M2 planning, read "M2 notes from M1 reviews" and Next steps.
+  1. M1 is closed and its feedback is done (Playtest feedback). Don't redo it.
+  2. Plan M2: read PLAN §4.5 and §14 (M2 WPs), "M2 notes from M1 reviews" (including the feedback-round notes), Open issues, and Next steps. Write the M2 WPs into Work packages before launching agents.
+  3. The user's standing preferences: clear recommendations work well; they playtest at each ★; the source is public but unshared until M4.
 
 ## How the M1 visual WPs were built (reference)
 - **1.2 Dragon rig v1 + newt** (builder-max, owns `src/render/dragon/**`). ✅ Landed in 57a9402 and now in review; kept here as reference. As built: weak spot min `WEAK_HIT_MIN_PX = 11`; on small dragons the loose scale sits on the tail; throat only during breath windups, tail base during swipe windups; the swipe is a quick turnaround with the tail lashing through the front ranks at ~50–450 ms plus a dust shockwave; the dragon adds its own small shake on tail slams and on footsteps of dragons ≥ 5 m; `setOverride` on the returned object is for mutations; optional `DragonView.tailPoint`/`breathReachX`. **Adding a species:** add a `SpeciesDef` with `young`/`old` parameter sets, blended by size on a log scale. The sets cover proportions and posture; head shape (eye, brow, teeth, horns, gills, whiskers, frill); leg pairs; wings; crest; tail fin, spade or club; head count; per-individual variation; and behavior tuning. Set a feature to 0 to switch it off.
@@ -69,15 +70,13 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 
 ## Observations to revisit after the playtest (lead)
 - **Staggers:** engaged players still stagger ~half their windups at a 25% throat-hit rate. Fine for skilled play; revisit if the user rarely sees fire breath.
-- **Base framing:** until dragons reach ~3 m, knights are large (the hero is ~260 px) and the dragon is small. That's by design (the newt joke, then the pull-back), and the faster size curve shortens this phase. If the user finds minutes 0:40–1:30 underwhelming, options are:
-  - frame a bit wider (`director.heroFrac` 0.29 → ~0.25);
-  - move the clash point right once the title is gone;
-  - a faster early size curve.
+- **Base framing: settled.** At the M1 playtest the user said the 0:40–1:30 stretch (small newt, big knights) is fine. The shelved options, if it ever comes back: frame wider (`director.heroFrac` 0.29 → ~0.25), move the clash point right after the title, or a faster early size curve.
 - **Tail-swipe thumps:** the SFX thumps are timed 0.45–1.15 s after the swipe starts, not synced to the crowd's ragdoll landings (the crowd now flings via the rig's `tailPoint`). If they feel off, add a crowd→audio landing hook.
 - **What already looks premium:**
   - the title over the live meadow;
   - the first strike and first kill (warm pop, coins counting up from 0);
-  - the eye opening in the hills (~2:30, the milestone review's favorite moment);
+  - the eye opening in the hills: since 1.12 the valley wall is a sleeping stone wyrm's head (nostril by the sun, mouth line, brow), and the eye opens in it at ~2:18 (engaged);
+  - the weak-spot coach (1.11): an ivory ring on the glowing spot with "Strike where it glows", then a "Weak spot ×5" caption on the payoff;
   - the 3 m dragon breathing fire at the hero;
   - late game: a 12 m winged dragon flying in over a banner-dotted host, and the 41 m breath.
 
@@ -101,14 +100,21 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 **Heraldry**
 - The crowd's `drawEmblem()` in `banner.ts` takes a heraldry description (`Heraldry` type + optional `setHeraldry?` in `crowd/api.ts`).
 
+**From the M1 feedback round (1.11 coach, 1.12 eye)**
+- **Eye timing (2.2):** the first opening is kill-based (2.2 s after kill 23: 2:09–2:23 engaged), so casual (~3:09–3:39) and non-aimer (~3:20) players first see it after the M2 boss's 3:15 slot. When 2.2 adds the Wyrm Gauge and tremors, tie the eye to the gauge and add a time-based fallback so every player sees it before the boss. The sim has an "eye first opens" target (added in the 1.12 fix round); move it with the trigger.
+- **Eye audio (2.2/2.6):** the eye opens in silence. A low rumble or growl when the lids part would sell it. The backdrop would need an `onEyeOpen` hook for audio.
+- **Eye placement:** with the panel open, the eye sits under the panel when the window width is below ~1.07 × height + 340 px (e.g. 1200×900). All common laptop and desktop sizes are fine; revisit if the Mountain tier's framing moves the head.
+- **Coach keep-outs (2.5):** `render/fx/coach.ts` keeps its label clear of the HUD band (`HUD_BOTTOM` = 128 px), the Hire button (`ui.anchor('hire')`) and the hint caption. The M2 abilities bar and champion UI must register anchors too, or the coach label can land on them.
+- **`DragonView.weakRadius()`:** new optional contract (world m). The M2 wyvern (clickable wings) and later species must implement it alongside `hitTest`, or the coach ring won't match the real hit area.
+
 ## Open issues and risks
-1. **Real FPS has never been measured in a visible pane with the full stack.** The browser pane was hidden during every late check, which throttles rAF.
+1. **Real FPS: closed for M1.** The user's M1 playtest: "the framerate looks good" (their Mac, real play). Re-measure when M2 adds the zoom and music. History: the browser pane was hidden during every late check, which throttles rAF.
    - Synthetic numbers (the frame loop driven from JS, at 1440×900, DPR 2):
      - fresh start: 1.3–1.8 ms CPU avg, ~1.4 ms GPU;
      - dragon 20 with 85 units: 1.7 ms CPU, ~1.5–2 ms GPU;
      - a 41 m breath with 300 knights and 1,480 particles: 3.7 ms CPU (p99 6.1), ~5–8 ms GPU.
    - Nothing points below 60 fps, but confirm with `?debug` in a visible pane. The user's playtest is the first real reading, so ask them.
-2. **Safari and Firefox are untested** (planned for M4.4, sooner if the user reports issues). Known risks:
+2. **Safari and Firefox: the user tested M1 in several browsers with no issues** (2026-09-23). M4.4 still does the final pass. Known risks to recheck as M2+ adds load:
    - Safari rasterizes canvas on the CPU; the backdrop is ~5.3 screens of fill per frame.
    - Film grain is a full-screen `mix-blend-mode: overlay` CSS layer (`src/render/fx/grain.ts`); the fallback is plain opacity.
    - WebAudio in Safari.
@@ -120,7 +126,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 4. **Size:** 427 KB raw, against a ~400 KB target and the 1 MB hard fail. M2 adds the zoom, the Mountain tier, heraldry and music. If it trends past ~700 KB, look for bloated tables and consider subsetting fonts further.
 5. **Juice costs logic time** by design (a consistent freeze). If you change the juice tuning, keep `src/sim/juice.ts` in sync with `src/render/fx/tuning.ts`; the sim imports the exported constants.
 6. **Saves:** there's no save loader yet (M3). Saves are schema v3; older versions are rejected.
-7. **GitHub:** nothing has been pushed and the repo `pincombe/scale` doesn't exist yet. The user chose a single public repo, and at the M1 handoff the lead asked whether to create it. After creating it: Settings > Pages > Source = "GitHub Actions".
+7. **GitHub: live.** Public repo https://github.com/pincombe/scale (created by the user on 2026-09-23; the lead's `gh repo create --public` was blocked by the auto-mode classifier). Pages source = GitHub Actions; the game deploys to https://pincombe.github.io/scale/ on every push to main. The first CI and Pages runs (943c765) passed and the page served the 436,827-byte build. The user won't share the URL until M4. `origin` = `git@github.com:pincombe/scale.git`; commits use the no-reply email. Push after each accepted WP or at hand-off.
 8. **Dev pages:** `src/render/dragon/lab.html` and `src/render/crowd/gallery.html` are dev-only and not in the build. Keep or delete them at M4.
 9. **Agent tooling:** the shared browser pane is often hidden, which stalls rAF, and automation clicks land wrong under viewport emulation. Agents should verify on static builds, dispatch PointerEvents, and step frames from JS for measurements (see Process notes).
 
@@ -139,10 +145,19 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - A 16 px weak-spot minimum made nearly every click on a newt a crit, so the minimum is now 11 px and the scale sits off-center.
 - **Backdrop:** the eye on a far hill at `WYRM_EYE_X = -3.5` ended up behind the army, so it moved to the valley wall right of the sun, higher and 1.75× bigger.
 - **Sim:** the bot originally assumed the loose scale stays hittable during windups and while the dragon enters. That's wrong, and it led to 1.9b.
+- **First-minute teaching:** bottom-of-stage captions for the weak spot and the stagger (`hintWeakSpot`, `hintStagger`) didn't teach: they were far from the spot, read as flavor, and the first-kill and hire captions replaced them within ~2 s. Replaced by the anchored coach marks (1.11). The other captions (first kill, hire, army, growth) stay.
+- **Eye in the hills:** a crisp full-DPR vector eye with a dark outline on the soft DPR-1 layer read as a sticker. It now draws into a DPR-1 buffer, in the layer's haze, inside a head carved into the ridge (1.12). Steam from the nostril was tried and removed: the nostril sits on the sun's edge, and even opaque dark puffs were washed out by the sun's bloom.
 - **Browser verification:** the shared dev server with HMR churn made visual checks unreliable while six agents edited. Agents moved to static builds or private Vite servers. Caveat: a private server on another port re-optimized the shared `node_modules/.vite` cache once. Give private servers their own `cacheDir`.
 
 ## Playtest feedback
-- **M1 ★ (handed over 2026-09-23):** awaiting the user's feedback. Record it here, close to verbatim, with a status per item (open, WP x.y, done, won't do + why).
+- **M1 ★ (handed over 2026-09-23; feedback received 2026-09-23).** Close to verbatim, with a status per item:
+  1. "The framerate looks good." → **done** (closes Open issue 1 for Chrome on the user's Mac).
+  2. The 0:40–1:30 stretch (small newt, big knights): "the amount of time is fine." → **won't change**; the framing options in Observations are shelved.
+  3. "The weak spot is clear but takes a few accidental clicks to understand the mechanic." → **done in WP 1.11 (a423526)**. Lead's diagnosis: `hintWeakSpot` was a bottom caption, far from the spot, that read as flavor text and was replaced by the first-kill/hire captions within ~2 s; `hintStagger` was a caption during a 1.2 s windup. Fix: a coach mark anchored on the live weak spot, a "Weak spot ×5" cause caption on the first crits, and a stagger coach on early windups.
+  4. "The eye in the mountain stands out as not blending with the background and instead looking randomly stuck there." → **done in WP 1.12 (9a0b8d2)**. Lead's look: a large (~160×60 px at 1440×900) crisp, saturated almond with a hard dark outline and a black pupil on a flat, hazy DPR-1 mountain face; no brow, lids or head read around it; it first opened at the 3rd kill (~0:15), before any context. Fix: carve it into the rock under a brow, haze it like its layer, smaller, the head readable when open, small life touches, and the first opening moved to the PLAN §2 beat (~2:00–2:30 engaged).
+  5. "The game sounds great." → **done**; no audio changes.
+  6. "I've tested in multiple browsers and it appears to work without issue." → **done** (Open issue 2 is closed for M1; M4.4 still does a final cross-browser pass).
+  7. "It's fine to upload it now. I won't share it until M4." → **done**: the user created the public repo and enabled Pages; the lead added `origin` and pushed main (see Open issue 7).
 
 ## Art direction (lead's notes)
 **The look** (PLAN §4)
@@ -255,7 +270,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 | 0.2 Architecture skeleton + ARCHITECTURE.md | builder-max | ✅ accepted after review (no criticals; 3 majors fixed) | 81fdb06, 78b041d |
 | 0.3 CI + Pages workflows (written, not pushed) | builder-medium | ✅ accepted | 52b595b |
 
-### M1: First Blood ★ (in progress)
+### M1: First Blood ★ (done: closed 2026-09-23 after the playtest feedback)
 | WP | Agent | Owns | Status | Commit |
 |---|---|---|---|---|
 | 1.1 Meadow backdrop, palette, eye in the hills | builder-high | `src/render/backdrop/**`, MEADOW values | ✅ accepted after review (1 high + 6 fixed) | aeeee92, b7f2b17 |
@@ -269,6 +284,8 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 | 1.9 Balance sim v0 + 5 core fixes (+1.9b fidelity, size-scaled phases) | builder-high | `src/sim/**`, `BALANCE`, core fixes | ✅ accepted after review (35/35 targets) | bfd6db1, 551f104, 2925c0f |
 | 1.10 Framing and composition (dragon-first camera) | builder-high | `src/render/director.ts` | ✅ accepted (lead art pass) | 8086746 |
 | M1 milestone review + pre-playtest fixes (faster early growth, non-aimer pacing, numbers never stack, hero stand-off, first-kill count-up, favicon) | reviewer + owners | — | ✅ done | 62cda8c, ab38393, fc39def, d9abb5f, dc2ed52 |
+| 1.11 Teach the weak spot (M1 feedback 3): coach mark anchored on the live spot, "Weak spot ×5" cause caption on the first crits, stagger coach on early windups; `hintWeakSpot`/`hintStagger` captions retired | builder-high (+ writer pass) | `src/ui/hints.ts`, `src/ui/styles.css` (hint rules), `src/render/fx/**`, MICROCOPY in `text.ts` (+ narrow grants: `createHireButton` in `ui/hud.ts`, additive `DragonView.weakRadius()`) | ✅ accepted after review (1 high + 1 medium + 2 low fixed: a lethal first crit ate the caption; Hire keep-out measured mid-animation; DPR < 1 labels; hit-radius copy → `DragonView.weakRadius()`) + lead note (line 1 now 700 17px over italic 16px); writer pass done | a423526 |
+| 1.12 The eye belongs to the mountain (M1 feedback 4): carved under a rock brow, hazed like its layer, smaller, the head readable when open, life touches, first opening at ~2:00–2:30 | builder-high | `src/render/backdrop/**` (+ MEADOW in `palette.ts`) | ✅ accepted after review (3 medium + 4 low fixed: art rebaked inside draw(); invisible tremor → 0.22/0.26; invisible steam → removed; the timing test moved into the sim as a target; hard pebbles; snout step; flock pop; face baked at the layer's 160 px/unit). New `wyrm.ts` + `eye.ts`; 0.75× size; first opening 2.2 s after kill 23 (engaged median 2:18); ~0.06–0.08 ms/frame open; narrow grant: `src/sim/play.ts`, `targets.ts` | 9a0b8d2 |
 
 ## Process notes (how this build runs)
 **Agents and reviews**
@@ -283,6 +300,12 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 **Browser testing**
 - The dev server (`preview_start` name `dev`, port 5173) is shared. HMR from other agents made visual checks flaky, so agents verified on static builds. For judge-like checks, build and serve `dist/` (launch config `preview`, port 4173), or build to a scratch dir.
 - The browser pane is narrow and portrait by default. `resize_window` 1440×900 works for screenshots, **but with emulation on, automation clicks land at wrong coordinates**. Dispatch `PointerEvent('pointerdown', {clientX, clientY, button: 0, bubbles: true})` on `#stage` via `javascript_tool`, or drive `window.__scale` (`?debug`). Use your own tab and close it afterwards.
+- **Lead snapshot server** (added 2026-09-23): the launch config `snapshot` serves `.vite/snapshot/` (gitignored) on port 4180. To look at one WP while others are mid-edit, copy the tree to the scratchpad, restore the other WPs' folders from HEAD (`git archive HEAD <folder> | tar -x -C <copy>`), symlink `node_modules`, run `npx vite build --outDir <repo>/.vite/snapshot --emptyOutDir` from the copy, then `preview_start` name `snapshot`.
+- **Pane quirks found 2026-09-23:**
+  - `navigate` to a `file://` URL opens a *new* tab and loads the page as a `data:` snapshot, which drops the query string (no `?debug`). Serve over HTTP instead.
+  - A fresh tab from `preview_start` sometimes paints the page into a small top-left corner under 1440×900 emulation. An older tab navigated to the same URL, then `resize_window` again, rendered correctly.
+  - `resize_window` before `navigate` can be lost: resize after navigating.
+  - A background tab reports `document.hidden = true`, so CSS transitions (the title fade) don't run. The game canvas still renders for screenshots.
 
 **Debug**
 - `?debug` has URL params: `seed dragon footman archer gold speed pause loop immortal phase attack panel layers stress`.
@@ -299,23 +322,11 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
   - a ~200-word report format
 
 ## Next steps
-**M1 (now)**
-1. ✅ All WPs landed, reviewed and fixed. The milestone review found no blockers, and its five feel fixes are in.
-2. ✅ M1 ★ playtest build handed to the user (2026-09-23). **Waiting for feedback.**
-3. When feedback arrives, record it under Playtest feedback, then turn it into WPs and fix. The first things to check against it:
-   - Real FPS in a visible pane (Open issue 1).
-   - The minutes-0:40–1:30 framing (Observations).
-   - Whether the user wants the public repo created now.
-4. Then **hand off per KICKOFF rule 8:**
-   - let running agents finish;
-   - update this file (including anything only in the lead's head);
-   - commit;
-   - tell the user it's ready;
-   - stop. M2 starts in a new session.
+**M1: done.** All WPs landed, reviewed and fixed; the ★ playtest feedback is dealt with (1.11, 1.12); handed off 2026-09-23.
 
-**M2 The Zoom ★** (only after the M1 feedback; PLAN §14)
+**M2 The Zoom ★** (next, in a new session; PLAN §14)
 - 2.1 Zoom director + fusion cinematic (max; prototype first; use the snapshot rule in Decisions).
-- 2.2 Bosses + Wyrm Gauge by kill count, tremors and the eye (high).
+- 2.2 Bosses + Wyrm Gauge by kill count, tremors and the eye (high). Re-tie the eye's first opening to the gauge with a time-based fallback for casual players, and give it a sound (see the feedback-round notes in M2 notes).
 - 2.3 Mountain tier: backdrop + wyvern species as a new rig parameter set (high).
 - 2.4 Scales + Heraldry v1 + coat-of-arms renderer, feeding the crowd's banner-emblem function (high).
 - 2.5 Abilities (keys 1–4 via `input.onAbility`) + champions v1 (medium).
@@ -343,3 +354,7 @@ The lead's resume document. A fresh lead should be able to pick up from this fil
 - 2026-09-23: Polish round landed: crowd gap (c544733), grass clearing (ecfa2ff), premium toasts (d6ab8fc), size-scaled enter/dying (2925c0f), dragon fix round incl. presence at 1–3 m and big-dragon cues (6544218). Lead spot check on a static build: title, first kill, Hire button, dragon-12 composition and dragon-20 fire breath look good. M1 milestone review launched.
 - 2026-09-23: M1 milestone review: no blockers; console clean over 2.5 min of play; only one network request (the page); synthetic CPU 1.3–3.7 ms avg per frame (the pane was hidden, so no real FPS). Feel: minute one hooks (title, first strike, first kill); weakest stretch 0:40–2:00 for non-aimers (10–14 s per kill, small dragon, empty right half); most impressive: the eye opening in the hills at ~2:30, then the 41 m breath. The ?debug-only "Hire button and panel together" glitch can't happen in normal play. Fix round sent (sim, juice, crowd, HUD); favicon added.
 - 2026-09-23: Pre-playtest fixes landed: first-kill gold counts up from 0 (62cda8c), numbers never stack (ab38393), the hero never hides the newt (fc39def), size curve 0.5 × 1.12^i plus a non-aimer profile at 8.9 s per kill (39/39 targets; goldPerHp 0.9 → 1.2, archers at 12 kills), favicon. `npm run check` green (237 tests), 427 KB. **M1 ★ playtest build handed to the user.**
+- 2026-09-23: New lead session. `npm run check` green at 943c765 (237 tests, 427 KB). M1 ★ feedback received: FPS good, 0:40–1:30 pacing fine, sound great, works in several browsers; the weak spot takes accidental clicks to understand; the eye looks stuck on; upload to GitHub now (not shared until M4). WP 1.11 (teach the weak spot) and WP 1.12 (eye integration + first opening at ~2:00–2:30) launched in parallel. `gh repo create --public` was blocked by the permission classifier; the user will run it or re-confirm.
+- 2026-09-23: WP 1.11 accepted (a423526). Review: a lethal first crit ate the "Weak spot ×5" caption (now only shown captions count), the Hire keep-out was measured mid-animation (static wrapper anchor), DPR < 1 labels, and the hit-radius copy became `DragonView.weakRadius()`. Lead note: line 1 of the coach now dominates (700 17px). Writer strings: "Strike where it glows" / "×5 damage. It's a sore spot."; "Strike now!" / "Interrupt it for bonus gold"; "Weak spot ×5".
+- 2026-09-23: WP 1.12 accepted (9a0b8d2). The valley wall is a sleeping stone wyrm's head; the eye is soft, hazed and carved under a brow, first opening at 2:18 (engaged median). Review fixes: side-effect-free draw, a felt tremor, steam removed, the timing test moved into the sim (40/40), soft pebbles, a smooth snout, no flock pop. Lead art check at 1440×900 and at 3.3× magnification: premium.
+- 2026-09-23: Repo live. The user created `pincombe/scale` (public) and enabled Pages; the lead added `origin` and pushed. First CI and Pages runs passed. Added the `snapshot` launch config (port 4180, `.vite/snapshot/`) for lead checks. **M1 closed; hand-off per KICKOFF rule 8.** M2 starts in a new session.
