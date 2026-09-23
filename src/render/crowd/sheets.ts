@@ -116,6 +116,10 @@ export class KnightSheets {
   private readonly held = new Uint8Array(LOD_COUNT);
   /** Bytes held per LOD. */
   private readonly lodBytes = new Float64Array(LOD_COUNT);
+  /** Dropped canvases whose backing stores reap() has yet to free (a queue: head index). */
+  private readonly dying: (HTMLCanvasElement | null)[] = [];
+  private dyingHead = 0;
+  private dyingBytes = 0;
   private readonly lastUse = new Float64Array(LOD_COUNT);
   private scratch: HTMLCanvasElement | null = null;
   private sctx: CanvasRenderingContext2D | null = null;
@@ -201,14 +205,15 @@ export class KnightSheets {
     }
   }
 
-  /** Free every canvas of one LOD now (zero-size first, so the backing store goes at once). */
+  /**
+   * Drop every canvas of one LOD. The canvases go on the retire queue: reap() frees their backing
+   * stores a few per frame (zeroing hundreds at once, as a tier switch would, costs ~15 ms).
+   */
   private release(l: number): void {
     for (const f of this.frames) {
       const c = f.canv[l];
       if (!c) continue;
-      this.lodBytes[l] = this.lodBytes[l]! - c.width * c.height * 4;
-      c.width = 0;
-      c.height = 0;
+      this.retire(c);
       f.canv[l] = null;
     }
     this.lodBytes[l] = 0;
@@ -246,7 +251,7 @@ export class KnightSheets {
           const f = this.frames[set.first[a]! + i]!;
           if (f.next[lod]) continue;
           // Within budget, and never past the memory ceiling while both palettes coexist.
-          if (performance.now() - t0 > budgetMs || this.bytes + this.nextBytes > MEMORY_CEILING - 4 * 1048576) {
+          if (performance.now() - t0 > budgetMs || this.bytes + this.nextBytes + this.dyingBytes > MEMORY_CEILING - 4 * 1048576) {
             this.nextWarm[lod] = cur;
             return false;
           }
@@ -272,14 +277,51 @@ export class KnightSheets {
       for (let l = 0; l < LOD_COUNT; l++) {
         const c = f.next[l];
         if (!c) continue;
-        c.width = 0;
-        c.height = 0;
+        this.retire(c);
         f.next[l] = null;
       }
     }
     this.nextLodBytes.fill(0);
     this.nextWarm.fill(0);
     this.nextPal = null;
+  }
+
+  private retire(c: HTMLCanvasElement): void {
+    this.dyingBytes += c.width * c.height * 4;
+    this.dying.push(c);
+  }
+
+  /**
+   * Free retired canvases (zero-size, so the backing stores go now rather than at the next GC):
+   * at most `max` per call and within `budgetMs`, or all that are needed to get back under the
+   * memory ceiling. Call once per frame.
+   */
+  reap(budgetMs: number, max: number): void {
+    const n = this.dying.length;
+    if (this.dyingHead >= n) return;
+    const t0 = performance.now();
+    let done = 0;
+    while (this.dyingHead < n) {
+      const over = this.bytes + this.nextBytes + this.dyingBytes > MEMORY_CEILING;
+      if (!over && (done >= max || performance.now() - t0 > budgetMs)) break;
+      const c = this.dying[this.dyingHead]!;
+      this.dying[this.dyingHead] = null;
+      this.dyingHead++;
+      this.dyingBytes -= c.width * c.height * 4;
+      c.width = 0;
+      c.height = 0;
+      done++;
+    }
+    if (this.dyingHead >= n) {
+      this.dying.length = 0;
+      this.dyingHead = 0;
+      this.dyingBytes = 0;
+    }
+  }
+
+  /** Bytes still waiting on the retire queue. */
+  get retiring(): number {
+    return this.dyingBytes;
   }
 
   /** Bytes held by baked canvases, all LODs (tracked, O(1)). */
@@ -318,7 +360,7 @@ export class KnightSheets {
     }
     // Over the ceiling (a pull-back while every pose of the biggest LOD is held): let go of the
     // least recently used LOD that isn't on screen (and hasn't been for a second) right away.
-    while (this.bytes + this.nextBytes > MEMORY_CEILING) {
+    while (this.bytes + this.nextBytes + this.dyingBytes > MEMORY_CEILING) {
       let lru = -1;
       for (let l = 0; l < LOD_COUNT; l++) {
         if (!this.held[l] || l === keep || t - this.lastUse[l]! < 1) continue;

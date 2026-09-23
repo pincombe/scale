@@ -288,6 +288,7 @@ export function createCrowd(scene: Scene): CrowdRender {
   let nextBanner: BannerArt | null = null;
   /** Debug: the slowest prepare step (ms) and the bytes both palettes held at the switch. */
   let prepMaxMs = 0;
+  let reapMs = 0;
   let switchBytes = 0;
   let lanceCol: LanceColors | null = null;
   let lanceColPal: Palette | null = null;
@@ -1775,8 +1776,13 @@ export function createCrowd(scene: Scene): CrowdRender {
       now = v.time;
       const dt = v.dt;
       const s = v.state;
+      // Free dropped sprite canvases a few per frame (a tier switch drops ~400 at once); it comes
+      // out of the frame's bake budget.
+      const reap0 = performance.now();
+      sheets.reap(1.2, 48);
+      reapMs = performance.now() - reap0;
       // Fused (the flash, just before the switch): the rest of the frame is idle, so keep preparing.
-      if (prepPal && fused) prepareStep(BAKE_BUDGET);
+      if (prepPal && fused) prepareStep(BAKE_BUDGET - reapMs);
       if (fused) {
         // The colossus stands in for the army: nothing to update or draw.
         cpuAcc += performance.now() - c0;
@@ -1909,7 +1915,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       // transient sprite memory near the knights' own.
       // All baking in update shares one budget per frame: the LOD on screen first, then (rally)
       // the next two LODs the zoom's pull-back will need, then the next tier's art (prepareTier).
-      const bake0 = performance.now();
+      const bake0 = performance.now() - reapMs;
       sheets.prewarm(lastLod, mask, 1.5, pulling, mask & 7);
       if (rallyOn) {
         // No first-use bakes in the draw while the camera flies out over the pile.
