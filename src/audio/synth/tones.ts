@@ -55,7 +55,7 @@ export function arpeggio(o: Out): number {
  * Brass note: two detuned sawtooths with a lip "blip" (starting 3% flat), through a low-pass whose
  * cutoff blares open on the attack and settles, like a horn's bright attack. Long notes get vibrato.
  */
-function brass(o: Out, f: number, at: number, dur: number, amp: number, to: AudioNode): number {
+export function brass(o: Out, f: number, at: number, dur: number, amp: number, to: AudioNode): number {
   const ctx = o.ctx;
   const end = at + dur + 0.5;
   const g = gainNode(o, 0, to);

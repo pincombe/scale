@@ -1,4 +1,5 @@
-// SFX v1: every game event, voiced. Listens to the game bus (and scene.fx coin landings) and plays
+// SFX v2: every game event, voiced (M2 adds bosses, tremors, the eye, the zoom's beats,
+// abilities, lancers, champions, heraldry and Scales; see "M2" below). Listens to the game bus (and scene.fx coin landings) and plays
 // the synthesized sounds in sfxSounds.ts through a per-sound gain → stereo panner → sfx bus (+ a
 // scaled reverb send). A per-category voice limiter caps polyphony (slots are held for each voice's
 // real length) and merges hits that land within ~40 ms, so thousands of clicks stay pleasant and
@@ -6,7 +7,9 @@
 // UI ticks for the HUD.
 import type { Scene } from '../app/scene';
 import type { Rect, Vec2 } from '../lib/vec';
-import { CoinRun, VoiceLimiter, panFor, voiceSize, type VoiceCap } from './sfxMath';
+import { sel } from '../core';
+import type { ZoomBeat } from '../render/zoom/api';
+import { CoinRun, VoiceLimiter, bossTickInterval, bossTickLevel, panFor, voiceSize, type VoiceCap } from './sfxMath';
 import type { Out } from './synth/kit';
 import { startWind } from './synth/ambience';
 import * as S from './sfxSounds';
@@ -29,7 +32,28 @@ type Cat =
   | 'chime'
   | 'fanfare'
   | 'ui'
-  | 'bird';
+  | 'bird'
+  // ---- M2 ----
+  | 'horn'
+  | 'boom'
+  | 'bossStep'
+  | 'tick'
+  | 'tremor'
+  | 'eye'
+  | 'roar'
+  | 'cine'
+  | 'rush'
+  | 'drum'
+  | 'auto'
+  | 'arrows'
+  | 'rain'
+  | 'hooves'
+  | 'lance'
+  | 'herald'
+  | 'champ'
+  | 'special'
+  | 'seal'
+  | 'scales';
 
 const CAPS: Record<Cat, VoiceCap> = {
   strike: { max: 4, gap: 0.04 },
@@ -50,6 +74,26 @@ const CAPS: Record<Cat, VoiceCap> = {
   fanfare: { max: 1, gap: 0.4 },
   ui: { max: 3, gap: 0.03 },
   bird: { max: 1, gap: 1 },
+  horn: { max: 2, gap: 0.3 },
+  boom: { max: 2, gap: 0.15 },
+  bossStep: { max: 1, gap: 0.5 },
+  tick: { max: 1, gap: 0.12 },
+  tremor: { max: 1, gap: 1.5 },
+  eye: { max: 1, gap: 8 },
+  roar: { max: 1, gap: 0.5 },
+  cine: { max: 4, gap: 0.1 },
+  rush: { max: 1, gap: 0.5 },
+  drum: { max: 1, gap: 0.5 },
+  auto: { max: 2, gap: 0.22 },
+  arrows: { max: 1, gap: 0.5 },
+  rain: { max: 1, gap: 0.5 },
+  hooves: { max: 2, gap: 0.6 },
+  lance: { max: 1, gap: 0.25 },
+  herald: { max: 1, gap: 1 },
+  champ: { max: 1, gap: 0.4 },
+  special: { max: 1, gap: 0.3 },
+  seal: { max: 1, gap: 0.12 },
+  scales: { max: 1, gap: 0.3 },
 };
 
 /**
@@ -75,6 +119,26 @@ const LEN: Record<Cat, number> = {
   fanfare: 1.4,
   ui: 0.35,
   bird: 1.2,
+  horn: 4.0,
+  boom: 2.5,
+  bossStep: 3.5,
+  tick: 0.1,
+  tremor: 1.9,
+  eye: 5.6,
+  roar: 5.5,
+  cine: 7,
+  rush: 3.2,
+  drum: 1.4,
+  auto: 0.9,
+  arrows: 1.8,
+  rain: 1.2,
+  hooves: 2,
+  lance: 0.5,
+  herald: 1.6,
+  champ: 0.9,
+  special: 1.2,
+  seal: 1.7,
+  scales: 1.5,
 };
 
 /** Reverb send per category (post-trim). */
@@ -97,6 +161,41 @@ const SEND: Record<Cat, number> = {
   fanfare: 0.9,
   ui: 0,
   bird: 1.2,
+  horn: 1.3,
+  boom: 0.8,
+  bossStep: 0.6,
+  tick: 0.15,
+  tremor: 0.25,
+  eye: 1.2,
+  roar: 0.8,
+  cine: 0.7,
+  rush: 0.4,
+  drum: 0.45,
+  auto: 0.3,
+  arrows: 0.45,
+  rain: 0.35,
+  hooves: 0.3,
+  lance: 0.45,
+  herald: 0.9,
+  champ: 0.35,
+  special: 0.6,
+  seal: 0.8,
+  scales: 1.0,
+};
+
+/**
+ * Categories that belong to the cinematic and the tier change: a zoom's switch emits a resync
+ * mid-cinematic, and these must ride through it (everything else is cut as before).
+ */
+const THROUGH_ZOOM: Partial<Record<Cat, true>> = {
+  horn: true,
+  boom: true,
+  roar: true,
+  cine: true,
+  rush: true,
+  scales: true,
+  chime: true,
+  ui: true,
 };
 
 /** How long after the first gesture a still-starting (suspended) context may queue sounds. */
@@ -167,6 +266,20 @@ class Sfx {
   /** The wind-up (inhale or growl) and fire voices, so a stagger or death can choke them. */
   private windup: Voice | null = null;
   private fire: Voice | null = null;
+  // M2 hooks and schedulers.
+  private hookedZoom: unknown = null;
+  private unhookZoom: (() => void) | null = null;
+  private hookedBackdrop: unknown = null;
+  private unhookEye: (() => void) | null = null;
+  /** Audio time of the last boss-clock tick (-Infinity while the clock isn't in its last 10 s). */
+  private lastTick = -Infinity;
+  private tickCount = 0;
+  /** Audio time of the zoom's reveal (the world wyrm's eye opening is part of it: no extra growl). */
+  private lastReveal = -Infinity;
+  /** Between zoomBegin and zoomEnd (the resync at the switch lands inside). */
+  private inZoom = false;
+  /** Tier whose eye already opened once (later looks, like the Mountain wyrm's, are softer). */
+  private eyeTier = -1;
   /** The voice holding each limiter slot (for stealing). */
   private readonly slots = new Map<Cat, (Voice | null)[]>();
   // Debug meters.
@@ -185,6 +298,12 @@ class Sfx {
     game.on('strike', (e) => {
       this.hookCoins();
       const pan = this.panWorld(e.x, e.y);
+      if (e.auto) {
+        // Rally's auto-strikes (~8/s): thinned to ≤ ~4.5/s, quieter and duller than a click, on
+        // their own voices so the player's own clicks stay crisp over them. No yelps.
+        this.play('auto', pan * 0.7, S.sAutoStrike);
+        return;
+      }
       if (e.crit) {
         // The clang always takes the strike path; only the extra layers are capped, and even then
         // a lighter ping plays instead of silence.
@@ -203,7 +322,11 @@ class Sfx {
 
     game.on('armyHit', (e) => {
       const hits = e.hits;
-      if (e.unit === 'footman') {
+      if (e.ability) {
+        this.play('rain', this.panDragon(), S.sArrowRain);
+      } else if (e.unit === 'lancer') {
+        this.play('lance', this.panDragon(), (o) => S.sLanceCrash(o, hits));
+      } else if (e.unit === 'footman') {
         this.play('melee', this.panWorld(scene.crowd.frontX(), 0), (o) => S.sMelee(o, hits));
       } else {
         scene.dragon.bounds(this.r);
@@ -217,7 +340,16 @@ class Sfx {
       scene.dragon.bounds(this.r);
       const b = this.panWorld(this.r.x + this.r.w * 0.5, 0);
       const { arrows, flight } = e;
-      this.play('volley', a, (o) => S.sVolley(o, arrows, flight, 0, b - a));
+      if (e.ability) this.play('arrows', 0, (o) => S.sArrowStorm(o, flight, a - 0.1, b + 0.1));
+      else this.play('volley', a, (o) => S.sVolley(o, arrows, flight, 0, b - a));
+    });
+
+    game.on('cavalry', (e) => {
+      scene.crowd.bounds(this.r);
+      const a = this.panWorld(this.r.x + this.r.w * 0.3, 0);
+      const b = this.panDragon();
+      const { riders, travel } = e;
+      this.play('hooves', 0, (o) => S.sGallop(o, riders, travel, a, b));
     });
 
     game.on('dragonPhase', (e) => {
@@ -227,7 +359,10 @@ class Sfx {
       const pan = this.panHead();
       switch (e.phase) {
         case 'enter':
-          this.play('voice', pan, (o) => S.sCall(o, size), 0.35);
+          if (d.boss) {
+            const dur = e.dur;
+            this.play('bossStep', pan, (o) => S.sBossEntrance(o, size, dur));
+          } else this.play('voice', pan, (o) => S.sCall(o, size), 0.35);
           this.nextChirp = this.now() + 3;
           break;
         case 'windup': {
@@ -267,7 +402,15 @@ class Sfx {
           this.choke(this.fire, 0.15);
           this.windup = null;
           this.fire = null;
-          this.play('death', pan, (o) => S.sDeath(o, size), 0.05);
+          if (d.boss) this.play('roar', pan * 0.6, (o) => S.sBossDeath(o, size), 0.05);
+          else this.play('death', pan, (o) => S.sDeath(o, size), 0.05);
+          break;
+        case 'leave':
+          // An escaping boss (or a dragon leaving for a zoom) swallows its breath as it turns away.
+          this.choke(this.windup, 0.08);
+          this.choke(this.fire, 0.2);
+          this.windup = null;
+          this.fire = null;
           break;
         default:
           this.windup = null;
@@ -278,6 +421,12 @@ class Sfx {
     game.on('dragonDeath', () => {
       this.hookCoins();
       this.coinsSinceDeath = 0;
+      // The ground answers an ordinary kill: a tremor as strong as the Wyrm Gauge is full.
+      const st = game.state;
+      if (!st.dragon.boss && !st.wyrm.cleared) {
+        const g = sel.gauge(st);
+        this.play('tremor', 0.15, (o) => S.sTremor(o, g), 0.45);
+      }
       // Fallback: if no coin reaches the counter soon, play a short rising cascade anyway.
       window.clearTimeout(this.fallbackTimer);
       this.fallbackTimer = window.setTimeout(() => {
@@ -291,13 +440,19 @@ class Sfx {
     });
 
     game.on('purchase', (e) => {
+      if (e.kind === 'heraldry') {
+        this.play('seal', 0, S.sHeraldry);
+        return;
+      }
       if (this.limiter.inGap('buy', this.now() + 0.004)) return;
       const step = this.buyRun.next(this.now(), Math.random());
       const grand = e.kind === 'upgrade';
       this.play('buy', -0.1, (o) => S.sPurchase(o, grand, step));
     });
 
-    game.on('unlock', () => {
+    game.on('unlock', (e) => {
+      // A champion's arrival has its own flourish (championJoin).
+      if (e.kind === 'champion') return;
       this.play('chime', 0, S.sUnlock, 0.25);
     });
 
@@ -307,16 +462,170 @@ class Sfx {
 
     game.on('resync', () => {
       window.clearTimeout(this.fallbackTimer);
-      for (const held of this.slots.values()) for (const v of held) if (v) this.release(v);
-      this.limiter.reset();
+      // A zoom's switch resyncs mid-cinematic: its own sounds ride through; the old world's stop.
+      const zooming = this.inZoom || game.state.zoom.stage !== null || scene.zoom.active;
+      for (const [cat, held] of this.slots) {
+        if (zooming && THROUGH_ZOOM[cat]) continue;
+        for (const v of held) if (v) this.release(v);
+        this.limiter.resetCat(cat);
+      }
+      if (!zooming) this.limiter.reset();
       this.windup = null;
       this.fire = null;
+      this.lastTick = -Infinity;
     });
+
+    this.listenM2();
 
     // Ambient scheduler: distant birds, and the idle dragon's chirps / snorts.
     window.setInterval(() => this.ambientTick(), 400);
+    // Fast scheduler: the boss clock's ticks (scheduled ahead on the audio clock).
+    window.setInterval(() => this.clockTick(), 50);
 
     this.registerDebug();
+  }
+
+  // ---- M2 ----
+
+  private listenM2(): void {
+    const scene = this.scene;
+    const game = scene.game;
+
+    game.on('zoomBegin', () => {
+      this.inZoom = true;
+      this.hookScene();
+    });
+    game.on('zoomEnd', () => (this.inZoom = false));
+
+    game.on('bossSummon', () => {
+      this.hookScene();
+      this.play('horn', 0.1, S.sBossHorn);
+    });
+
+    game.on('bossEscaped', () => {
+      const size = this.size();
+      this.play('roar', this.panHead(), (o) => S.sBossEscape(o, size));
+    });
+
+    game.on('abilityUse', (e) => {
+      if (e.id === 'charge') {
+        this.play('horn', -0.25, S.sChargeHorn);
+        const dur = Math.min(3, Math.max(2, e.dur * 0.25));
+        this.play('rush', -0.3, (o) => S.sArmyRush(o, dur, 26), 0.2);
+      } else if (e.id === 'rally') {
+        this.play('drum', -0.2, S.sRallyRoll);
+      }
+      // The volley is voiced by its 'volley' event.
+    });
+
+    game.on('championJoin', () => {
+      this.play('herald', -0.2, S.sChampionJoin, 0.1);
+    });
+
+    game.on('championHit', () => {
+      // Lands on the footmen's beat: a heavier clang a hair behind it, blended in.
+      this.play('champ', this.panWorld(scene.crowd.frontX(), 0), S.sChampionHit, 0.03);
+    });
+
+    game.on('championSpecial', () => {
+      this.play('special', this.panWorld(scene.crowd.frontX(), 0), S.sChampionSpecial);
+    });
+
+    game.on('scalesGain', () => {
+      this.play('scales', 0, S.sScales, 0.05);
+    });
+
+    this.hookScene();
+  }
+
+  /** Subscribe to the zoom's beats and the backdrop's eye (lazily: the services may be swapped or late). */
+  private hookScene(): void {
+    const zoom = this.scene.zoom;
+    if (zoom && zoom !== this.hookedZoom) {
+      this.unhookZoom?.();
+      this.hookedZoom = zoom;
+      this.unhookZoom = zoom.onBeat((b) => this.onBeat(b));
+    }
+    const bd = this.scene.backdrop;
+    if (bd && bd !== this.hookedBackdrop && typeof bd.onEyeOpen === 'function') {
+      this.unhookEye?.();
+      this.hookedBackdrop = bd;
+      this.unhookEye = bd.onEyeOpen(() => this.onEyeOpen());
+    }
+  }
+
+  /** The zoom cinematic's beats: the diegetic half (the music plays the tonal half). */
+  private onBeat(b: ZoomBeat): void {
+    const bt = this.scene.zoom.beatTimes;
+    const span = (from: ZoomBeat, to: ZoomBeat, dflt: number): number => {
+      const d = bt ? bt[to] - bt[from] : dflt;
+      return Number.isFinite(d) && d > 0.2 ? Math.min(d, dflt * 2) : dflt;
+    };
+    switch (b) {
+      case 'rally':
+        this.play('horn', -0.15, S.sRallyHorns);
+        this.play('rush', -0.3, (o) => S.sArmyRush(o, 1.9, 34), 0.15);
+        break;
+      case 'fusion': {
+        const dur = span('fusion', 'flash', 1.2);
+        this.play('cine', 0, (o) => S.sFusionRise(o, dur));
+        break;
+      }
+      case 'flash':
+        this.play('boom', 0, S.sFlashImpact);
+        break;
+      case 'pullback': {
+        const dur = span('pullback', 'reveal', 4);
+        this.play('cine', 0, (o) => S.sWindRush(o, dur));
+        break;
+      }
+      case 'reveal':
+        this.lastReveal = this.now();
+        this.play('cine', 0.2, S.sRevealRumble);
+        break;
+      case 'roar':
+        this.play('roar', 0.15, S.sColossalRoar);
+        break;
+      case 'card':
+        this.play('cine', 0, S.sCardChime, 0.05);
+        break;
+      case 'done':
+        break;
+    }
+  }
+
+  /** The eye in the hills (or the Mountain wyrm's) starts to open. */
+  private onEyeOpen(): void {
+    const now = this.now();
+    // Inside the zoom the reveal's rumble and roar speak for the world wyrm.
+    if (this.scene.zoom.active || now - this.lastReveal < 6) return;
+    const tier = this.scene.game.state.tier;
+    const amp = tier === this.eyeTier ? 0.55 : 1;
+    this.eyeTier = tier;
+    this.play('eye', 0.25, (o) => S.sEyeOpen(o, amp));
+  }
+
+  /** The boss clock: in its last 10 s a wooden tick, speeding up (scheduled ~120 ms ahead). */
+  private clockTick(): void {
+    const st = this.scene.game.state;
+    const left = sel.bossTimeLeft(st);
+    const iv = bossTickInterval(left);
+    if (!sel.bossClockRunning(st) || !Number.isFinite(iv) || !this.canPlay()) {
+      this.lastTick = -Infinity;
+      return;
+    }
+    const now = this.now();
+    const at = this.lastTick === -Infinity ? now + 0.02 : Math.max(now + 0.01, this.lastTick + iv);
+    if (at - now > 0.12) return;
+    this.lastTick = at;
+    const tock = this.tickCount++ % 2 === 1;
+    const level = bossTickLevel(left);
+    this.play('tick', 0.2, (o) => S.sBossTick(o, tock, level), at - now - 0.004);
+  }
+
+  private panDragon(): number {
+    this.scene.dragon.bounds(this.r);
+    return this.panWorld(this.r.x + this.r.w * 0.5, 0);
   }
 
   // ---- Playback ----
@@ -479,6 +788,7 @@ class Sfx {
   }
 
   private ambientTick(): void {
+    this.hookScene();
     if (!this.ambienceOn || !this.canPlay() || this.scene.audio.ctx?.state !== 'running') return;
     const now = this.now();
     if (now >= this.nextBird) {
@@ -575,5 +885,71 @@ class Sfx {
       window.setTimeout(() => this.ui('deny'), 500);
     });
     dbg.button('reset node peak', () => (this.peakNodes = this.liveNodes));
+
+    dbg.section('SFX (M2)');
+    const later = (secs: number, fn: () => void): void => void window.setTimeout(fn, secs * 1000);
+    dbg.button('boss horn', () => this.play('horn', 0.1, S.sBossHorn));
+    dbg.button('boss entrance', () => this.play('bossStep', 0.3, (o) => S.sBossEntrance(o, 1, 1.6)));
+    dbg.button('boss clock (last 10 s)', () => {
+      let left = 10;
+      let n = 0;
+      const step = (): void => {
+        const iv = bossTickInterval(left);
+        if (!Number.isFinite(iv)) return;
+        const tock = n++ % 2 === 1;
+        const lvl = bossTickLevel(left);
+        this.play('tick', 0.2, (o) => S.sBossTick(o, tock, lvl));
+        left -= iv;
+        later(iv, step);
+      };
+      step();
+    });
+    dbg.button('boss escape', () => this.play('roar', 0.3, (o) => S.sBossEscape(o, 1)));
+    dbg.button('boss death', () => this.play('roar', 0.2, (o) => S.sBossDeath(o, 1)));
+    for (const g of [0.1, 0.5, 1]) dbg.button(`tremor ${g * 100}%`, () => this.play('tremor', 0.15, (o) => S.sTremor(o, g)));
+    dbg.button('eye opens', () => this.play('eye', 0.25, (o) => S.sEyeOpen(o, 1)));
+    dbg.button('zoom beats (nominal)', () => {
+      const beats: [ZoomBeat, number][] = [
+        ['rally', 0],
+        ['fusion', 1.0],
+        ['flash', 2.2],
+        ['pullback', 2.4],
+        ['reveal', 6.4],
+        ['roar', 7.0],
+        ['card', 7.6],
+        ['done', 9.5],
+      ];
+      for (const [b, at] of beats) later(at, () => this.onBeat(b));
+    });
+    dbg.button('zoom: flash', () => this.onBeat('flash'));
+    dbg.button('zoom: roar', () => this.onBeat('roar'));
+    dbg.button('Charge!', () => {
+      this.play('horn', -0.25, S.sChargeHorn);
+      this.play('rush', -0.3, (o) => S.sArmyRush(o, 2.5, 26), 0.2);
+    });
+    dbg.button('Rally (roll + 3 s of auto-strikes)', () => {
+      this.play('drum', -0.2, S.sRallyRoll);
+      for (let i = 0; i < 24; i++) later(i / 8, () => this.play('auto', (Math.random() - 0.5) * 0.4, S.sAutoStrike));
+    });
+    dbg.button('Dragonbane Volley', () => {
+      this.play('arrows', 0, (o) => S.sArrowStorm(o, 1.1, -0.5, 0.5));
+      later(1.1, () => this.play('rain', 0.35, S.sArrowRain));
+    });
+    dbg.button('lancers ×16 (gallop + crash)', () => {
+      this.play('hooves', 0, (o) => S.sGallop(o, 16, 1.2, -0.4, 0.35));
+      later(1.2, () => this.play('lance', 0.35, (o) => S.sLanceCrash(o, 16)));
+    });
+    dbg.button('lancer ×1', () => {
+      this.play('hooves', 0, (o) => S.sGallop(o, 1, 1.2, -0.4, 0.35));
+      later(1.2, () => this.play('lance', 0.35, (o) => S.sLanceCrash(o, 1)));
+    });
+    dbg.button('champion joins', () => this.play('herald', -0.2, S.sChampionJoin));
+    dbg.button('champion hit (+ melee)', () => {
+      this.play('melee', -0.3, (o) => S.sMelee(o, 12));
+      this.play('champ', -0.3, S.sChampionHit, 0.03);
+    });
+    dbg.button('champion special', () => this.play('special', -0.2, S.sChampionSpecial));
+    dbg.button('heraldry seal', () => this.play('seal', 0, S.sHeraldry));
+    dbg.button('Scales shimmer', () => this.play('scales', 0, S.sScales));
   }
 }

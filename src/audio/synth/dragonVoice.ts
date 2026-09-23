@@ -3,7 +3,20 @@
 import { expLerp } from '../sfxMath';
 import { filterNode, gainNode, lfo, noiseSrc, rand, softClip, toSend, type Out } from './kit';
 
-export type VocalKind = 'yelp' | 'chirp' | 'call' | 'growl' | 'death';
+export type VocalKind = 'yelp' | 'chirp' | 'call' | 'growl' | 'death' | 'roar' | 'mock';
+
+/**
+ * Optional reshaping for the M2 giants (bosses, the world wyrm): multipliers on the size's pitch,
+ * formants and the shape's length. Omitted = the M1 voice, unchanged.
+ */
+export interface VocalOpts {
+  /** × the fundamental (0.5 = an octave down). */
+  pitch?: number;
+  /** × the formant frequencies (lower = a bigger throat). */
+  formant?: number;
+  /** × the shape's duration. */
+  stretch?: number;
+}
 
 interface Shape {
   dur: number;
@@ -75,6 +88,26 @@ function shapeFor(kind: VocalKind, s: number): Shape {
         rough: 0.4 + 0.5 * big,
         breath: 0.35 + 0.4 * big,
       };
+    case 'roar':
+      // A full-throated roar: a surge up, a long held bellow, then a falling-off rasp.
+      return {
+        dur: expLerp(1.0, 1.9, big),
+        pitch: [0.72, 1.08, 1.18, 1.12, 1.02, 0.86, 0.62],
+        amp: [0.55, 0.95, 1, 1, 0.85, 0.5, 0],
+        attack: 0.09,
+        rough: 0.55 + 0.4 * big,
+        breath: 0.5 + 0.35 * big,
+      };
+    case 'mock':
+      // A taunting "hah-hah-hahh": three barks, each lower, the last one drawn out.
+      return {
+        dur: expLerp(0.9, 1.6, big),
+        pitch: [1.15, 0.95, 1.1, 0.9, 1.02, 0.95, 0.7],
+        amp: [1, 0.15, 0.9, 0.15, 0.85, 0.6, 0],
+        attack: 0.02,
+        rough: 0.45 + 0.4 * big,
+        breath: 0.4 + 0.3 * big,
+      };
   }
 }
 
@@ -88,13 +121,13 @@ const FORMANT_G = [1, 0.7, 0.35] as const;
  * for a barn-dragon) and a low-pass body shape it; breath noise joins through the first formant; a
  * 22–40 Hz amplitude growl and a tanh soft-clip add grit as the dragon grows.
  */
-export function dragonVocal(o: Out, kind: VocalKind, size: number, amp: number): number {
+export function dragonVocal(o: Out, kind: VocalKind, size: number, amp: number, opts?: VocalOpts): number {
   const ctx = o.ctx;
   const t = o.t;
   const sh = shapeFor(kind, size);
-  const f0 = expLerp(1250, 62, size) * rand(0.93, 1.07);
-  const fs = expLerp(2.0, 0.42, size) * rand(0.95, 1.05);
-  const dur = sh.dur;
+  const f0 = expLerp(1250, 62, size) * rand(0.93, 1.07) * (opts?.pitch ?? 1);
+  const fs = expLerp(2.0, 0.42, size) * rand(0.95, 1.05) * (opts?.formant ?? 1);
+  const dur = sh.dur * (opts?.stretch ?? 1);
   const end = t + dur + 0.08;
   const n = sh.pitch.length;
   const step = dur / (n - 1);
@@ -151,7 +184,7 @@ export function dragonVocal(o: Out, kind: VocalKind, size: number, amp: number):
   // Sub-octave for big dragons: the chest.
   if (size > 0.4) {
     const sub = ctx.createOscillator();
-    const subHz = (p: number): number => Math.max(38, f0 * 0.5 * p);
+    const subHz = (p: number): number => Math.max(opts ? 30 : 38, f0 * 0.5 * p);
     sub.frequency.setValueAtTime(subHz(sh.pitch[0]!), t);
     for (let i = 1; i < n; i++) sub.frequency.exponentialRampToValueAtTime(subHz(sh.pitch[i]!), t + i * step);
     const sg = gainNode(o, (size - 0.4) * 1.1, mix);

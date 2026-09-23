@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { CoinRun, VoiceLimiter, expLerp, panFor, pentaHz, voiceSize } from './sfxMath';
+import {
+  BOSS_TICK_FROM,
+  CoinRun,
+  VoiceLimiter,
+  bossTickInterval,
+  bossTickLevel,
+  crashesFor,
+  expLerp,
+  horsesFor,
+  panFor,
+  pentaHz,
+  voiceSize,
+} from './sfxMath';
 
 describe('pentaHz', () => {
   it('walks D major pentatonic', () => {
@@ -122,5 +134,56 @@ describe('CoinRun', () => {
       expect(s).toBeLessThanOrEqual(8);
       expect(s).toBeGreaterThanOrEqual(6);
     }
+  });
+});
+
+describe('VoiceLimiter.resetCat', () => {
+  it('frees one category and leaves the others alone', () => {
+    const l = new VoiceLimiter({ a: { max: 1, gap: 0.5 }, b: { max: 1, gap: 0.5 } });
+    expect(l.claim('a', 0, 10)).toBe(0);
+    expect(l.claim('b', 0, 10)).toBe(0);
+    l.resetCat('a');
+    expect(l.claim('a', 0.1, 1)).toBe(0);
+    expect(l.claim('b', 1, 1)).toBe(-1);
+  });
+});
+
+describe('boss clock', () => {
+  it('is silent above the last 10 s and when no boss fights', () => {
+    expect(bossTickInterval(BOSS_TICK_FROM + 0.01)).toBe(Infinity);
+    expect(bossTickInterval(30)).toBe(Infinity);
+    expect(bossTickInterval(0)).toBe(Infinity);
+    expect(bossTickInterval(NaN)).toBe(Infinity);
+  });
+  it('ticks once a second at 10 s and speeds up to the end', () => {
+    expect(bossTickInterval(10)).toBeCloseTo(1, 6);
+    let prev = Infinity;
+    for (let left = 10; left > 0.05; left -= 0.25) {
+      const iv = bossTickInterval(left);
+      expect(iv).toBeLessThanOrEqual(prev);
+      expect(iv).toBeGreaterThanOrEqual(0.2);
+      prev = iv;
+    }
+    expect(bossTickInterval(0.1)).toBeLessThan(0.25);
+  });
+  it('grows a little louder, never past 1', () => {
+    expect(bossTickLevel(10)).toBeCloseTo(0.6, 6);
+    expect(bossTickLevel(0)).toBe(1);
+    expect(bossTickLevel(5)).toBeGreaterThan(bossTickLevel(8));
+    expect(bossTickLevel(-3)).toBe(1);
+  });
+});
+
+describe('lancer voicing', () => {
+  it('maps riders to 1..4 horses and 1..3 crashes', () => {
+    expect(horsesFor(1)).toBe(1);
+    expect(horsesFor(4)).toBe(2);
+    expect(horsesFor(16)).toBe(4);
+    expect(horsesFor(100)).toBe(4);
+    expect(horsesFor(0)).toBe(1);
+    expect(crashesFor(1)).toBe(1);
+    expect(crashesFor(6)).toBe(2);
+    expect(crashesFor(16)).toBe(3);
+    expect(crashesFor(NaN)).toBe(1);
   });
 });

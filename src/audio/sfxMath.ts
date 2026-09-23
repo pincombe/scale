@@ -127,6 +127,12 @@ export class VoiceLimiter<K extends string> {
     if (slot >= 0 && slot < e.length) e[slot] = end;
   }
 
+  /** Forget one category (its voices were released). */
+  resetCat(cat: K): void {
+    this.ends.get(cat)!.fill(-Infinity);
+    this.last.set(cat, -Infinity);
+  }
+
   /** Forget everything (e.g. after the context was rebuilt). */
   reset(): void {
     for (const e of this.ends.values()) e.fill(-Infinity);
@@ -165,4 +171,37 @@ export class CoinRun {
     }
     return this.step;
   }
+}
+
+// ---- M2 ----
+
+/** The boss clock ticks through its last this-many seconds. */
+export const BOSS_TICK_FROM = 10;
+
+/**
+ * Seconds until the next tick of the boss clock with `left` seconds on it: none (Infinity) above
+ * BOSS_TICK_FROM, then 1 s at 10 s left, speeding up to ~0.2 s at the end (≈0.53 s at 5 s left,
+ * ≈0.3 s at 2 s left).
+ */
+export function bossTickInterval(left: number): number {
+  if (!(left > 0) || left > BOSS_TICK_FROM) return Infinity;
+  return 0.2 + 0.8 * Math.pow(left / BOSS_TICK_FROM, 1.3);
+}
+
+/** Level of a boss-clock tick (0.6 at 10 s left → 1 at the end: it leans in, never shouts). */
+export function bossTickLevel(left: number): number {
+  const u = Math.max(0, Math.min(1, left / BOSS_TICK_FROM));
+  return 0.6 + 0.4 * (1 - u);
+}
+
+/** Galloping horses to voice for a lancer charge of `riders` (1 → 1 horse, 16 → 4). */
+export function horsesFor(riders: number): number {
+  if (!(riders > 0)) return 1;
+  return Math.max(1, Math.min(4, Math.round(Math.sqrt(riders))));
+}
+
+/** Lance crashes to voice when `riders` hit home (1 per 6 riders, 1..3). */
+export function crashesFor(riders: number): number {
+  if (!(riders > 0)) return 1;
+  return Math.max(1, Math.min(3, 1 + Math.floor(riders / 6)));
 }

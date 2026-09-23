@@ -19,4 +19,16 @@ export interface ZoomApi {
   readonly active: boolean;
   /** Subscribe to the cinematic's beats. Returns an unsubscribe. */
   onBeat(fn: (beat: ZoomBeat) => void): () => void;
+  /**
+   * The cinematic's own clock: seconds since zoomBegin while it plays (it runs on wall time, so
+   * hit-stop and slow-mo never touch it), or -1 when no zoom is playing. Optional so null objects
+   * stay valid; the real director always has it.
+   */
+  readonly time?: number;
+  /**
+   * When each beat fires, in seconds after zoomBegin, for the zoom playing now (or the next one:
+   * the times only change with settings.reduceMotion). Audio can schedule ahead of a beat, e.g. a
+   * choir swell that peaks on 'flash'. Optional (see `time`).
+   */
+  readonly beatTimes?: Readonly<Record<ZoomBeat, number>>;
 }

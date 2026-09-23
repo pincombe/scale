@@ -1,6 +1,8 @@
 // Dev-only SFX meter (not imported by the game, so it never ships). Renders every sound in an
 // OfflineAudioContext and reports peak, RMS, K-weighted short-term loudness, length, DC and NaNs.
 // In the dev server console:  (await import('/src/audio/sfxMeasure.ts')).measureSfx()
+// (args: runs, name filter, e.g. measureSfx(3, 'M2')); measureFn(name, secs, o => ...) meters an ad-hoc
+// recipe built from the re-exported sounds and synth modules while tuning.
 import type { Out } from './synth/kit';
 import * as S from './sfxSounds';
 import { startWind } from './synth/ambience';
@@ -70,6 +72,40 @@ const DEFS: Def[] = [
   { name: 'ui click', secs: 0.5, play: S.sUiClick },
   { name: 'ui deny', secs: 0.8, play: S.sUiDeny },
   { name: 'bird', secs: 2, play: S.sBird },
+  // ---- M2 ----
+  { name: 'M2 boss horn + hit', secs: 5, play: S.sBossHorn },
+  { name: 'M2 boss entrance', secs: 4.5, play: (o) => S.sBossEntrance(o, 1, 1.6) },
+  { name: 'M2 boss tick', secs: 0.5, play: (o) => S.sBossTick(o, false, 1) },
+  { name: 'M2 boss tock (10 s left)', secs: 0.5, play: (o) => S.sBossTick(o, true, 0.6) },
+  { name: 'M2 boss escape', secs: 4.5, play: (o) => S.sBossEscape(o, 1) },
+  { name: 'M2 boss death', secs: 6, play: (o) => S.sBossDeath(o, 1) },
+  { name: 'M2 tremor 5%', secs: 2, play: (o) => S.sTremor(o, 0.05) },
+  { name: 'M2 tremor 50%', secs: 2.2, play: (o) => S.sTremor(o, 0.5) },
+  { name: 'M2 tremor 100%', secs: 2.5, play: (o) => S.sTremor(o, 1) },
+  { name: 'M2 eye opens', secs: 5, play: (o) => S.sEyeOpen(o, 1) },
+  { name: 'M2 zoom rally horns', secs: 3, play: S.sRallyHorns },
+  { name: 'M2 army rush 1.9 s', secs: 3, play: (o) => S.sArmyRush(o, 1.9, 34) },
+  { name: 'M2 zoom fusion rise', secs: 1.6, play: (o) => S.sFusionRise(o, 1.2) },
+  { name: 'M2 zoom flash impact', secs: 3, play: S.sFlashImpact },
+  { name: 'M2 zoom pullback wind', secs: 5.5, play: (o) => S.sWindRush(o, 4) },
+  { name: 'M2 zoom reveal rumble', secs: 4, play: S.sRevealRumble },
+  { name: 'M2 zoom roar', secs: 6, play: S.sColossalRoar },
+  { name: 'M2 zoom card chime', secs: 3, play: S.sCardChime },
+  { name: 'M2 Charge! horn + cry', secs: 3, play: S.sChargeHorn },
+  { name: 'M2 Charge! rush 2.5 s', secs: 3.5, play: (o) => S.sArmyRush(o, 2.5, 26) },
+  { name: 'M2 Rally roll', secs: 1.8, play: S.sRallyRoll },
+  { name: 'M2 Rally auto-strike', secs: 1.2, play: S.sAutoStrike },
+  { name: 'M2 volley storm', secs: 2, play: (o) => S.sArrowStorm(o, 1.1, -0.5, 0.5) },
+  { name: 'M2 volley rain', secs: 1.5, play: S.sArrowRain },
+  { name: 'M2 gallop x1', secs: 2, play: (o) => S.sGallop(o, 1, 1.2, -0.4, 0.4) },
+  { name: 'M2 gallop x16', secs: 2, play: (o) => S.sGallop(o, 16, 1.2, -0.4, 0.4) },
+  { name: 'M2 lance crash x1', secs: 1, play: (o) => S.sLanceCrash(o, 1) },
+  { name: 'M2 lance crash x16', secs: 1, play: (o) => S.sLanceCrash(o, 16) },
+  { name: 'M2 champion join', secs: 2.2, play: S.sChampionJoin },
+  { name: 'M2 champion hit', secs: 1.2, play: S.sChampionHit },
+  { name: 'M2 champion special', secs: 1.6, play: S.sChampionSpecial },
+  { name: 'M2 heraldry seal', secs: 2.2, play: S.sHeraldry },
+  { name: 'M2 Scales shimmer', secs: 2.2, play: S.sScales },
   {
     name: 'wind bed (8 s)',
     secs: 12,
@@ -179,10 +215,32 @@ async function renderOnce(def: Def): Promise<Omit<SfxMeter, 'name'>> {
   };
 }
 
-/** Render every sound `runs` times; logs a table and returns the rows. */
-export async function measureSfx(runs = 3): Promise<SfxMeter[]> {
+/** Meter one ad-hoc recipe (for tuning from the console). */
+export async function measureFn(name: string, secs: number, play: (o: Out) => number, runs = 2): Promise<SfxMeter> {
+  const r: SfxMeter = { name, peak: -120, rms50: 0, lufs: 0, len: 0, dc: 0, nans: 0, nodes: 0 };
+  for (let k = 0; k < runs; k++) {
+    const m = await renderOnce({ name, secs, play });
+    r.peak = Math.max(r.peak, m.peak);
+    r.rms50 += m.rms50 / runs;
+    r.lufs += m.lufs / runs;
+    r.len = Math.max(r.len, m.len);
+    r.nodes = Math.max(r.nodes, m.nodes);
+  }
+  return r;
+}
+
+export { S as sounds };
+export * as war from './synth/war';
+export * as epic from './synth/epic';
+export * as kit from './synth/kit';
+export * as voice from './synth/dragonVoice';
+export * as impact from './synth/impact';
+
+/** Render every sound `runs` times (only names containing `filter`); logs a table and returns the rows. */
+export async function measureSfx(runs = 3, filter = ''): Promise<SfxMeter[]> {
   const rows: SfxMeter[] = [];
   for (const def of DEFS) {
+    if (filter && !def.name.includes(filter)) continue;
     const r: SfxMeter = { name: def.name, peak: -120, rms50: 0, lufs: 0, len: 0, dc: 0, nans: 0, nodes: 0 };
     for (let k = 0; k < runs; k++) {
       const m = await renderOnce(def);
