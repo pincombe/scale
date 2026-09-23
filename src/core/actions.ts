@@ -167,7 +167,7 @@ function defaultDur(state: GameState, phase: DragonPhase): number {
     case 'dying':
       return dragonDyingDuration(state.dragon);
     case 'leave':
-      return enterDuration(state.dragon.size);
+      return dragonEnterDuration(state.dragon);
   }
 }
 

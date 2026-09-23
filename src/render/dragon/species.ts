@@ -499,7 +499,10 @@ export function buildIndividual(species: SpeciesDef, seed: number, size: number,
       if (vr.float() < v.p) for (const k of Object.keys(v.set) as MorphKey[]) out[k] = v.set[k]!;
     }
   }
-  const boss = bossOf(bossId);
+  // A boss's dressing only fits its own species (Grimmaw's wing-arms mean nothing on a newt): on
+  // another it stays a boss in bearing (grand) but wears nothing of it.
+  const named = bossOf(bossId);
+  const boss = named && named.species === species.id ? named : null;
   if (boss) for (const k of Object.keys(boss.over) as MorphKey[]) out[k] = boss.over[k]!;
   if (over) for (const k of Object.keys(over) as MorphKey[]) out[k] = over[k]!;
   for (const k of INTEGER_KEYS) out[k] = Math.max(0, Math.round(out[k]));
@@ -543,7 +546,7 @@ export function buildIndividual(species: SpeciesDef, seed: number, size: number,
     phase,
     boss,
     dress: boss ? boss.dress : NO_DRESS,
-    grand: boss ? 1 : 0,
+    grand: named ? 1 : 0,
     enter: boss?.enter ?? b.enter,
     leave: boss?.leave ?? b.leave,
     swipe: b.swipe,

@@ -84,7 +84,9 @@ describe('the boss timer', () => {
     expect(ofType(events, 'bossEscaped')).toEqual([{ type: 'bossEscaped', boss: 'elderNewt' }]);
     expect(s.dragon.id).toBe(id);
     expect(s.dragon.phase).toBe('leave');
-    expect(s.dragon.phaseDur).toBe(enterDuration(s.dragon.size));
+    // A boss leaves at its own, slower pace (the entrance in reverse), not a dragon's ~1.6 s.
+    expect(s.dragon.phaseDur).toBe(BALANCE.boss.enter);
+    expect(s.dragon.phaseDur).toBeGreaterThan(enterDuration(s.dragon.size));
     expect(s.wyrm.escapes).toBe(1);
     expect(s.wyrm.bossT).toBe(0);
     expect(sel.bossTimeLeft(s)).toBe(0);

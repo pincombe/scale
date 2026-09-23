@@ -29,8 +29,9 @@ import { CLASH_X } from '../world';
 import { TICK_DT } from '../../core/formulas';
 import { ColorRamp, mixHex } from '../../lib/color';
 import { buildIndividual, speciesOf, type Morph } from './species';
-import { BODY_N, C_AIR, C_TONGUE, DragonRig, LEG_FN, type SpineSample } from './rig';
+import { BODY_N, C_AIR, C_RUN, C_TONGUE, DragonRig, LEG_BN, LEG_FN, type SpineSample } from './rig';
 import { Choreo, type ChoreoEnv } from './choreo';
+import { enterStart, exitPath } from './moves';
 import { createPaintState, paintDragon, type PaintRes } from './paint';
 import { DressLayout } from './parts';
 import { BoundedCache } from './cache';
@@ -172,6 +173,8 @@ export function createDragon(scene: Scene): DragonRender {
   let slamDone = false;
   let lastDissolve = 1;
   let lastBurn = 0;
+  /** A leaving dragon's fade: it starts once it's entirely off screen. */
+  let leaveFade = 1;
   // Swipe shockwave: a dust wave rolling out through the ranks from where the tail lands.
   let waveT = -1;
   let waveX0 = 0;
@@ -432,15 +435,9 @@ export function createDragon(scene: Scene): DragonRender {
       const topNow = cam.y - (cam.viewH * 0.5) / cam.zoomEff;
       const topNext = -((dir.groundFrac || 0.76) * cam.viewH) / Math.max(1e-6, dir.target.zoom);
       const top = Math.min(topNow, topNext);
-      if (phase === 'enter') {
-        env.enterDist = Math.max(1.4, (edge - CLASH_X) / l + 0.12);
-        // A glider comes in from the upper right: from about the top of the frame.
-        env.enterH = Math.max(0.6, (-top / l) * 0.85);
-      } else {
-        // Turned around it spans the mirrored rest pose: clear the edge with all of it.
-        env.exitDist = Math.max(1.6, (edge - CLASH_X) / l + (rig.restMaxX - rig.restMinX) + 0.2);
-        env.exitH = Math.max(0.8, -top / l + 0.35);
-      }
+      if (phase === 'enter') enterStart((edge - CLASH_X) / l, -top / l, env);
+      else exitPath(rig, (edge - CLASH_X) / l, -top / l, env);
+      leaveFade = 1;
     }
     if (phase === 'swipe' || phase === 'windup') {
       const front = (scene.crowd.frontX() - 0.2 - CLASH_X) / l;
@@ -472,8 +469,8 @@ export function createDragon(scene: Scene): DragonRender {
       ensureIndividual();
       const d = scene.game.state.dragon;
       if (d.phase === 'dying' && rig.dissolve < 0.85) return null;
-      // Gone (flown or walked off stage): nothing to hit.
-      if (d.phase === 'leave' && d.phaseDur > 0 && d.phaseT / d.phaseDur > 0.9) return null;
+      // Leaving (off stage, or on its way): core ignores strikes then, so nothing to hit or hover.
+      if (d.phase === 'leave') return null;
       const p = toU(wx, wy, tmp);
       const w = liveWeak(tmp2);
       if (w) {
@@ -782,7 +779,8 @@ export function createDragon(scene: Scene): DragonRender {
         toWorld(rig.footX[q]!, 0, tmp2);
         world.burst(f.dust, tmp2.x, 0, 4, -Math.PI / 2, Math.max(l * 0.03, 6 * px));
         if (snowy > 0) world.burst(f.snow, tmp2.x, 0, 3, -Math.PI / 2, Math.max(l * 0.03, 6 * px));
-        cam.addTrauma(0.05 * Math.min(1, l / 30) * (1 + 1.4 * rig.ind.grand));
+        // (A gait's quick steps: one foot per cycle shakes the ground, or it would never settle.)
+        if (rig.ch[C_RUN]! < 0.2 || q === LEG_BN) cam.addTrauma(0.05 * Math.min(1, l / 30) * (1 + 1.4 * rig.ind.grand));
       }
     }
 
@@ -844,8 +842,16 @@ export function createDragon(scene: Scene): DragonRender {
       rig.dissolve = 1;
       rig.wingBurn = 0;
     }
-    // Dying: the last embers fade. Leaving: it fades once it's off stage (and stays gone).
-    st.alpha = d.phase === 'dying' ? 1 - sstep(0.985, 1, k) : d.phase === 'leave' ? 1 - sstep(0.86, 0.98, k) : 1;
+    // Dying: the last embers fade. Leaving: it fades once it's really off screen (never in view),
+    // and is gone by the end whatever happens (it holds that last pose, invisible, until the next
+    // spawn).
+    if (d.phase === 'leave') {
+      if (leaveFade > 0 && offScreen(cam, v.width, v.height)) leaveFade = Math.max(0, leaveFade - v.realDt * 8);
+      st.alpha = Math.min(leaveFade, 1 - sstep(0.96, 1, k));
+    } else {
+      leaveFade = 1;
+      st.alpha = d.phase === 'dying' ? 1 - sstep(0.985, 1, k) : 1;
+    }
 
     st.hot = hot;
     st.tongue = rig.ch[C_TONGUE]!;
@@ -856,6 +862,55 @@ export function createDragon(scene: Scene): DragonRender {
 
     const t1 = performance.now();
     perfAcc += t1 - t0;
+  };
+
+  /** Whether the live dragon (body, heads, wings, legs) lies entirely outside the viewport. */
+  const offScreen = (cam: View['camera'], w: number, h: number): boolean => {
+    const l = L();
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (let i = 0; i < rig.n; i++) {
+      const bx = rig.placeX(rig.bx[i]!);
+      const ux = rig.placeX(rig.ux[i]!);
+      if (bx < x0) x0 = bx;
+      if (bx > x1) x1 = bx;
+      if (ux < x0) x0 = ux;
+      if (ux > x1) x1 = ux;
+      if (rig.by[i]! < y0) y0 = rig.by[i]!;
+      if (rig.uy[i]! > y1) y1 = rig.uy[i]!;
+    }
+    for (let hh = 0; hh < rig.heads; hh++) {
+      const hx = rig.placeX(rig.headX[hh]!);
+      const r = rig.headLen * 1.4;
+      if (hx - r < x0) x0 = hx - r;
+      if (hx + r > x1) x1 = hx + r;
+      if (rig.headY[hh]! - r < y0) y0 = rig.headY[hh]! - r;
+      if (rig.headY[hh]! + r > y1) y1 = rig.headY[hh]! + r;
+    }
+    for (let a = 0; a < 3; a++) {
+      const wp = a < 2 ? (rig.armWing ? rig.armPose[a]! : null) : rig.wingOn ? rig.wingPose : null;
+      if (!wp) continue;
+      for (let i = 0; i < wp.n; i++) {
+        const px = rig.placeX(wp.pts[i * 2]!);
+        const py = wp.pts[i * 2 + 1]!;
+        if (px < x0) x0 = px;
+        if (px > x1) x1 = px;
+        if (py < y0) y0 = py;
+        if (py > y1) y1 = py;
+      }
+    }
+    for (let q = 0; q < 4; q++) {
+      if (!rig.legOn[q]) continue;
+      if (rig.footY[q]! > y1) y1 = rig.footY[q]!;
+    }
+    cam.worldToScreen(CLASH_X + x0 * l, y0 * l, tmp2);
+    const sx0 = tmp2.x;
+    const sy0 = tmp2.y;
+    cam.worldToScreen(CLASH_X + x1 * l, y1 * l, tmp2);
+    const m = 12;
+    return sx0 > w + m || tmp2.x < -m || tmp2.y < -m || sy0 > h + m;
   };
 
   const dustAtFeet = (scale: number): void => {

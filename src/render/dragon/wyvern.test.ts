@@ -112,6 +112,27 @@ describe('wyvern species', () => {
     expect(buildIndividual(NEWT, 5, 30, { heads: 3 }, 'elderNewt').heads).toBe(3);
   });
 
+  it('dresses a boss only on its own species; elsewhere it keeps just its grandeur', () => {
+    expect(BOSSES.elderNewt!.species).toBe('newt');
+    expect(BOSSES.grimmaw!.species).toBe('wyvern');
+    // Grimmaw's dressing on a newt: no plates, crown, wing-arms or snow, and the newt's own entrance.
+    const plain = buildIndividual(NEWT, 11, 30);
+    const odd = buildIndividual(NEWT, 11, 30, undefined, 'grimmaw');
+    expect(odd.boss).toBeNull();
+    expect(odd.grand).toBe(1);
+    expect(odd.plates + odd.crownN + odd.wingWalk).toBe(0);
+    expect(odd.dress.snow + odd.dress.torn).toBe(0);
+    expect(odd.enter).toBe('flutter');
+    expect(odd.leave).toBe('scuttle');
+    expect(odd.eye).toBe(plain.eye);
+    expect(odd.hornLen).toBe(plain.hornLen);
+    // And the Elder Newt's on a wyvern.
+    const w = buildIndividual(WYVERN, 11, 30, undefined, 'elderNewt');
+    expect(w.boss).toBeNull();
+    expect(w.dress.moss + w.dress.cataract).toBe(0);
+    expect(w.enter).toBe('glide');
+  });
+
   it('leaves ordinary newts undressed', () => {
     const ind = buildIndividual(NEWT, 5, 30);
     expect(ind.boss).toBeNull();

@@ -114,6 +114,9 @@ RATE[C_SHIFT] = 30;
 RATE[C_TUCK] = 7;
 RATE[C_RUN] = 8;
 
+/** C_RUN above this runs the gait clock; below it the feet plant and step as usual. */
+const GAIT_ON = 0.2;
+
 /** Scratch result of sampling the spine at a fractional node index. */
 export interface SpineSample {
   x: number;
@@ -302,8 +305,6 @@ export class DragonRig {
   stepDist = 0.1;
   stepTime = 0.15;
   private readonly ikOut = new Float64Array(4);
-  /** Last run-cycle swing value per leg (footfall detection). */
-  private readonly runSw = new Float64Array(4);
 
   // ---- wings ----
   wingOn = false;
@@ -331,10 +332,20 @@ export class DragonRig {
   wingBurn = 0;
 
   // ---- gaits ----
-  /** Run cycle phase (rad), frequency (Hz) and stride (fraction of each leg's reach). */
+  /**
+   * The gait clock (C_RUN > 0): phase (rad) and cycles per second. Each foot is planted for
+   * `runDuty` of the cycle (diagonal pairs together), where it landed (it never slides), then swings
+   * once to land ahead of its hip; moves pace the clock so a stance covers `runStride` of the leg's
+   * reach. In the air the same clock paddles the legs (a scurry that never touches down).
+   */
   runPhase = 0;
   runHz = 2;
-  runStride = 0.4;
+  runStride = 0.8;
+  runDuty = 0.5;
+  /** Velocity of the root offset (C_X, u/s): a carried body's travel, which planted feet must match. */
+  rootVx = 0;
+  /** 1 while a foot is in its gait swing. */
+  private readonly gaitUp = new Uint8Array(4);
 
   // ---- ground ----
   /** Ground level (u, +y down). 0 = the stage ground. */
@@ -612,13 +623,15 @@ export class DragonRig {
       const rA = this.legR[k]! * 0.55;
       const h = Math.max(0.01, -hipY - rA);
       if (this.armWing && k < 2) {
-        // Wing-arm: a short humerus up and back to the elbow, a long forearm down to the wrist,
-        // planted a little behind the shoulder (the folded arm is a tall peak over the shoulder).
+        // Wing-arm: a short humerus up and back to the elbow, a long forearm nearly straight down
+        // to the wrist, planted behind the shoulder: a tall pillar with the elbow peaked over the
+        // back. The folded arm is nearly closed, so the plant keeps the wrist ~20% farther from the
+        // shoulder than the closest the bones allow: the chest can dip without the wrist sliding.
         const reach = h * ind.armBend;
         this.legA[k] = reach * ind.armSplit;
         this.legB[k] = reach * (1 - ind.armSplit);
         this.legFoot[k] = reach * 0.09;
-        this.legHome[k] = (this.legFar[k] ? 0.03 : 0.14) * h;
+        this.legHome[k] = (this.legFar[k] ? 0.4 : 0.5) * h;
         continue;
       }
       const reach = h * ind.legBend;
@@ -832,6 +845,7 @@ export class DragonRig {
 
     this.solveTargets();
     if (this.carry) this.carryBody();
+    this.rootVx = (ch[C_X]! - this.rootX) / dt;
     this.rootX = ch[C_X]!;
     this.rootY = ch[C_Y]!;
     this.simulate(dt);
@@ -851,6 +865,8 @@ export class DragonRig {
       this.x[i] = this.x[i]! + dx;
       this.y[i] = this.y[i]! + dy;
     }
+    // Feet in flight go along (a wing-arm raised while standing hovers over its ground spot instead).
+    if (this.ch[C_AIR]! <= 0.5) return;
     for (let k = 0; k < 4; k++) {
       if (!this.legOn[k] || !this.legAir[k]) continue;
       this.footX[k] = this.footX[k]! + dx;
@@ -1309,6 +1325,10 @@ export class DragonRig {
     const stepTime = this.stepTime / Math.max(0.3, this.tempo);
     const g = this.groundY;
     const run = this.ch[C_RUN]!;
+    // The gait's body speed: a carried body travels with the root, not through its springs.
+    const gaitV = this.carry ? this.rootVx + bodyVx : bodyVx;
+    const gaitF = this.runHz > 0.05 ? this.runHz : 0.05;
+    const duty = this.runDuty;
     for (let k = 0; k < 4; k++) {
       this.landed[k] = 0;
       if (!this.legOn[k]) continue;
@@ -1317,13 +1337,23 @@ export class DragonRig {
       const arm = this.armWing && k < 2;
       // A wing-arm lifted into its wing pose is off the ground like an airborne leg.
       const armUp = arm && this.ch[C_WSPREAD]! >= 0.5;
+      // This leg's place in the gait cycle (0..1): diagonal pairs together, wing-arms a beat later.
+      const cyc = this.runPhase / (Math.PI * 2) + (k === LEG_FN || k === LEG_BF ? 0 : 0.5) + (arm ? 0.25 : 0);
+      const ph = cyc - Math.floor(cyc);
       if (air || armUp) {
         let tx: number;
         let ty: number;
+        let follow = 1 - Math.exp(-18 * dt);
         if (!air) {
           // Standing with the wing raised: the wrist hovers over the spot it will plant on.
           tx = this.hipX[k]! + this.legHome[k]!;
           ty = g;
+        } else if (run > GAIT_ON && !arm) {
+          // Running through the air: the gait clock paddles the legs, never touching down.
+          const a = ph * Math.PI * 2;
+          tx = this.hipX[k]! + this.legHome[k]! + 0.5 * this.runStride * reach * Math.cos(a);
+          ty = this.hipY[k]! + reach * (0.74 - 0.2 * Math.max(0, Math.sin(a)));
+          follow = run > 0.999 ? 1 : run;
         } else if (arm || this.ch[C_TUCK]! === 0) {
           // Dangling: feet hang under the hips, trailing a little.
           tx = this.hipX[k]! + this.legHome[k]! * 0.3 + 0.25 * reach;
@@ -1338,9 +1368,8 @@ export class DragonRig {
           tx = this.hipX[k]! + dxD + (0.62 * reach - dxD) * bk + (this.legHome[k]! * 0.5 - 0.2 * reach - dxD) * fw;
           ty = this.hipY[k]! + dyD + (0.3 * reach - dyD) * bk + (0.93 * reach - dyD) * fw;
         }
-        const f = 1 - Math.exp(-18 * dt);
-        this.footX[k] = this.footX[k]! + (tx - this.footX[k]!) * f;
-        this.footY[k] = this.footY[k]! + (ty - this.footY[k]!) * f;
+        this.footX[k] = this.footX[k]! + (tx - this.footX[k]!) * follow;
+        this.footY[k] = this.footY[k]! + (ty - this.footY[k]!) * follow;
         this.legAir[k] = 1;
         this.stepU[k] = -1;
       } else if (this.legAir[k]) {
@@ -1358,17 +1387,26 @@ export class DragonRig {
           this.stepY0[k] = Math.min(g, this.footY[k]!);
           this.stepX1[k] = home;
         }
-      } else if (run > 0.001) {
-        // Run cycle: feet swing around their homes (diagonal pairs together), lifted on the swing.
-        const ph = this.runPhase + (k === LEG_FN || k === LEG_BF ? 0 : Math.PI) + (arm ? 0.5 : 0);
-        const sw = Math.sin(ph);
-        const cx = this.hipX[k]! + this.legHome[k]! + this.runStride * reach * Math.cos(ph);
-        const cy = g - (sw > 0 ? sw * reach * 0.3 : 0);
-        const w = run > 0.999 ? 1 : run;
-        this.footX[k] = this.footX[k]! + (cx - this.footX[k]!) * w;
-        this.footY[k] = this.footY[k]! + (cy - this.footY[k]!) * w;
-        if (sw <= 0 && this.runSw[k]! > 0) this.landed[k] = 1;
-        this.runSw[k] = sw;
+      } else if (run > GAIT_ON) {
+        // Gait: planted where it landed for the stance (the foot never slides), then one swing to
+        // land ahead of the hip by half the stance's travel, so the hip passes over it mid-stance.
+        if (ph >= duty) {
+          const u = (ph - duty) / (1 - duty);
+          if (!this.gaitUp[k]) {
+            this.gaitUp[k] = 1;
+            this.stepX0[k] = this.footX[k]!;
+            this.stepY0[k] = this.footY[k]! < g ? this.footY[k]! : g;
+          }
+          const tx = this.hipX[k]! + this.legHome[k]! + (gaitV * ((1 - u) * (1 - duty) + 0.5 * duty)) / gaitF;
+          const e = u * u * (3 - 2 * u);
+          this.footX[k] = this.stepX0[k]! + (tx - this.stepX0[k]!) * e;
+          this.footY[k] = (this.stepY0[k]! - g) * (1 - e) + g - Math.sin(Math.PI * u) * reach * 0.28;
+        } else if (this.gaitUp[k]) {
+          // Touchdown: planted from here to the end of the stance.
+          this.gaitUp[k] = 0;
+          this.footY[k] = g;
+          this.landed[k] = 1;
+        }
         this.stepU[k] = -1;
       } else if (this.stepU[k]! >= 0) {
         let u = this.stepU[k]! + dt / stepTime;
@@ -1418,6 +1456,7 @@ export class DragonRig {
           }
         }
       }
+      if (air || armUp || run <= GAIT_ON) this.gaitUp[k] = 0;
       this.solveLeg(k);
     }
   }

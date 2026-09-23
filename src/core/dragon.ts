@@ -5,7 +5,7 @@ import { D } from './decimal';
 import type { Decimal } from './decimal';
 import { nextFloat, nextRange, nextU32, seedRng } from '../lib/rng';
 import { BALANCE, BOSS_TEXT, PHASE, dragonName, speciesOf } from './content';
-import { bossAt, bossMaxHp, bossOf, canZoom, dragonDyingDuration, dragonEnterDuration, dragonMaxHp, dragonSize, enterDuration, killGold } from './formulas';
+import { bossAt, bossMaxHp, bossOf, canZoom, dragonDyingDuration, dragonEnterDuration, dragonMaxHp, dragonSize, killGold } from './formulas';
 import { beginZoom } from './zoom';
 import type { DragonAttack, DragonPhase, DragonState, Emit, GameState } from './types';
 
@@ -74,9 +74,13 @@ export function setPhase(state: GameState, phase: DragonPhase, dur: number, emit
   emit({ type: 'dragonPhase', id: d.id, phase, dur });
 }
 
-/** The dragon retreats off stage (an escaping boss, or a fighting dragon when a zoom begins). */
+/**
+ * The dragon retreats off stage (an escaping boss, or a fighting dragon when a zoom begins): the
+ * entrance in reverse, so it takes the entrance's time (a boss leaves in its own, slower
+ * BALANCE.boss.enter: a dignified walk or a grand take-off, not a scurry).
+ */
 export function startLeave(state: GameState, emit: Emit): void {
-  setPhase(state, 'leave', enterDuration(state.dragon.size), emit);
+  setPhase(state, 'leave', dragonEnterDuration(state.dragon), emit);
 }
 
 function idleDuration(state: GameState): number {

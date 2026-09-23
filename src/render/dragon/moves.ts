@@ -70,12 +70,45 @@ function flapHz(rig: DragonRig, base: number): number {
   return base * Math.max(0.5, Math.sqrt(rig.tempo));
 }
 
-/** Tune the run cycle so the feet keep pace with a body moving `speed` u/s. */
+/**
+ * Pace the gait clock so each planted stance covers `stride` of the legs' reach while the body
+ * moves `speed` u/s (cycles per second = speed x duty / stride), clamped to [lo, hi]. Planted feet
+ * never slide; the pace keeps them within the legs' reach.
+ */
 function paceRun(rig: DragonRig, speed: number, stride: number, lo: number, hi: number): void {
   const reach = Math.max(1e-4, rig.legA[LEG_BN]! + rig.legB[LEG_BN]!);
   rig.runStride = stride;
-  const hz = Math.abs(speed) / (Math.PI * 2 * stride * reach);
+  const hz = (Math.abs(speed) * rig.runDuty) / (stride * reach);
   rig.runHz = hz < lo ? lo : hz > hi ? hi : hz;
+}
+
+/** Longest stance, as a share of the legs' reach, a walk may take (a long, heavy stride). */
+const WALK_STRIDE = 0.9;
+/** Gait clock limits for walks (Hz). */
+const WALK_HZ_LO = 1.2;
+const WALK_HZ_HI = 6;
+
+// ---------------------------------------------------------------------------------------------
+// Where entrances start and exits end (u), from the stage's right edge and top in body lengths
+// (edgeU: the edge's x from the rest pose's front; topU: the top's height above the ground).
+// ---------------------------------------------------------------------------------------------
+
+/** An entrance starts just past the right edge; a glider comes in from about the top of the frame. */
+export function enterStart(edgeU: number, topU: number, e: ChoreoEnv): void {
+  e.enterDist = Math.max(1.4, edgeU + 0.12);
+  e.enterH = Math.max(0.6, topU * 0.85);
+}
+
+/**
+ * An exit: turned around (mirrored about midX) the rest pose spans [2 midX - restMaxX, 2 midX], so
+ * its trailing end (the tail) must clear the edge, with a margin for its sway. A flier climbs away
+ * steeply and drifts right, out of the frame well before its phase ends.
+ */
+export function exitPath(rig: DragonRig, edgeU: number, topU: number, e: ChoreoEnv): void {
+  const clear = Math.max(0.6, edgeU - (2 * rig.midX - rig.restMaxX) + 0.3);
+  const fly = rig.ind.leave === 'fly';
+  e.exitDist = fly ? clear * 1.2 + 0.3 : clear;
+  e.exitH = fly ? Math.max(1.2, 1.35 * (topU + 0.45)) : Math.max(0.8, topU + 0.35);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -119,7 +152,7 @@ export function enterGlide(rig: DragonRig, e: ChoreoEnv): void {
   tg[C_NCURL] = ind.neckCurl - 0.2 * (air ? 1 : 0);
   tg[C_HLEVEL] = air ? 0.9 : 0.65;
   const squash = hump((k - tLand) / 0.22);
-  tg[C_CROUCH] = 0.5 * squash;
+  tg[C_CROUCH] = 0.3 * squash;
   tg[C_HPITCH] += -0.1 * squash;
   // In the air the tail streams straight out behind (stiff enough to keep up with the swoop);
   // it swings down and relaxes once it lands.
@@ -156,11 +189,12 @@ export function enterWalk(rig: DragonRig, e: ChoreoEnv): void {
   const k = e.k;
   const arrive = 0.68;
   const u = clamp01(k / arrive);
-  const p = 1 - Math.pow(1 - u, 1.5);
-  tg[C_X] = e.enterDist * (1 - p);
-  const speed = u < 1 ? (e.enterDist * 1.5 * Math.pow(1 - u, 0.5)) / Math.max(0.1, arrive * e.dur) : 0;
-  paceRun(rig, speed, 0.5, 0.7, 3);
-  tg[C_RUN] = 1 - sstep(0.8, 1, u);
+  // A steady pace in from off stage, easing to a stop over the last quarter of the approach.
+  const d = u < 0.75 ? 0 : u - 0.75;
+  tg[C_X] = e.enterDist * (1 - (u - (d * d) / 0.5) / 0.875);
+  const rel = u < 0.75 ? 1 : 1 - d / 0.25;
+  paceRun(rig, (e.enterDist * rel) / (0.875 * Math.max(0.1, arrive * e.dur)), WALK_STRIDE, WALK_HZ_LO, WALK_HZ_HI);
+  tg[C_RUN] = 1 - sstep(0.9, 1, u);
   // Heavy: a low stance, a bob on every step, the head swinging low.
   tg[C_CROUCH] = 0.15 * (1 - u);
   tg[C_Y] += -0.006 * Math.abs(Math.sin(rig.runPhase)) * tg[C_RUN]!;
@@ -193,14 +227,16 @@ export function leaveFly(rig: DragonRig, e: ChoreoEnv): void {
   tg[C_FACE] = Math.cos(Math.PI * turn);
   const tUp = grand > 0 ? 0.36 : 0.28;
   const crouch = hump((k - 0.06) / (tUp - 0.02));
-  tg[C_CROUCH] = 0.45 * crouch;
+  tg[C_CROUCH] = 0.3 * crouch;
   tg[C_WSPREAD] = sstep(0.1, tUp - 0.04, k);
   tg[C_WLIFT] = -0.35 * sstep(0.1, tUp, k) * (1 - sstep(tUp, tUp + 0.1, k));
   const air = k > tUp;
   tg[C_AIR] = air ? 1 : 0;
   const u = clamp01((k - tUp) / (1 - tUp));
-  tg[C_Y] += -e.exitH * Math.pow(u, 1.45);
-  tg[C_X] = -e.exitDist * Math.pow(u, 1.7);
+  // A powerful climb (steepest first), drifting off to the right: it leaves the frame well before
+  // the phase ends (the host fades it once it's really off screen).
+  tg[C_Y] += -e.exitH * (1 - Math.pow(1 - u, 1.6));
+  tg[C_X] = -e.exitDist * Math.pow(u, 1.25);
   tg[C_WFLAP] = air ? 0.85 : 0;
   rig.flapHz = flapHz(rig, 2.5);
   tg[C_TUCK] = air ? sstep(0, 0.25, u) : 0;
@@ -222,41 +258,49 @@ export function leaveFly(rig: DragonRig, e: ChoreoEnv): void {
   }
 }
 
-/** Scurries off: a quick turn, then legs a-blur (the run cycle), belly low, wings buzzing. */
+/**
+ * Scurries off: a quick turn, then it bolts, skimming just off the ground with its little wings
+ * buzzing and its legs a-blur through the air (the gait clock paddling them: nothing to slide on).
+ */
 export function leaveScuttle(rig: DragonRig, e: ChoreoEnv): void {
   const tg = rig.target;
   rig.carry = true;
   const ind = rig.ind;
   const k = e.k;
   tg[C_FACE] = Math.cos(Math.PI * sstep(0, 0.12, k));
-  const go = sstep(0.08, 0.2, k);
-  const p = sstep(0.1, 1, k);
-  tg[C_X] = -e.exitDist * Math.pow(p, 1.25);
-  const speed = (e.exitDist * 1.8) / Math.max(0.1, e.dur);
-  paceRun(rig, speed, 0.5, 3, 11);
+  const go = sstep(0.1, 0.2, k);
+  tg[C_AIR] = k > 0.1 ? 1 : 0;
+  const w = clamp01((k - 0.12) / 0.88);
+  tg[C_X] = -e.exitDist * Math.pow(w, 1.3);
+  rig.runStride = 0.8;
+  rig.runHz = 9;
   tg[C_RUN] = go;
-  tg[C_Y] += -0.018 * Math.abs(Math.sin(rig.runPhase)) * go;
-  tg[C_CROUCH] = 0.25 * go;
+  tg[C_Y] += -(0.06 + 0.02 * Math.abs(Math.sin(rig.runPhase * 0.5))) * go;
+  tg[C_PITCH] = -0.06 * go;
   tg[C_NRAISE] = ind.neckRaise - 0.15 * go;
   tg[C_BUZZ] = go;
   tg[C_WSPREAD] = 0.9 * go;
+  tg[C_WLIFT] = -0.35 * go;
   tg[C_SWAY] *= 1 + 1.5 * go;
   rig.swayHz *= 1 + 2 * go;
   tg[C_LOOK] = 0;
 }
 
-/** Walks off with dignity: a slow turn, a heavy walk, head held high. */
+/**
+ * Walks off with dignity: a slow turn (no travel until it's done), then from a standstill to a
+ * steady, heavy pace, head held high; each foot stays planted through its stance.
+ */
 export function leaveWalk(rig: DragonRig, e: ChoreoEnv): void {
   const tg = rig.target;
   rig.carry = true;
   const ind = rig.ind;
   const k = e.k;
-  tg[C_FACE] = Math.cos(Math.PI * sstep(0, 0.26, k));
-  const go = sstep(0.18, 0.3, k);
-  const p = sstep(0.2, 1, k);
-  tg[C_X] = -e.exitDist * p;
-  const speed = (e.exitDist * 1.5) / Math.max(0.1, 0.8 * e.dur);
-  paceRun(rig, speed, 0.5, 0.7, 3);
+  tg[C_FACE] = Math.cos(Math.PI * sstep(0, 0.2, k));
+  const w = clamp01((k - 0.2) / 0.8);
+  tg[C_X] = (-e.exitDist * (w < 0.15 ? (w * w) / 0.3 : w - 0.075)) / 0.925;
+  const rel = w < 0.15 ? w / 0.15 : 1;
+  paceRun(rig, (e.exitDist * rel) / (0.925 * Math.max(0.1, 0.8 * e.dur)), WALK_STRIDE, WALK_HZ_LO, WALK_HZ_HI);
+  const go = k > 0.19 ? 1 : 0;
   tg[C_RUN] = go;
   tg[C_Y] += -0.006 * Math.abs(Math.sin(rig.runPhase)) * go;
   tg[C_NRAISE] = ind.neckRaise + 0.12 * go;

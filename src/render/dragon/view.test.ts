@@ -256,17 +256,24 @@ describe('wyvern and bosses (DragonView)', () => {
     }
   });
 
-  it('breath windup: the throat; no weak spot while leaving, and nothing to hit once it is gone', () => {
+  it('breath windup: the throat; while leaving no weak spot and nothing to hit (core ignores strikes then)', () => {
     const { view, setPhase } = setup(12, 5, 30, 'wyvern');
     setPhase('windup', 'breath', 0.3);
     const throat = view.weakSpot(v())!;
     const head = view.headPoint(v());
     expect(Math.hypot(throat.x - head.x, throat.y - head.y)).toBeLessThan(12 * 0.2);
-    setPhase('leave', 'breath', 0.3);
-    expect(view.weakSpot(v())).toBeNull();
-    setPhase('leave', 'breath', 0.97);
     const b = view.bounds(r());
-    for (let i = 0; i < 40; i++) expect(view.hitTest(b.x + b.w * (i / 40), b.y + b.h * 0.5)).toBeNull();
+    // Still standing right there at the start of its exit, and no hover flare or hit anywhere on it.
+    for (const k of [0, 0.3, 0.6, 0.97]) {
+      setPhase('leave', 'breath', k);
+      expect(view.weakSpot(v())).toBeNull();
+      for (let i = 0; i < 40; i++) expect(view.hitTest(b.x + b.w * (i / 40), b.y + b.h * 0.5)).toBeNull();
+    }
+    // Any other phase: the same point hits the body.
+    setPhase('idle');
+    let hits = 0;
+    for (let i = 0; i < 40; i++) if (view.hitTest(b.x + b.w * (i / 40), b.y + b.h * 0.5) !== null) hits++;
+    expect(hits).toBeGreaterThan(10);
   });
 
   it('rebuilds when species or boss change on the live state; unknown species look like the newt', () => {

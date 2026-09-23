@@ -1,7 +1,8 @@
 // Tier bosses as data: a boss is its tier's species (state.dragon.species) dressed up. Core makes it
 // bigger and tougher and names it (DragonState.boss); here it gets morph overrides (heavier, more
 // horns, rock), dressings the painter adds (moss, scars, cataracts, snow, torn wings), its own
-// eyes, a slower tempo and grander entrance and exit styles. Unknown ids are ordinary dragons.
+// eyes, a slower tempo and grander entrance and exit styles. Each is dressed for one species: on
+// another (a debug edit), it keeps only its grandeur. Unknown ids are ordinary dragons.
 // Type-only imports: species.ts imports this module's values.
 import type { EnterStyle, LeaveStyle, Morph } from './species';
 
@@ -24,6 +25,8 @@ export const NO_DRESS: BossDress = { moss: 0, scars: 0, cataract: 0, snow: 0, to
 
 export interface BossDef {
   id: string;
+  /** The species it is dressed for: on any other species the dressing is ignored. */
+  species: string;
   /** Morph overrides, applied over the species' (after jitter and variants). */
   over: Partial<Morph>;
   dress: BossDress;
@@ -42,11 +45,14 @@ export interface BossDef {
  */
 const ELDER_NEWT: BossDef = {
   id: 'elderNewt',
+  species: 'newt',
   over: {
     thickShoulder: 0.068,
     thickBelly: 0.078,
     thickHip: 0.06,
-    clearance: 0.05,
+    // Up on long, heavy legs (a long, slow stride when it walks), belly well off the ground.
+    clearance: 0.085,
+    legBend: 1.5,
     neckRaise: 0.66,
     headTilt: -0.14,
     tailDroop: 0.2,
@@ -67,7 +73,7 @@ const ELDER_NEWT: BossDef = {
     crest: 0.03,
     crestSharp: 0.35,
     crestSpikes: 13,
-    legWidth: 0.03,
+    legWidth: 0.034,
     claws: 1,
     wingSpan: 0.17,
     buzz: 0.4,
@@ -86,6 +92,7 @@ const ELDER_NEWT: BossDef = {
  */
 const GRIMMAW: BossDef = {
   id: 'grimmaw',
+  species: 'wyvern',
   over: {
     thickShoulder: 0.066,
     thickBelly: 0.064,
