@@ -7,6 +7,7 @@ import type { ZoomApi, ZoomBeat } from './api';
 import { Cinematic } from './cinematic';
 import { zoomTimeline } from './timeline';
 import { installZoomDebug } from './debug';
+import { sel } from '../../core';
 
 export interface ZoomRender {
   layer: Layer;
@@ -41,6 +42,12 @@ export function createZoom(scene: Scene): ZoomRender {
   });
   // State is the truth: a zoom begun during a silent catch-up arrives as a resync only.
   scene.game.on('resync', () => cin.reconcile());
+  // The boss that begins a save's first zoom has just fallen: its ~3 s fall is the time to bake the
+  // next tier's art ahead (the rally's frames stay light).
+  scene.game.on('bossDefeated', () => {
+    const st = scene.game.state;
+    if (st.zoom.count === 0 && sel.canZoom(st)) cin.prepare(st.tier + 1);
+  });
 
   const debug = installZoomDebug(scene, cin, () => (fakeNext = true));
 

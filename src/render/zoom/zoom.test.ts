@@ -3,7 +3,7 @@ import { Camera } from '../camera';
 import { ZOOM_BEATS, pullEase, pullSpeed, span, zoomDoneAt, zoomSwitchAt, zoomTimeline } from './timeline';
 import { BOOTS_FILL, BOOTS_X0, BOOTS_X1, CameraPath, HERO_UNIT, HERO_Y, MeadowMorph, Stroke, computeFlashFraming, flashFraming } from './geometry';
 import { LIFT, MeadowPlate } from './plate';
-import { hideScaleShape, scaleShape, traceScale } from '../backdrop/hide';
+import { hideNotchAt, hideScaleOf, hideScaleShape, scaleShape, traceScale, type ScaleShape } from '../backdrop/hide';
 
 describe('zoom timeline', () => {
   it('fires the beats in order, with the switch at the flash', () => {
@@ -286,13 +286,21 @@ describe('MeadowPlate', () => {
     const again = hideScaleShape(s.cx, s.rowY + s.pitch * 0.5, scaleShape());
     expect(again.n).toBe(s.n);
     expect(again.i).toBe(s.i);
-    // The picture spans the plate, from its raised crown down past the next row's crowns (the face
-    // that shows), at the snapshot's aspect.
+    // The picture spans the plate at the snapshot's aspect, covering its crown, with the meadow's
+    // horizon (78% down it) just above the next row's crowns in front: the sunset band fills the
+    // face that shows, the ground goes under the rows in front.
     expect(pl.x).toBeLessThanOrEqual(s.cx - s.sx + 1e-9);
     expect(pl.x + pl.w).toBeGreaterThanOrEqual(s.cx + s.sx - 1e-9);
     expect(pl.y).toBeLessThanOrEqual(s.top - LIFT * s.pitch + 1e-9);
-    expect(pl.y + pl.h).toBeGreaterThanOrEqual(s.rowY + s.pitch * 1.3);
     expect(pl.h / pl.w).toBeCloseTo(900 / 1440, 9);
+    const horizon = pl.y + pl.h * 0.78;
+    const probe = scaleShape();
+    for (let k = 0; k < 5; k++) {
+      hideScaleShape(s.cx + s.sx * (-0.6 + 0.3 * k), s.rowY + s.pitch * 1.02, probe);
+      expect(probe.n).toBe(s.n + 1);
+      expect(horizon).toBeLessThanOrEqual(probe.top + 1e-9);
+    }
+    expect(horizon).toBeGreaterThan(s.top);
   });
 
   it("frames the picture: its own rectangle at 0, the whole scale at 1 (the hide's own crown)", () => {
@@ -320,5 +328,94 @@ describe('MeadowPlate', () => {
       expect(a.pts[i + 1]!).toBeGreaterThanOrEqual(pl.y - 1e-9);
     }
     expect(pl.rootY).toBeGreaterThan(pl.s.bottom - 1e-9);
+  });
+});
+
+describe('the hide close up (the zoom\'s hold)', () => {
+  // The crown's two cubics (traceRow's), sampled densely: an independent reading of the curves.
+  const halfCrown = (s: ScaleShape, right: boolean): number[] => {
+    const { cx, sx, lean, top, ry } = s;
+    const p = right
+      ? [cx + lean * 0.6, top, cx + sx * 0.45 + lean, top, cx + sx, top + ry * 0.35, cx + sx, top + ry]
+      : [cx - sx, top + ry, cx - sx, top + ry * 0.35, cx - sx * 0.45 + lean, top, cx + lean * 0.6, top];
+    const out: number[] = [];
+    for (let k = 0; k <= 2000; k++) {
+      const t = k / 2000;
+      const u = 1 - t;
+      const b0 = u * u * u;
+      const b1 = 3 * u * u * t;
+      const b2 = 3 * u * t * t;
+      const b3 = t * t * t;
+      out.push(b0 * p[0]! + b1 * p[2]! + b2 * p[4]! + b3 * p[6]!, b0 * p[1]! + b1 * p[3]! + b2 * p[5]! + b3 * p[7]!);
+    }
+    return out;
+  };
+  const yAt = (c: number[], x: number): number => {
+    if (x < c[0]! || x > c[c.length - 2]!) return NaN;
+    for (let k = 2; k < c.length; k += 2) {
+      if (x <= c[k]!) {
+        const x0 = c[k - 2]!;
+        const f = c[k]! > x0 ? (x - x0) / (c[k]! - x0) : 0;
+        return c[k - 1]! + (c[k + 1]! - c[k - 1]!) * f;
+      }
+    }
+    return c[c.length - 1]!;
+  };
+
+  it("puts each notch at the bottom of the V two neighbouring crowns make (or at the foot of a side)", () => {
+    const a = scaleShape();
+    const b = scaleShape();
+    const v = { x: 0, y: 0 };
+    let crossings = 0;
+    for (let n = 1; n <= 14; n++) {
+      for (let i = -25; i <= 25; i++) {
+        hideScaleOf(n, i, a);
+        hideScaleOf(n, i + 1, b);
+        hideNotchAt(n, i, v);
+        const ca = halfCrown(a, true);
+        const cb = halfCrown(b, false);
+        // The row's outline between the two apexes: the higher of the crowns wherever each spans.
+        // Its lowest point is the notch (a side's foot where one scale sits far below the other).
+        const x0 = a.cx + a.lean * 0.6;
+        const x1 = b.cx + b.lean * 0.6;
+        let low = -Infinity;
+        for (let k = 0; k <= 1500; k++) {
+          const x = x0 + ((x1 - x0) * k) / 1500;
+          const ya = yAt(ca, x);
+          const yb = yAt(cb, x);
+          const y = Number.isNaN(ya) ? yb : Number.isNaN(yb) ? ya : Math.min(ya, yb);
+          if (y > low) low = y;
+        }
+        const tol = 2e-3 * a.pitch;
+        expect(Math.abs(v.y - low)).toBeLessThan(tol);
+        expect(v.x).toBeGreaterThanOrEqual(x0 - 1e-9);
+        expect(v.x).toBeLessThanOrEqual(x1 + 1e-9);
+        // Where both crowns span the notch they meet there.
+        const ya = yAt(ca, v.x);
+        const yb = yAt(cb, v.x);
+        if (!Number.isNaN(ya) && !Number.isNaN(yb) && v.x > ca[0]! + 1e-6 && v.x < ca[ca.length - 2]! - 1e-6 && v.x > cb[0]! + 1e-6) {
+          expect(Math.abs(ya - yb)).toBeLessThan(tol);
+          crossings++;
+        }
+      }
+    }
+    // Most notches are true crossings (the rest are sides showing).
+    expect(crossings).toBeGreaterThan(14 * 51 * 0.6);
+  });
+
+  it('answers the same from its cache, through evictions', () => {
+    const first: number[] = [];
+    const v = { x: 0, y: 0 };
+    for (let i = 0; i < 40; i++) {
+      hideNotchAt(6, i, v);
+      first.push(v.x, v.y);
+    }
+    // Churn the cache with far more notches than it holds.
+    for (let n = 0; n < 30; n++) for (let i = -400; i < 400; i++) hideNotchAt(n, i, v);
+    for (let i = 0; i < 40; i++) {
+      hideNotchAt(6, i, v);
+      expect(v.x).toBe(first[i * 2]);
+      expect(v.y).toBe(first[i * 2 + 1]);
+    }
   });
 });

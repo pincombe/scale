@@ -307,6 +307,14 @@ export class Colossus {
     return this.faceNext >= FACE_LEVELS.length;
   }
 
+  /** Canvas memory held: the shield face's levels and the hand-over buffer (bytes). */
+  bytes(): number {
+    let b = 0;
+    for (const f of this.faces) if (f) b += f.width * f.height * 4;
+    if (this.buf) b += this.buf.width * this.buf.height * 4;
+    return b;
+  }
+
   /** Free the canvases (after the zoom). */
   release(): void {
     for (let i = 0; i < this.faces.length; i++) {

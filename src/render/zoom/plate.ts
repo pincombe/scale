@@ -1,17 +1,20 @@
 // The meadow's scale: the old tier's snapshot framed as one plate of the world wyrm's hide.
 //
 // The plate is a real scale of the Mountain's hide (backdrop/hide.ts: the same curves, at the same
-// spot), chosen just in front of the colossus's toes, sitting a little proud of its row (its crown
-// raised LIFT pitches) so more of its face shows; the next row's crowns still cut across its lower
-// part like every other scale's, which is what makes it read as one of them. In it, the meadow: a
-// dark rim with the rose rim light on its lit edge, the picture inset (sky, sun, range, horizon;
-// the grass under the next row), a gloss on its crown and a polished sheen sweeping across it. At
-// the end the backdrop keeps it, faintly warm, under the hero's feet (backdrop.markScale).
+// spot), chosen just in front of the colossus's toes: its crown, its sides and the next row's
+// crowns cutting across its lower part are exactly its neighbours', which is what makes it read as
+// one scale among many. In it, the meadow, placed so its sunset band (the sky, the sun, the range,
+// the horizon) fills the face the next row leaves open (hide.ts scalePictureRect, which the
+// backdrop's keepsake shares): the rose rim light on the edges that face the light, the enamel's
+// shade melting its edges into the dark hide, a gloss on its crown and a polished sheen sweeping
+// across it. At the end the backdrop
+// keeps it, faintly warm, under the hero's feet (backdrop.markScale).
 //
-// The frame morphs from the picture's own rectangle (the screen, at the flash) into the scale: both
-// are the same path (a move, then four cubics: two over the crown, one down each side to the root
-// the rows in front hide), in the picture's normalized coordinates, so the morph is a plain
-// interpolation of its points.
+// The frame morphs from the picture's own rectangle (the screen, at the flash) into the scale:
+// both are the same path (a move, then four cubics: two over the crown, one down each side to the
+// bottom the rows in front hide), in the picture's normalized coordinates. The crown rounds early
+// (the rectangle's flat top never cuts across the sky for long), the sides and bottom follow.
+
 import type { Palette } from '../palette';
 import { hideIndexAt, hideRowAt, hideScaleOf, scalePictureRect, scaleShape, traceScale, type ScaleShape } from '../backdrop/hide';
 import { rect } from '../../lib/vec';
@@ -23,10 +26,8 @@ const SEEK_DX = 0.13;
 const SEEK_DY = 0.19;
 /** Dark rim band, as a fraction of the plate's half-width. */
 const RIM_FRAC = 0.045;
-/** The root's depth below the crown's (unraised) top, in row pitches (the pattern's plates reach 2.15). */
-const ROOT = 2.3;
-/** The meadow's scale sits proud of its row by this many pitches (the backdrop's keepsake too). */
-export const LIFT = 0.55;
+/** The meadow's scale sits exactly in its row, like its neighbours (the backdrop's keepsake too). */
+export const LIFT = 0;
 
 /** Frame points: P0, then (C, C, P) x 4: over the crown to the apex, to the right shoulder, down to the root, up to P0. */
 const NPTS = 13;
@@ -60,7 +61,6 @@ export class MeadowPlate {
   gloss: HTMLCanvasElement | null = null;
   sheen: HTMLCanvasElement | null = null;
   rimLight = '#fff';
-  rimDark = '#000';
   /** Behind the picture, where it ends under the rows in front: the meadow's dark ground. */
   ground = '#000';
 
@@ -79,11 +79,11 @@ export class MeadowPlate {
       const ic = hideIndexAt(n, tx);
       for (let i = ic - 2; i <= ic + 2; i++) {
         hideScaleOf(n, i, p);
-        // Never under the boots (their soles end at the root line): its raised crown clear of them.
-        if (p.top - LIFT * p.pitch < rootY + 0.03) continue;
+        // Never under the boots (their soles end at the root line): its crown clear of them.
+        if (p.top < rootY + 0.03) continue;
         const d = Math.hypot((p.cx - tx) / 0.12, (p.top + (p.bottom - p.top) * 0.4 - ty) / 0.1);
-        // Wide ones, and ones already proud of their row (more face shows).
-        const score = p.sx * 6 - d + ((p.rowY - p.top) / p.pitch) * 0.8;
+        // Wide ones, near the spot.
+        const score = p.sx * 6 - d;
         if (score > best) {
           best = score;
           copyShape(p, this.s);
@@ -92,12 +92,12 @@ export class MeadowPlate {
     }
     if (best === -Infinity) hideScaleOf(hideRowAt(ty), hideIndexAt(hideRowAt(ty), tx), this.s);
     const s = this.s;
-    // The whole scale: its raised crown, then the sides straight down past the next row's crowns,
-    // rounding in to the root they hide.
+    // The scale as the pattern draws it: its crown, then the sides straight down under the rows in
+    // front to its bottom.
     const top = s.top - LIFT * s.pitch;
-    const root = s.top + ROOT * s.pitch;
+    const root = s.bottom;
     this.rootY = root;
-    // The picture: as wide as the plate, its top at the crown (shared with the backdrop's keepsake).
+    // The picture: as wide as the plate, its sunset band in the open face (shared with the keepsake).
     const pr = scalePictureRect(s, LIFT, aspect, this.pr);
     const w = pr.w;
     const h = pr.h;
@@ -118,7 +118,7 @@ export class MeadowPlate {
     const ry = s.ry;
     const lean = s.lean;
     const shoulder = top + ry;
-    const side = root - shoulder;
+    const mid = (shoulder + root) * 0.5;
     setPt(n, 0, ux(cx - sx), vy(shoulder));
     setPt(n, 1, ux(cx - sx), vy(top + ry * 0.35));
     setPt(n, 2, ux(cx - sx * 0.45 + lean), vy(top));
@@ -126,17 +126,18 @@ export class MeadowPlate {
     setPt(n, 4, ux(cx + sx * 0.45 + lean), vy(top));
     setPt(n, 5, ux(cx + sx), vy(top + ry * 0.35));
     setPt(n, 6, ux(cx + sx), vy(shoulder));
-    setPt(n, 7, ux(cx + sx * 0.97), vy(shoulder + side * 0.62));
-    setPt(n, 8, ux(cx + sx * 0.52), vy(root));
-    setPt(n, 9, ux(cx + lean * 0.15), vy(root));
-    setPt(n, 10, ux(cx - sx * 0.52), vy(root));
-    setPt(n, 11, ux(cx - sx * 0.97), vy(shoulder + side * 0.62));
+    // Down the pattern's straight, tapering sides (hidden below the next row's crowns).
+    setPt(n, 7, ux(cx + sx * 0.9), vy(mid));
+    setPt(n, 8, ux(cx + sx * 0.8), vy(root));
+    setPt(n, 9, ux(cx), vy(root));
+    setPt(n, 10, ux(cx - sx * 0.8), vy(root));
+    setPt(n, 11, ux(cx - sx * 0.9), vy(mid));
     setPt(n, 12, ux(cx - sx), vy(shoulder));
     // The rectangle in the same topology: the crown flattened onto the top edge, the sides down
     // the rectangle's own, the root in the middle of its bottom edge.
     const r = this.rectN;
     const apex = n[6]!;
-    const mid = n[18]!;
+    const bot = n[18]!;
     setPt(r, 0, 0, 0);
     setPt(r, 1, 0, 0);
     setPt(r, 2, apex * 0.5, 0);
@@ -146,19 +147,19 @@ export class MeadowPlate {
     setPt(r, 6, 1, 0);
     setPt(r, 7, 1, 1);
     setPt(r, 8, 1, 1);
-    setPt(r, 9, mid, 1);
+    setPt(r, 9, bot, 1);
     setPt(r, 10, 0, 1);
     setPt(r, 11, 0, 1);
     setPt(r, 12, 0, 0);
     this.chosen = true;
   }
 
-  /** The plate as the backdrop draws it (world m): the pattern's plate, its crown raised. */
+  /** The plate as the backdrop draws it (world m). */
   tracePlate(ctx: CanvasRenderingContext2D, dx = 0, dy = 0): void {
     traceScale(ctx, this.s, dx, dy, LIFT);
   }
 
-  /** The whole lifted scale (world m): the frame at 1 on the plate's own picture rect. */
+  /** The whole scale (world m): the frame at 1 on the plate's own picture rect. */
   traceWhole(ctx: CanvasRenderingContext2D): void {
     this.traceFrame(ctx, this.x, this.y, this.w, this.h, 1);
   }
@@ -173,9 +174,12 @@ export class MeadowPlate {
     const b = this.plateN;
     const ox = rx + rw * 0.5 + dx;
     const oy = ry + rh * 0.5 + dy;
+    // The crown rounds ahead of the rest: the rectangle's flat top never lingers across the sky.
+    const mc = m >= 0.55 ? 1 : 1 - (1 - m / 0.55) * (1 - m / 0.55) * (1 - m / 0.55);
     for (let i = 0; i < NPTS * 2; i += 2) {
-      const u = a[i]! + (b[i]! - a[i]!) * m;
-      const v = a[i + 1]! + (b[i + 1]! - a[i + 1]!) * m;
+      const k = i < 14 ? mc : m;
+      const u = a[i]! + (b[i]! - a[i]!) * k;
+      const v = a[i + 1]! + (b[i + 1]! - a[i + 1]!) * k;
       c[i] = ox + (u - 0.5) * rw * qx;
       c[i + 1] = oy + (v - 0.5) * rh * qy;
     }
@@ -187,7 +191,7 @@ export class MeadowPlate {
     ctx.closePath();
   }
 
-  /** The dark rim's width (world m) at the plate. */
+  /** The rim light's width (world m) at the plate. */
   get rim(): number {
     return this.s.sx * RIM_FRAC;
   }
@@ -196,7 +200,6 @@ export class MeadowPlate {
     if (p === this.pal && this.shade) return;
     this.pal = p;
     this.rimLight = mixHex(p.rim, '#fff4e6', 0.35);
-    this.rimDark = mixHex(p.silhouette, p.depthTint ?? p.haze, 0.1);
     this.ground = mixHex(old.silhouette, old.haze, 0.12);
     // Inner shade: the enamel's depth, darkest along the rim.
     const sh = this.shade ?? makeCanvas(160, 100);
@@ -248,6 +251,12 @@ export class MeadowPlate {
       g.fillRect(0, 0, 128, 4);
     }
     this.sheen = sn;
+  }
+
+  bytes(): number {
+    let b = 0;
+    for (const c of [this.shade, this.gloss, this.sheen]) if (c) b += c.width * c.height * 4;
+    return b;
   }
 
   release(): void {

@@ -41,11 +41,17 @@ const MAX_SCALES = 2500;
 const MIN_ASPECT = 1.2;
 /**
  * Close-up (the zoom's hide beat): rows whose pitch spans NEAR0..NEAR1 px ease into their close
- * look (the haze of distance lifts, the rim sharpens, snow shows packed in the crevices). Below
- * NEAR0 (every in-tier framing) the hide is drawn exactly as before.
+ * look (the haze of distance lifts, the rim sharpens, snow shows packed in the notches, each scale
+ * keeled). Below NEAR0 the hide is drawn as it always was: in-tier only the last row, at the foot
+ * of the screen (~43 px at 1440 x 900), comes near it.
  */
 const NEAR0 = 42;
-const NEAR1 = 150;
+const NEAR1 = 110;
+/**
+ * Close up, the drifts over whole crowns are gone by this much of the close look (each caps its
+ * crown out to the shoulders, past the notches: up close those tips would show on the neighbours).
+ */
+const DRIFT_NEAR = 0.35;
 /** Height of the snow drifted against a row's crowns (fraction of its pitch). */
 const CREVICE = 0.13;
 /** Arc height of a scale's rounded top, as a fraction of its row's pitch. */
@@ -205,16 +211,36 @@ export function traceScale(ctx: CanvasRenderingContext2D, s: ScaleShape, dx = 0,
   ctx.closePath();
 }
 
+/** A snapshot's horizon sits this far down it (the in-tier director's ground line). */
+const PICTURE_HORIZON = 0.78;
+const faceProbe: ScaleGeom = { cx: 0, sx: 0, top: 0, ry: 0, lean: 0 };
+
 /**
- * Where a picture of aspect `aspect` (height / width) sits in scale `s` lifted by `lift` pitches:
- * as wide as the plate, its top at the crown (the crown's arc takes its upper corners), its lower
- * part under the rows in front. The zoom's meadow and the backdrop's keepsake share it.
+ * Where a picture of aspect `aspect` (height / width) sits in scale `s` (crown raised `lift`
+ * pitches): as wide as the plate, placed so its horizon runs just above the next row's crowns,
+ * which leaves its sunset band (the sky, the sun, the range, the horizon) in the face that shows;
+ * the crown's arc takes the sky's corners, the rows in front its ground. The zoom's meadow and the
+ * backdrop's keepsake share it.
  */
 export function scalePictureRect(s: ScaleShape, lift: number, aspect: number, out: Rect): Rect {
   const w = s.sx * 2 * 1.02;
   const h = w * aspect;
+  const crown = s.top - lift * s.pitch;
+  // The face ends at the highest of the next row's crowns in front of this scale's middle.
+  const n1 = s.n + 1;
+  const p1 = hidePitch(n1);
+  const w1 = hideWidth(n1);
+  const off1 = rowOffset(n1, w1);
+  const y1 = hideRowY(n1);
+  let face = Infinity;
+  for (let k = 0; k < 5; k++) {
+    const x = s.cx + s.sx * (-0.6 + 0.3 * k);
+    const g = scaleGeom(n1, Math.floor((x - off1) / w1), w1, off1, faceProbe);
+    const top = y1 + g.top * p1;
+    if (top < face) face = top;
+  }
   out.x = s.cx - w * 0.5;
-  out.y = s.top - lift * s.pitch - h * 0.015;
+  out.y = Math.min(face - PICTURE_HORIZON * h, crown - 0.04 * h);
   out.w = w;
   out.h = h;
   return out;
@@ -232,6 +258,9 @@ interface HideColors {
   /** Close up: snow drifted against each row's crowns, and its lit crest. */
   crevice: string;
   creviceLit: string;
+  /** Close up: the dark seam each crown casts on the row behind, and a scale's shadowed half. */
+  occlusion: string;
+  shade: string;
   /** Snow over drifted scales (a top-lit gradient would need a context: flat, translucent). */
   drift: string;
   /** Body stops (row-local 0..2), and the atmospheric haze per row. */
@@ -270,6 +299,8 @@ function hideColors(pal: Palette): HideColors {
     rimNear: rgba(mixHex(pal.rim, '#ffe8dc', 0.3), 0.9),
     crevice: mixHex(mixHex('#aab3ea', tint, 0.18), pal.silhouette, 0.2),
     creviceLit: mixHex(mixHex('#e6eaff', pal.rim, 0.25), tint, 0.05),
+    occlusion: rgba(pal.silhouette, 0.72),
+    shade: rgba(mixHex(pal.silhouette, '#000000', 0.3), 0.5),
     drift: rgba(mixHex(snow, '#b3bbe8', 0.45), 0.34),
     body: [
       [0, mixHex(bulge, pal.rim, 0.05)],
@@ -302,14 +333,24 @@ function bodyGradient(ctx: CanvasRenderingContext2D, pal: Palette): CanvasGradie
   return g;
 }
 
-/** The body close up: the same crown and shade, but dark on down (no soft snow band in the pockets). */
+/**
+ * The body close up: darker than far off (no distance in it), sky light on the bulges, then
+ * near-black on down (no soft snow band in the pockets: the notches hold the snow). One slow ramp
+ * over every height a crown takes in its row (crowns rise and sink up to most of a pitch around
+ * the row's line): any tighter band would cut across the scales, the same height on all of them.
+ */
 function nearGradient(ctx: CanvasRenderingContext2D, pal: Palette): CanvasGradient {
   for (let i = 0; i < 2; i++) if (nearCtx[i] === ctx && nearPal[i] === pal) return nearVal[i]!;
-  const c = hideColors(pal);
-  const g = ctx.createLinearGradient(0, 0, 0, 2.1);
-  const body = c.body;
-  for (let k = 0; k < 5; k++) g.addColorStop(body[k]![0] / 2.1, body[k]![1]);
-  g.addColorStop(1, body[4]![1]);
+  const tint = pal.depthTint ?? pal.haze;
+  const dark = mixHex(pal.silhouette, tint, 0.05);
+  const g = ctx.createLinearGradient(0, -0.9, 0, 2.1);
+  const at = (y: number): number => (y + 0.9) / 3;
+  g.addColorStop(0, mixHex(mixHex(dark, tint, 0.3), pal.rim, 0.1));
+  g.addColorStop(at(-0.2), mixHex(dark, tint, 0.24));
+  g.addColorStop(at(0.35), mixHex(dark, tint, 0.11));
+  g.addColorStop(at(0.85), dark);
+  g.addColorStop(at(1.35), mixHex(dark, pal.silhouette, 0.7));
+  g.addColorStop(1, pal.silhouette);
   const slot = nearNext;
   nearNext = (nearNext + 1) & 1;
   nearCtx[slot] = ctx;
@@ -335,6 +376,169 @@ export function hideBaseColor(pal: Palette): string {
 function drift(n: number, i: number): number {
   const v = nDrift.value2(i * 0.16, n * 0.42) + 0.4 * nDrift.value2(i * 0.6 + 7.1, n * 1.3);
   return v < 0.28 ? 0 : Math.min(1, (v - 0.28) * 2.2);
+}
+
+// ---------------------------------------------------------------- close up: notches and keels
+
+/** One coordinate of a cubic Bezier at t. */
+function bez(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const u = 1 - t;
+  return u * u * (u * p0 + 3 * t * p1) + t * t * (3 * u * p2 + t * p3);
+}
+
+/** The t at which a cubic whose x rises monotonically reaches x (clamped to 0..1). */
+function bezAt(p0: number, p1: number, p2: number, p3: number, x: number): number {
+  if (x <= p0) return 0;
+  if (x >= p3) return 1;
+  let lo = 0;
+  let hi = 1;
+  for (let k = 0; k < 13; k++) {
+    const m = (lo + hi) * 0.5;
+    if (bez(p0, p1, p2, p3, m) < x) lo = m;
+    else hi = m;
+  }
+  return (lo + hi) * 0.5;
+}
+
+// A crown is two cubics (traceRow's): the left half from the shoulder up to the apex (x rising,
+// y falling), the right half from the apex down to the other shoulder (x and y rising).
+/** Row-local y of scale g's left half-crown at x, and the t there (crownT). */
+let crownT = 0;
+function leftCrownY(g: ScaleGeom, x: number): number {
+  const t = bezAt(g.cx - g.sx, g.cx - g.sx, g.cx - g.sx * 0.45 + g.lean, g.cx + g.lean * 0.6, x);
+  crownT = t;
+  return bez(g.top + g.ry, g.top + g.ry * 0.35, g.top, g.top, t);
+}
+function rightCrownY(g: ScaleGeom, x: number): number {
+  const t = bezAt(g.cx + g.lean * 0.6, g.cx + g.sx * 0.45 + g.lean, g.cx + g.sx, g.cx + g.sx, x);
+  crownT = t;
+  return bez(g.top, g.top, g.top + g.ry * 0.35, g.top + g.ry, t);
+}
+
+/**
+ * The notch between scales i and i + 1 of each close row: where the right half of i's crown meets
+ * the left half of i + 1's (or, where one sits much lower, the foot of the other's side), solved on
+ * the true curves. Static geometry, so cached by (row, index) in a two-way set-associative table:
+ * the solve is a few hundred curve evaluations, the lookup free. Row-local (x m, y pitches).
+ */
+const V_SETS = 2048;
+const vKey = new Float64Array(V_SETS * 2).fill(NaN);
+const vAge = new Uint32Array(V_SETS * 2);
+/** The notch point, the t on i's right half-crown and on i + 1's left one, and the pair's overlap. */
+const vX = new Float64Array(V_SETS * 2);
+const vY = new Float64Array(V_SETS * 2);
+const vTA = new Float64Array(V_SETS * 2);
+const vTB = new Float64Array(V_SETS * 2);
+const vGap = new Float64Array(V_SETS * 2);
+let vClock = 0;
+const notchA: ScaleGeom = { cx: 0, sx: 0, top: 0, ry: 0, lean: 0 };
+const notchB: ScaleGeom = { cx: 0, sx: 0, top: 0, ry: 0, lean: 0 };
+
+/** Slot of the notch between scales i and i + 1 of row n (solved on a miss). */
+function notch(n: number, i: number, w: number, off: number): number {
+  const key = n * 4194304 + i;
+  const set = ((Math.imul(n, 0x9e3779b1) ^ Math.imul(i, 0x85ebca6b)) >>> 0) & (V_SETS - 1);
+  let s = set * 2;
+  if (vKey[s] === key) return s;
+  if (vKey[s + 1] === key) return s + 1;
+  if (vAge[s + 1] < vAge[s]) s++;
+  vKey[s] = key;
+  vAge[s] = ++vClock;
+  const a = scaleGeom(n, i, w, off, notchA);
+  const b = scaleGeom(n, i + 1, w, off, notchB);
+  // The crossing lies between i's apex and right shoulder and between i + 1's left shoulder and
+  // apex; on that span a's crown falls as b's rises (a single root, or none: a side shows).
+  const lo0 = Math.max(a.cx + a.lean * 0.6, b.cx - b.sx);
+  const hi0 = Math.min(a.cx + a.sx, b.cx + b.lean * 0.6);
+  let x: number;
+  if (!(hi0 > lo0) || rightCrownY(a, lo0) >= leftCrownY(b, lo0)) x = lo0;
+  else if (rightCrownY(a, hi0) <= leftCrownY(b, hi0)) x = hi0;
+  else {
+    let lo = lo0;
+    let hi = hi0;
+    for (let k = 0; k < 13; k++) {
+      const m = (lo + hi) * 0.5;
+      if (rightCrownY(a, m) < leftCrownY(b, m)) lo = m;
+      else hi = m;
+    }
+    x = (lo + hi) * 0.5;
+  }
+  const ya = rightCrownY(a, x);
+  vTA[s] = crownT;
+  const yb = leftCrownY(b, x);
+  vTB[s] = crownT;
+  vX[s] = x;
+  vY[s] = Math.max(ya, yb);
+  vGap[s] = Math.min(a.cx + a.sx - (b.cx - b.sx), (a.sx + b.sx) * 0.5);
+  return s;
+}
+
+/** The notch between scales i and i + 1 of row n, in world meters (the close look's V). */
+export function hideNotchAt(n: number, i: number, out: { x: number; y: number }): { x: number; y: number } {
+  const w = hideWidth(n);
+  const s = notch(n, i, w, rowOffset(n, w));
+  out.x = vX[s]!;
+  out.y = hideRowY(n) + vY[s]! * hidePitch(n);
+  return out;
+}
+
+/**
+ * Close up: the half of each scale of row n turned away from the light (`lx` > 0: its left) in
+ * shadow, in row-local y: a keel runs down from the crown's apex, and the shadow reaches out along
+ * the crown to the notch and straight down from it (a crease between the scales: each keeps to its
+ * own face, never over its neighbour's).
+ */
+function traceKeels(ctx: CanvasRenderingContext2D, n: number, w: number, off: number, i0: number, i1: number, dx: number, dy: number, lx: number): void {
+  const left = lx >= 0;
+  const bottom = PLATE_BOTTOM + dy;
+  for (let i = i0; i <= i1; i++) {
+    const s = notch(n, left ? i - 1 : i, w, off);
+    const g = scaleGeom(n, i, w, off, geom);
+    const top = g.top + dy;
+    const ry = g.ry;
+    const ax = g.cx + g.lean * 0.6 + dx;
+    ctx.moveTo(ax, top);
+    if (left) {
+      // The left half-crown (shoulder P0 .. apex P3) from its notch t up to the apex, walked back
+      // down from the apex: de Casteljau's right part at t, reversed.
+      const t = vTB[s];
+      const p0x = g.cx - g.sx + dx;
+      const p2x = g.cx - g.sx * 0.45 + g.lean + dx;
+      const p0y = top + ry;
+      const p1y = top + ry * 0.35;
+      const q12x = p0x + (p2x - p0x) * t;
+      const q12y = p1y + (top - p1y) * t;
+      const r2x = p2x + (ax - p2x) * t;
+      const r1x = q12x + (r2x - q12x) * t;
+      const r1y = q12y + (top - q12y) * t;
+      const s0x = p0x;
+      const s0y = p0y + (p1y - p0y) * t;
+      const q01x = s0x + (q12x - s0x) * t;
+      const q01y = s0y + (q12y - s0y) * t;
+      ctx.bezierCurveTo(r2x, top, r1x, r1y, q01x + (r1x - q01x) * t, q01y + (r1y - q01y) * t);
+    } else {
+      // The right half-crown (apex Q0 .. shoulder Q3) from the apex to its notch t: de Casteljau's
+      // left part at t.
+      const t = vTA[s];
+      const q1x = g.cx + g.sx * 0.45 + g.lean + dx;
+      const q2x = g.cx + g.sx + dx;
+      const q2y = top + ry * 0.35;
+      const q3y = top + ry;
+      const l1x = ax + (q1x - ax) * t;
+      const m12x = q1x + (q2x - q1x) * t;
+      const m12y = top + (q2y - top) * t;
+      const l2x = l1x + (m12x - l1x) * t;
+      const l2y = top + (m12y - top) * t;
+      const m23x = q2x;
+      const m23y = q2y + (q3y - q2y) * t;
+      const r1x = m12x + (m23x - m12x) * t;
+      const r1y = m12y + (m23y - m12y) * t;
+      ctx.bezierCurveTo(l1x, top, l2x, l2y, l2x + (r1x - l2x) * t, l2y + (r1y - l2y) * t);
+    }
+    ctx.lineTo(vX[s] + dx, bottom);
+    ctx.lineTo(g.cx + g.lean * 0.15 + dx, bottom);
+    ctx.closePath();
+  }
 }
 
 /**
@@ -375,12 +579,6 @@ export interface HideOpts {
   base?: boolean;
 }
 
-/** A half-crown's height at distance u from its apex (quarter ellipse of half-width w, drop ry). */
-function crownY(u: number, w: number, top: number, ry: number): number {
-  const q = u / w;
-  return top + ry * (1 - Math.sqrt(Math.max(0, 1 - q * q)));
-}
-
 /**
  * Emit the silhouettes of the rows from `rowMin` on that drawHide(..., { rowMin }) would draw over
  * the world rect, into the current path in world meters (the caller applied its camera): a clip
@@ -405,9 +603,6 @@ export function traceRows(ctx: CanvasRenderingContext2D, x0: number, y0: number,
   }
 }
 
-const notchA: ScaleGeom = { cx: 0, sx: 0, top: 0, ry: 0, lean: 0 };
-const notchB: ScaleGeom = { cx: 0, sx: 0, top: 0, ry: 0, lean: 0 };
-
 /**
  * Snow mounds in the notches of row n (row-local y, units of pitch), shifted up by dy: one where
  * each pair of neighboring crowns meet, sized and present by a hash (a third stay bare). Drawn
@@ -417,28 +612,12 @@ function traceNotches(ctx: CanvasRenderingContext2D, n: number, w: number, off: 
   for (let i = i0; i < i1; i++) {
     const h = hash2f(i, n * 7 + 9);
     if (h < 0.33) continue;
-    const a = scaleGeom(n, i, w, off, notchA);
-    const b = scaleGeom(n, i + 1, w, off, notchB);
-    const l = b.cx - b.sx;
-    const r = a.cx + a.sx;
-    if (r <= l) continue;
-    // The V's bottom: where A's crown, falling to its right, meets B's, rising from its left
-    // (each half-crown modeled as a quarter ellipse from its apex down to its shoulder).
-    const ax = a.cx + a.lean * 0.6;
-    const bx = b.cx + b.lean * 0.6;
-    const aw = Math.max(1e-6, a.cx + a.sx - ax);
-    const bw = Math.max(1e-6, bx - (b.cx - b.sx));
-    let lo = Math.max(l, ax);
-    let hi = Math.min(r, bx);
-    if (hi <= lo) continue;
-    for (let k = 0; k < 12; k++) {
-      const m = (lo + hi) * 0.5;
-      if (crownY(m - ax, aw, a.top, a.ry) < crownY(bx - m, bw, b.top, b.ry)) lo = m;
-      else hi = m;
-    }
-    const x = (lo + hi) * 0.5;
-    const y = crownY(x - ax, aw, a.top, a.ry) + dy;
-    const rx = Math.min(r - l, (a.sx + b.sx) * 0.5) * (0.3 + 0.22 * h);
+    const s = notch(n, i, w, off);
+    const gap = vGap[s];
+    if (!(gap > 0)) continue;
+    const x = vX[s];
+    const y = vY[s] + dy;
+    const rx = gap * (0.3 + 0.22 * h);
     const ry = CREVICE * (0.42 + 0.45 * h);
     ctx.moveTo(x + rx, y);
     ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
@@ -502,8 +681,14 @@ export function drawHide(
     const detail = px >= DETAIL_PX;
     const d = detail ? Math.min(0.25, (rimPx * Math.max(1, px / 26)) / px) : 0;
     if (detail && near > 0.01 && n > 0) {
-      // Close up: snow lodged in the notches between this row's crowns (mounds laid on the row
-      // behind, then half covered by this row's crowns), some notches full, some bare.
+      // Close up: the seam each crown presses into the row behind (a dark line just above it: the
+      // scales overlap), then snow lodged in the notches between the crowns (mounds laid on the row
+      // behind, half covered by this row's crowns), some notches full, some bare.
+      ctx.globalAlpha = fade * alpha * near;
+      ctx.beginPath();
+      traceRow(ctx, n, w, off, i0, i1, 0, -0.07);
+      ctx.fillStyle = c.occlusion;
+      ctx.fill();
       const sn = Math.min(1, near * 1.6);
       ctx.globalAlpha = fade * alpha * sn;
       ctx.beginPath();
@@ -537,17 +722,26 @@ export function drawHide(
       ctx.globalAlpha = fade * alpha * near;
       ctx.fillStyle = nearGradient(ctx, pal);
       ctx.fill();
+      // Keeled: each scale's half away from the light in shadow.
+      ctx.beginPath();
+      traceKeels(ctx, n, w, off, i0, i1, -lx * d * pitch, -ly * d, lx);
+      ctx.fillStyle = c.shade;
+      ctx.fill();
       ctx.globalAlpha = fade * alpha;
     }
-    // Drifts: snow lying over patches of scales (each only where its own top shows).
-    if (detail) {
+    // Drifts: snow lying over patches of scales (each only where its own top shows); close up the
+    // snow keeps to the notches.
+    const dr = near < DRIFT_NEAR ? (1 - near / DRIFT_NEAR) * (1 - near / DRIFT_NEAR) : 0;
+    if (detail && dr > 0.01) {
+      ctx.globalAlpha = fade * alpha * dr;
       ctx.beginPath();
       traceRow(ctx, n, w, off, i0, i1, -lx * d * pitch, -ly * d, 1);
       ctx.fillStyle = c.drift;
       ctx.fill();
+      ctx.globalAlpha = fade * alpha;
     }
     // Atmosphere: far rows lean into the haze (lifting close up: the zoom brings them near).
-    const h = rowHaze(pitch) * (1 - 0.8 * near);
+    const h = rowHaze(pitch) * (1 - near) * (1 - near);
     if (h > 0.01) {
       ctx.beginPath();
       traceRow(ctx, n, w, off, i0, i1, 0, 0);
@@ -609,9 +803,12 @@ export function drawMarkedScale(
   ctx.beginPath();
   traceScale(ctx, s, 0, 0, lift);
   ctx.clip();
-  drawHide(ctx, pal, s.cx - s.sx * 1.2, s.rowY + s.pitch * 0.5, s.cx + s.sx * 1.2, s.bottom + s.pitch, pxPerM, lx, ly, { rowMin: s.n + 1, base: false });
+  markOpts.rowMin = s.n + 1;
+  drawHide(ctx, pal, s.cx - s.sx * 1.2, s.rowY + s.pitch * 0.5, s.cx + s.sx * 1.2, s.bottom + s.pitch, pxPerM, lx, ly, markOpts);
   ctx.restore();
 }
+
+const markOpts: HideOpts = { rowMin: 0, base: false };
 
 const markRect: Rect = { x: 0, y: 0, w: 1, h: 1 };
 /** How strongly the old tier shows in the meadow's scale (faint: an easter egg for who looks). */

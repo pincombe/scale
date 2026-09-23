@@ -41,7 +41,7 @@ import { defaultHeraldry } from '../crowd/banner';
 import { coatOf, heraldryFor, heraldryHash } from '../heraldry';
 import { framing } from '../director';
 import { paletteFor, type Palette } from '../palette';
-import { drawHide, traceRows } from '../backdrop/hide';
+import { drawHide, traceRows, type HideOpts } from '../backdrop/hide';
 import { TierCard } from '../../ui/tierCard';
 import { KNIGHT_HEIGHT } from '../world';
 import { mixHex } from '../../lib/color';
@@ -51,6 +51,8 @@ import { rect, vec2 } from '../../lib/vec';
 const MAX_STEP = 1 / 20;
 /** The meadow in its scale fades to this as the camera lands (the backdrop's keepsake: hide.ts). */
 const KEEPSAKE = 0.4;
+/** An unforeseen zoom asks for the next tier's art this far into the rally (s): after its opening. */
+const PREPARE_LATE = 0.5;
 /**
  * Tuning (live-editable under ?debug through window.__zoom.cin.knobs):
  *   holdW         the meadow's scale at its hold, as a fraction of the stage width
@@ -145,6 +147,13 @@ export class Cinematic {
   readonly plate = new MeadowPlate();
   readonly mist = new MistBank();
   private rootX1 = 0;
+  /** The tier whose art the backdrop and the crowd were asked to bake ahead (-1: none). */
+  private preparedFor = -1;
+  /** The bake-ahead still to be asked for, a frame after zoomBegin (-1: none). */
+  private prepareNext = -1;
+  /** drawHide options, reused every frame. */
+  private readonly hideOpts: HideOpts = { alpha: 1 };
+  private readonly frontOpts: HideOpts = { rowMin: 0, base: false, alpha: 1 };
   /** The meadow picture at the switch, relative to the root (world m): x, y offsets and size. */
   private r0x = 0;
   private r0y = 0;
@@ -259,8 +268,9 @@ export class Cinematic {
     s.director.enabled = false;
     s.ui.setCinematic?.(true);
     s.backdrop.setTransition?.(true);
-    s.backdrop.prepare?.(this.to);
-    s.crowd.prepareTier?.(this.to);
+    // The next tier's art: asked for at the boss's fall when this zoom could be foreseen (the first
+    // one: prepare()), else once the rally's opening has played (PREPARE_LATE).
+    this.prepareNext = this.preparedFor === this.to ? -1 : this.to;
     s.crowd.rally?.(this.heroX0, this.tl.flash - 0.35);
     if (this.fake) {
       // The core is not holding: hide the fight that goes on without it.
@@ -286,6 +296,17 @@ export class Cinematic {
     this.tremorT = 0;
     this.running = true;
     this.active = true;
+  }
+
+  /**
+   * Bake the next tier's art ahead (the backdrop's and the crowd's), spread over their frames:
+   * called when the boss that begins the first zoom falls (its ~3 s fall is spare time).
+   */
+  prepare(tier: number): void {
+    if (this.preparedFor === tier) return;
+    this.preparedFor = tier;
+    this.scene.backdrop.prepare?.(tier);
+    this.scene.crowd.prepareTier?.(tier);
   }
 
   /** State is the truth (a resync, or startup): start a zoom the events never announced, end a stray one, abort a cancelled one. */
@@ -334,7 +355,7 @@ export class Cinematic {
 
   /** Canvas memory held by the zoom right now (MB). */
   memMB(): number {
-    return (this.meadow.bytes() + this.mist.bytes()) / (1024 * 1024);
+    return (this.meadow.bytes() + this.mist.bytes() + this.plate.bytes() + this.colossus.bytes()) / (1024 * 1024);
   }
 
   /**
@@ -347,7 +368,10 @@ export class Cinematic {
     const stage = (): string | null => g.state.zoom?.stage ?? null;
     if (stage() === 'begin') g.dispatch({ type: 'zoom', stage: 'switch' });
     if (stage() === 'switched') g.dispatch({ type: 'zoom', stage: 'end' });
-    if (!this.switched) this.scene.backdrop.prepare?.(null);
+    if (!this.switched) {
+      this.scene.backdrop.prepare?.(null);
+      this.preparedFor = -1;
+    }
     this.handBack(false);
     this.showCrowd();
     this.scene.ui.setCinematic?.(false);
@@ -375,6 +399,11 @@ export class Cinematic {
     const t = this.t;
     const tl = this.tl;
     this.unmuteWorld();
+    // A zoom nobody saw coming (debug, a catch-up): its bake-ahead waits out the rally's opening.
+    if (this.prepareNext >= 0 && t >= PREPARE_LATE) {
+      this.prepare(this.prepareNext);
+      this.prepareNext = -1;
+    }
 
     while (this.beatIdx < ZOOM_BEATS.length && t >= tl.beats[ZOOM_BEATS[this.beatIdx]!]) this.fire(ZOOM_BEATS[this.beatIdx++]!);
 
@@ -568,8 +597,10 @@ export class Cinematic {
     // the screen anyway (and the zoom's art keeps covering it until the land beyond shows).
     this.muteWorld();
     const pal = paletteFor(this.to);
-    s.fx.flash(pal.accent.glow, 0.9, 1.3);
-    s.fx.kick(1);
+    // Only a blink over everything (the white-out before hid the switch); the light then blazes
+    // behind the colossus (drawPull's backlight), so his boots come out of it as crisp silhouettes.
+    s.fx.flash(pal.accent.glow, 0.7, 0.14);
+    s.fx.kick(0.6);
     if (!this.gentle) cam.addTrauma(0.55);
     // The camera path starts exactly where the old camera was: same screen, the new tier's meters.
     const P = this.path;
@@ -764,6 +795,8 @@ export class Cinematic {
     }
     this.card.hide();
     this.cardShown = false;
+    this.preparedFor = -1;
+    this.prepareNext = -1;
     this.meadow.release();
     this.mist.release();
     this.plate.release();
@@ -953,7 +986,8 @@ export class Cinematic {
     if (!booted) {
       // The hide (the Mountain's own pattern, crisp at any zoom), fading into the live ground as
       // the camera lands on it; then the cloud bank on the ridge line.
-      if (land > 0.002 && v.y + v.h > 0) drawHide(ctx, pal, v.x, Math.max(0, v.y), v.x + v.w, v.y + v.h, zE, lx, ly, { alpha: land });
+      this.hideOpts.alpha = land;
+      if (land > 0.002 && v.y + v.h > 0) drawHide(ctx, pal, v.x, Math.max(0, v.y), v.x + v.w, v.y + v.h, zE, lx, ly, this.hideOpts);
       const mistA = 1 - smoother(span(t, tl.holdEnd + 0.3, tl.pullEnd - 0.05));
       if (mistA > 0.002) this.mist.draw(ctx, v.x, v.x + v.w, view.time, mistA);
     }
@@ -961,12 +995,27 @@ export class Cinematic {
     // The scale's warm light on the hide around it (under the scale: the picture keeps its colors).
     if (pl.chosen && lum > 0.01) this.scaleLight(ctx, view, lum);
 
+    // While its frame closes, the meadow's light spills a little past its edge into the cloud: no
+    // hard edge against it, however the shape is caught.
+    const spill = pl.chosen ? Math.sin(Math.PI * Math.min(1, m.frame * 1.25)) * land : 0;
+    if (spill > 0.01) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cam.worldToScreen(m.x + m.w * 0.5, m.y + m.h * 0.42, this.tmp);
+      const Rx = m.w * zE * 0.72;
+      const Ry = m.h * zE * 0.66;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.32 * spill;
+      ctx.drawImage(this.warmGlow!, this.tmp.x - Rx, this.tmp.y - Ry, Rx * 2, Ry * 2);
+      ctx.restore();
+    }
+
     // The meadow: the screen at the flash, closing into its scale.
     const devW = m.w * zE * dpr;
     const pic = this.meadow.pick(devW);
     if (pic && land > 0.002) this.drawMeadow(ctx, pic, pal, lum, land, picA, t);
-    // The rows in front of the scale lie over its lower part, as over every scale's: it is one of
-    // them (they close over it as its frame closes).
+    // The rows in front lie over its lower part, as over every scale's: it is one of them (they
+    // close over it as its frame closes).
     if (pl.chosen && land > 0.002) {
       const rows = smootherstep(0.5, 0.95, m.frame) * land;
       if (rows > 0.002) {
@@ -980,8 +1029,11 @@ export class Cinematic {
         const y0 = s.rowY + s.pitch * 0.5;
         const x1 = s.cx + s.sx * 1.2;
         const y1 = pl.rootY + s.pitch;
-        drawHide(ctx, pal, x0, y0, x1, y1, zE, lx, ly, { rowMin: s.n + 1, base: false, alpha: rows });
-        // ...and the scale's light falls on them as on their neighbors.
+        const fo = this.frontOpts;
+        fo.rowMin = s.n + 1;
+        fo.alpha = rows;
+        drawHide(ctx, pal, x0, y0, x1, y1, zE, lx, ly, fo);
+        // ...and the scale's light falls on them as on their neighbours.
         if (lum > 0.01) {
           ctx.beginPath();
           traceRows(ctx, x0, y0, x1, y1, zE, s.n + 1);
@@ -994,6 +1046,18 @@ export class Cinematic {
     }
     ctx.restore();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // The flash's light, fading behind the colossus: the meadow blazes, his boots stay dark.
+    const back = 1 - smoother(span(t, tl.flash, tl.flash + 0.75));
+    if (back > 0.002) {
+      const soft = this.scene.settings.get('reduceFlashes') ? 0.3 : 1;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = back * back * 0.9 * soft;
+      ctx.fillStyle = this.whiteRamp;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+    }
 
     // The colossus, with the landing's dust around its soles; the knee mist over him as he lands
     // in the tier (the crowd's hero stands in it), the scale's warm light on his boots.
@@ -1023,7 +1087,7 @@ export class Cinematic {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // Halation: the old world's low sun, right behind the boots, blooms over the colossus's edges
     // while the meadow is still the world around him.
-    const halo = 0.3 * (1 - smoothstep01(span(m.frame, 0, 0.6)));
+    const halo = 0.2 * smoothstep01(span(t, tl.flash + 0.35, tl.flash + 0.9)) * (1 - smoothstep01(span(m.frame, 0, 0.6)));
     if (halo > 0.01) {
       cam.worldToScreen(m.x + this.sunU * m.w, m.y + this.sunV * m.h, this.tmp);
       const R = m.h * zE * 0.42;
@@ -1048,8 +1112,8 @@ export class Cinematic {
 
   /**
    * The meadow picture at its world rect, inside its frame: the bare picture while it is the screen,
-   * then the plate closing around it (rim light, dark rim, inset picture, the enamel's shade, the
-   * gloss on its crown, the sheen sweeping across). Camera transform applied (world meters).
+   * then the scale closing around it (the rim light on its lit edges, the picture, the enamel's
+   * shade, the gloss on its crown, the sheen sweeping across). Camera transform applied (world m).
    */
   private drawMeadow(ctx: CanvasRenderingContext2D, pic: HTMLCanvasElement, pal: Palette, lum: number, alpha: number, picA: number, t: number): void {
     const m = this.morph;
@@ -1064,24 +1128,21 @@ export class Cinematic {
     }
     const lx = pal.light.x;
     const ly = pal.light.y;
-    const rim = pl.rim * fr;
-    // The rim light on the lit edge, then the dark rim shifted away from the light.
+    // The rim light arrives once the shape is nearly a scale (mid-morph the edge stays soft): the
+    // whole shape in the rim color, then the picture inside it shifted away from the light, so
+    // the light stays only on the edges that face it, as on every scale (no frame around it).
+    const ra = fr * fr * fr;
+    const rim = pl.rim * ra;
     ctx.beginPath();
     pl.traceFrame(ctx, m.x, m.y, m.w, m.h, fr);
     ctx.fillStyle = pl.rimLight;
-    ctx.globalAlpha = alpha * fr;
-    ctx.fill();
-    ctx.beginPath();
-    pl.traceFrame(ctx, m.x, m.y, m.w, m.h, fr, 1, 1, -lx * rim * 0.45, -ly * rim * 0.45);
-    ctx.fillStyle = pl.rimDark;
+    ctx.globalAlpha = alpha * ra;
     ctx.fill();
     ctx.globalAlpha = alpha;
-    // The picture inside the rim.
+    // The picture.
     ctx.save();
-    const qx = 1 - (2 * rim) / m.w;
-    const qy = 1 - (2 * rim) / m.h;
     ctx.beginPath();
-    pl.traceFrame(ctx, m.x, m.y, m.w, m.h, fr, qx, qy, -lx * rim * 0.2, -ly * rim * 0.2);
+    pl.traceFrame(ctx, m.x, m.y, m.w, m.h, fr, 1, 1, -lx * rim * 0.6, -ly * rim * 0.6);
     ctx.clip();
     // Where the picture ends above the scale's root (under the rows in front), the meadow's ground.
     ctx.fillStyle = pl.ground;

@@ -12,6 +12,7 @@ import type { View } from '../types';
 import type { Cinematic } from './cinematic';
 import { fakeZoomBegin } from './cinematic';
 import { ZOOM_BEATS } from './timeline';
+import { sel } from '../../core';
 
 export function installZoomDebug(scene: Scene, cin: Cinematic, markFake: () => void): (view: View) => void {
   const dbg = scene.debug;
@@ -23,6 +24,11 @@ export function installZoomDebug(scene: Scene, cin: Cinematic, markFake: () => v
   const trigger = (): void => {
     const g = scene.game;
     if (cin.running) return;
+    // The build's last tier has nowhere to zoom to (a fake would re-enter it and wipe progress).
+    if (sel.isLastTier(g.state)) {
+      console.info('[zoom] the last tier of this build: nothing to zoom to');
+      return;
+    }
     // The real core: a save's first zoom begins by itself once the boss counts as beaten.
     g.dispatch({ type: 'debug', op: 'cleared' });
     if (g.state.zoom?.stage !== 'begin') g.dispatch({ type: 'zoom', stage: 'begin' });
@@ -33,7 +39,7 @@ export function installZoomDebug(scene: Scene, cin: Cinematic, markFake: () => v
   };
 
   const zoomNow = (fall: boolean): void => {
-    if (cin.running) return;
+    if (cin.running || sel.isLastTier(scene.game.state)) return;
     if (fall) {
       if (scene.game.state.dragon.phase !== 'dying') scene.game.dispatch({ type: 'debug', op: 'kill' });
       pendingFall = true;
