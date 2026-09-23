@@ -25,6 +25,8 @@ import {
   weakMult,
   wholeCeil,
   wholeNumber,
+  tierHpMult,
+  tierGoldMult,
 } from './formulas';
 import { UNLOCK_FLAGS } from './progress';
 import { deserialize, serialize } from './serialize';
@@ -81,7 +83,8 @@ describe('dragon curves', () => {
   it('gold is HP × goldPerHp, and tiers multiply both', () => {
     expect(dragonGold(0, 12).toNumber()).toBeCloseTo(dragonMaxHp(0, 12).toNumber() * BALANCE.dragon.goldPerHp, -1);
     // Tier-0 HP is rounded to whole numbers (~4e3 at index 20), so the ratio is only good to ~1e-4.
-    expect(dragonMaxHp(1, 20).div(dragonMaxHp(0, 20)).toNumber() / BALANCE.dragon.tierHpMult).toBeCloseTo(1, 3);
+    expect(dragonMaxHp(1, 20).div(dragonMaxHp(0, 20)).toNumber() / tierHpMult(1)).toBeCloseTo(1, 3);
+    expect(dragonGold(1, 20).div(dragonGold(0, 20)).toNumber() / tierGoldMult(1)).toBeCloseTo(1, 3);
   });
 
   it('names come from dragonName() and are deterministic per seed', () => {
@@ -242,8 +245,10 @@ describe('huge numbers', () => {
 });
 
 describe('upgrades', () => {
-  it('all nine exist with text, costs and unlock rules', () => {
-    expect(UPGRADE_IDS.length).toBe(9);
+  it('all fifteen exist with text, costs and unlock rules (nine Meadow, six Mountain)', () => {
+    expect(UPGRADE_IDS.length).toBe(15);
+    expect(UPGRADES.filter((u) => u.tier === 0).length).toBe(9);
+    expect(UPGRADES.filter((u) => u.tier === 1).length).toBe(6);
     for (const u of UPGRADES) {
       expect(UPGRADE_TEXT[u.id].name.length).toBeGreaterThan(0);
       expect(u.cost).toBeGreaterThan(0);
@@ -521,6 +526,7 @@ describe('progressive disclosure', () => {
     for (const u of UPGRADES) {
       const s = createInitialState(1);
       const r = u.unlock;
+      s.tier = r.tier ?? 0;
       if (r.stat === 'kills') s.kills = r.at - 1;
       else s.units[r.stat] = r.at - 1;
       tick(s, TICK_DT, noop);

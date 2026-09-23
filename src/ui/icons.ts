@@ -31,6 +31,12 @@ const UNIT_PATHS: Record<UnitId, string> = {
     '<path d="M28.4 4.8l.5 27.6-.6.1-.6-27.6z" opacity=".55"/>' +
     '<path d="M21 18.5l8-.2v1.4l-8 .3z"/><path d="M16 18h6v2h-6z"/>' +
     '<path d="M14 28h3.5l-1 10H13zM19 28h3.5l1.5 10h-3.5z"/>',
+  // Lancer (M2, WP 2.0 placeholder for the UI WP): rider on a horse, lance couched.
+  lancer:
+    '<path d="M7 19c2-3 6-4 11-4h9l4-5c1-1 3-2 4-1l2 3-1 2-3-1-3 5v5c0 2-1 4-3 4H11c-3 0-5-2-5-4z"/>' +
+    '<path d="M9 27h2.6l-.6 11H8.5zM13.5 27h2.6l.4 11h-2.6zM23 27h2.6l1 11H24zM27 26h2.6l1.4 12h-2.6z"/>' +
+    '<path d="M15 6c1.5-2 4.5-2 5.5 0l.3 4c0 .8-.6 1.4-1.4 1.4h-3c-.8 0-1.4-.6-1.4-1.4z"/><path d="M14 12h7l1 7h-9z"/>' +
+    '<path d="M8 18.2l31-9.6.4 1.2-31 9.6z"/>',
 };
 
 export function unitIcon(unit: UnitId): SVGSVGElement {

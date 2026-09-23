@@ -53,6 +53,15 @@ export const METRICS: Metric[] = [
   { key: 'clickShare', label: 'click share of damage', get: (r) => r.clickShare, worst: 'min', fmt: pct, only: ACTIVE },
   { key: 'shopping', label: 'time shopping (window)', get: (r) => r.shopping, worst: 'max', fmt: sec, only: ACTIVE },
   { key: 'dilation', label: 'logic / wall time', get: (r) => r.dilation, worst: 'min', fmt: (x) => x.toFixed(3) },
+  // ---- M2, informational (WP 2.7 adds the pacing targets) ----
+  { key: 'firstBoss', label: 'M2: first boss summoned', get: (r) => never(r.firstBoss), worst: 'max', fmt: mm },
+  { key: 'firstZoom', label: 'M2: first zoom begins', get: (r) => never(r.firstZoom), worst: 'max', fmt: mm },
+  { key: 'bossEscapes', label: 'M2: boss escapes', get: (r) => r.bossEscapes, worst: 'max', fmt: count },
+  { key: 'zoomScales', label: 'M2: Scales from zoom 1', get: (r) => r.zoomScales, worst: 'min', fmt: count },
+  { key: 'zoomFusion', label: 'M2: Fusion Bonus zoom 1', get: (r) => r.zoomFusion, worst: 'min', fmt: (x) => (Number.isFinite(x) ? '×' + x.toFixed(2) : '-') },
+  { key: 'zoomHeight', label: 'M2: Mountain knight height', get: (r) => r.zoomHeight, worst: 'min', fmt: (x) => (Number.isFinite(x) ? Math.round(x) + ' m' : '-') },
+  { key: 'secondBoss', label: 'M2: second boss summoned', get: (r) => never(r.secondBoss), worst: 'max', fmt: mm },
+  { key: 'scalesEarned', label: 'M2: Scales earned (run)', get: (r) => r.scalesEarned, worst: 'min', fmt: count },
 ];
 
 const METRIC_BY_KEY = new Map(METRICS.map((m) => [m.key, m]));

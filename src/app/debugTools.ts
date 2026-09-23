@@ -4,10 +4,15 @@
 //   seed=N        fixed RNG seed           dragon=N   start at dragon #N of the tier
 //   footman=N     archer=N  gold=N         speed=X    time scale (0-20)
 //   pause         start paused ('.' steps) layers=a,b only these layers visible (e.g. layers=dragon)
-//   phase=P       force a dragon phase (windup|breath|swipe|stagger|idle|enter|dying), attack=breath|swipe
+//   phase=P       force a dragon phase (windup|breath|swipe|stagger|idle|enter|dying|leave), attack=breath|swipe
 //   loop          repeat the current phase forever      immortal   HP refills instead of dying
 //   panel=0|1     force the right panel      stress     particle stress test on
-import { createInitialState, fmt } from '../core';
+// M2 (applied first: tier, then the rest):
+//   tier=N        jump to tier N like a zoom without the cinematic (0 Meadow, 1 Mountain)
+//   boss          fill the Wyrm Gauge (the boss comes after the current dragon)
+//   cleared       the tier's boss counts as beaten (a save that never zoomed starts its zoom at once)
+//   scales=N      +N Scales (opens Heraldry)   lancer=N   +N lancers
+import { createInitialState, fmt, sel } from '../core';
 import type { DragonAttack, DragonPhase, UnitId } from '../core';
 import type { Scene } from './scene';
 import type { Loop } from './loop';
@@ -20,8 +25,13 @@ declare global {
   }
 }
 
-const PHASES: readonly DragonPhase[] = ['enter', 'idle', 'windup', 'breath', 'swipe', 'stagger', 'dying'];
+const PHASES: readonly DragonPhase[] = ['enter', 'idle', 'windup', 'breath', 'swipe', 'stagger', 'dying', 'leave'];
 const STRESS_TARGET = 1500;
+
+/** "1.8 m", "224 m", "4.36 km" for the debug watch. */
+function fmtMeters(m: number): string {
+  return m >= 1000 ? (m / 1000).toFixed(2) + ' km' : m >= 100 ? Math.round(m) + ' m' : m.toFixed(1) + ' m';
+}
 
 /** Registers the controls; returns a per-frame hook for the app loop. */
 export function installDebugTools(scene: Scene, params: URLSearchParams, loop: () => Loop): () => void {
@@ -40,7 +50,23 @@ export function installDebugTools(scene: Scene, params: URLSearchParams, loop: (
   });
   debug.watch('hp', () => `${fmt(game.state.dragon.hp)} / ${fmt(game.state.dragon.maxHp)}`);
   debug.watch('gold', () => fmt(game.state.gold));
-  debug.watch('army', () => `${game.state.units.footman} foot / ${game.state.units.archer} arch`);
+  debug.watch('army', () => `${game.state.units.footman} foot / ${game.state.units.archer} arch / ${game.state.units.lancer} lance`);
+  debug.watch('tier', () => `${game.state.tier} · knights ${fmtMeters(game.state.height)} · zooms ${game.state.zoom.count} · fusion ×${game.state.zoom.fusion.toFixed(2)}`);
+  debug.watch('gauge', () => {
+    const s = game.state;
+    const g = `${Math.round(sel.gauge(s) * 100)}% (${s.wyrm.charge}/${sel.bossAt(s.tier)})`;
+    return s.wyrm.cleared ? g + ' cleared' : g;
+  });
+  debug.watch('boss', () => {
+    const s = game.state;
+    if (!s.dragon.boss) return s.wyrm.escapes > 0 ? `- (${s.wyrm.escapes} escaped)` : '-';
+    return `${s.dragon.boss} ${sel.bossTimeLeft(s).toFixed(1)} / ${s.wyrm.bossDur} s${sel.bossClockRunning(s) ? '' : ' (paused)'}`;
+  });
+  debug.watch('scales', () => fmt(game.state.scales));
+  debug.watch('zoom', () => {
+    const z = game.state.zoom;
+    return z.stage ?? (sel.canZoom(game.state) ? 'ready' : '-');
+  });
   debug.watch('camera', () => `${camera.zoom.toFixed(1)} px/m  x ${camera.x.toFixed(2)}`);
   debug.watch('time', () => `x${time.scale.toFixed(2)}  ticks ${loop().stats.ticks}`);
   debug.watch('dilation', () => time.dilation.toFixed(2));
@@ -63,6 +89,7 @@ export function installDebugTools(scene: Scene, params: URLSearchParams, loop: (
   debug.button('+10 footmen', () => units('footman', 10), 'f');
   debug.button('+10 archers', () => units('archer', 10), 'a');
   debug.button('+100 footmen', () => units('footman', 100));
+  debug.button('+10 lancers', () => units('lancer', 10));
   debug.slider('dragon #', 0, 40, 1, () => game.state.dragon.index, (v) => game.dispatch({ type: 'debug', op: 'dragon', amount: v }));
   debug.button('reset game', () => game.replaceState(createInitialState(game.state.seed)));
   debug.toggle('panel open', () => ui.panelOpen, (v) => ui.setPanelOpen(v));
@@ -75,8 +102,17 @@ export function installDebugTools(scene: Scene, params: URLSearchParams, loop: (
   debug.button('stagger', () => phase('stagger'));
   debug.button('idle', () => phase('idle'));
   debug.button('enter', () => phase('enter'));
+  debug.button('leave', () => phase('leave'));
   debug.toggle('loop phase', () => !!game.state.flags['debug.loopPhase'], (v) => flag('debug.loopPhase', v), 'l');
   debug.toggle('immortal', () => !!game.state.flags['debug.immortal'], (v) => flag('debug.immortal', v), 'i');
+
+  debug.section('Zoom (M2)');
+  debug.button('summon boss', () => game.dispatch({ type: 'debug', op: 'boss' }));
+  debug.button('clear boss', () => game.dispatch({ type: 'debug', op: 'cleared' }));
+  debug.button('zoom begin', () => game.dispatch({ type: 'zoom', stage: 'begin' }));
+  debug.button('+10 Scales', () => game.dispatch({ type: 'debug', op: 'scales', amount: 10 }));
+  debug.button('tier 0 (Meadow)', () => game.dispatch({ type: 'debug', op: 'tier', amount: 0 }));
+  debug.button('tier 1 (Mountain)', () => game.dispatch({ type: 'debug', op: 'tier', amount: 1 }));
 
   debug.section('Juice');
   debug.button('shake', () => camera.addTrauma(0.6), 's');
@@ -105,12 +141,20 @@ export function installDebugTools(scene: Scene, params: URLSearchParams, loop: (
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   };
+  const tier = num('tier');
+  if (tier !== null) game.dispatch({ type: 'debug', op: 'tier', amount: tier });
   const d = num('dragon');
   if (d !== null) game.dispatch({ type: 'debug', op: 'dragon', amount: d });
   const f = num('footman');
   if (f !== null) units('footman', f);
   const a = num('archer');
   if (a !== null) units('archer', a);
+  const lancers = num('lancer');
+  if (lancers !== null) units('lancer', lancers);
+  const scales = num('scales');
+  if (scales !== null) game.dispatch({ type: 'debug', op: 'scales', amount: scales });
+  if (params.has('boss')) game.dispatch({ type: 'debug', op: 'boss' });
+  if (params.has('cleared')) game.dispatch({ type: 'debug', op: 'cleared' });
   const g = num('gold');
   if (g !== null) game.dispatch({ type: 'debug', op: 'gold', amount: g });
   const sp = num('speed');
@@ -128,7 +172,7 @@ export function installDebugTools(scene: Scene, params: URLSearchParams, loop: (
     for (const l of renderer.layerList) l.visible = keep.has(l.name);
   }
   if (params.has('stress')) stress = true;
-  if (d !== null || f !== null || a !== null) game.post({ type: 'resync' });
+  if (d !== null || f !== null || a !== null || lancers !== null) game.post({ type: 'resync' });
 
   return () => {
     if (!stress) return;

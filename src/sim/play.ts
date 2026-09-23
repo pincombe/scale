@@ -4,7 +4,7 @@
 import { nextFloat, seedRng } from '../lib/rng';
 import { TICK_DT, applyAction, createInitialState, fmt, sel, sizeWord, tick } from '../core';
 import type { Action, GameEvent, GameState } from '../core';
-import { shop, shopPause } from './bots';
+import { readyAbilities, shop, shopPause } from './bots';
 import type { Profile } from './bots';
 import { JuiceClock } from './juice';
 import { EYE_FIRST_DELAY, EYE_FIRST_KILLS } from '../render/backdrop/eyeTimeline';
@@ -16,6 +16,11 @@ export const BOSS_AT = 195;
 /** Kill pace is measured over this wall window (s): the stretch after the tutorial newts. */
 export const PACE_FROM = 40;
 export const PACE_TO = 120;
+/**
+ * The zoom cinematic as the sim models it (wall s): nothing happens for this long after zoomBegin,
+ * then the bot dispatches 'switch' and 'end' (WP 2.1 owns the real timing).
+ */
+export const ZOOM_CINEMATIC = 9;
 
 export interface RunOptions {
   /** Model hit-stop / slow-mo dilation (default true). */
@@ -44,6 +49,20 @@ export interface RunResult {
   eyeOpens: number;
   /** Wall s of the first purchase of each unit / upgrade id. */
   firstBuy: Record<string, number>;
+  /** M2 (informational): wall s of the first boss's summon, the first zoom's begin, the second boss's summon (-1: never). */
+  firstBoss: number;
+  firstZoom: number;
+  secondBoss: number;
+  /** Boss fights lost to the timer. */
+  bossEscapes: number;
+  /** The first zoom's reward: Scales, Fusion Bonus, knight height in the Mountain (display m). */
+  zoomScales: number;
+  zoomFusion: number;
+  zoomHeight: number;
+  /** Wall s of the second zoom's begin (never in M2: the Mountain is the last tier). */
+  secondZoom: number;
+  /** Scales earned over the run. */
+  scalesEarned: number;
   /** Dragon body length (m) at each SIZE_AT checkpoint. */
   sizeAt: number[];
   /** Kills at 3:15. */
@@ -66,7 +85,7 @@ export interface RunResult {
   longestBuyNoveltyGap: number;
   /** Novelty events inside that window. */
   novelties: number;
-  /** Longest wall stretch between kills (dead-end detector), whole run. */
+  /** Longest wall stretch between kills (dead-end detector), to killGapEnd (M1's 4:00; idle: whole run). */
   longestKillGap: number;
   /** Purchases per minute inside the window. */
   purchasesPerMin: number;
@@ -89,6 +108,17 @@ export function windowEnd(p: Profile, seconds: number): number {
   return p.clickUntilFirstKill ? seconds : Math.min(seconds, BOSS_AT);
 }
 
+/**
+ * Active players' runs were 4:00 long in M1; M2 plays them longer to report the Mountain (the M2
+ * rows), but the dead-end detector keeps its M1 span so its targets mean what they meant.
+ */
+export const M1_RUN = 240;
+
+/** Where the longest-gap-between-kills measurement stops (wall s). */
+export function killGapEnd(p: Profile, seconds: number): number {
+  return p.clickUntilFirstKill ? seconds : Math.min(seconds, M1_RUN);
+}
+
 function num(d: { toNumber(): number }): number {
   return d.toNumber();
 }
@@ -97,6 +127,7 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
   const juice = opts.juice ?? true;
   const seconds = opts.seconds ?? p.seconds;
   const winEnd = windowEnd(p, seconds);
+  const gapEnd = killGapEnd(p, seconds);
   const log = opts.log;
   const s: GameState = createInitialState(seed);
   const rng = seedRng((seed * 0x9e3779b1) ^ 0xb07);
@@ -116,6 +147,15 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     firstArcher: -1,
     eyeOpens: -1,
     firstBuy: {},
+    firstBoss: -1,
+    firstZoom: -1,
+    secondBoss: -1,
+    bossEscapes: 0,
+    zoomScales: NaN,
+    zoomFusion: NaN,
+    zoomHeight: NaN,
+    secondZoom: -1,
+    scalesEarned: 0,
     sizeAt: [],
     killsAtBoss: 0,
     killsByMinute: [],
@@ -153,7 +193,7 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
       else if (e.type === 'armyHit') armyDmg += dealt(e.damage);
     }
     pending.push(e);
-    if (log) buyNote.push(e.type !== 'purchase' ? '' : `${e.kind === 'unit' ? ' → ' + s.units[e.id as 'footman' | 'archer'] : ''}  (gold left ${fmt(s.gold)})`);
+    if (log) buyNote.push(e.type !== 'purchase' ? '' : `${e.kind === 'unit' ? ' → ' + s.units[e.id as 'footman' | 'archer' | 'lancer'] : e.kind === 'champion' ? ' → level ' + s.champions[e.id as 'aldric' | 'brunhild'].level : ''}  (${e.kind === 'heraldry' ? 'Scales left ' + fmt(s.scales) : 'gold left ' + fmt(s.gold)})`);
   };
   const act = (a: Action): void => applyAction(s, a, emit);
 
@@ -194,7 +234,7 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
         case 'dragonDeath': {
           r.kills++;
           if (wall <= winEnd) killGoldSum += num(e.gold);
-          r.longestKillGap = Math.max(r.longestKillGap, wall - lastKill);
+          if (wall <= gapEnd) r.longestKillGap = Math.max(r.longestKillGap, wall - lastKill);
           lastKill = wall;
           if (r.firstKill < 0) {
             r.firstKill = wall;
@@ -256,6 +296,38 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
             log?.(wall, '  stagger!');
           }
           break;
+        case 'bossSummon':
+          novelty('the boss: ' + e.boss, false);
+          if (r.firstBoss < 0) r.firstBoss = wall;
+          else if (r.secondBoss < 0 && s.tier > 0) r.secondBoss = wall;
+          log?.(wall, `BOSS ${e.boss} summoned (${e.dur} s)`);
+          break;
+        case 'bossEscaped':
+          r.bossEscapes++;
+          log?.(wall, `boss ${e.boss} escaped`);
+          break;
+        case 'bossDefeated':
+          novelty('the boss falls', false);
+          log?.(wall, `boss ${e.boss} defeated${e.first ? ' (first time)' : ''}`);
+          break;
+        case 'zoomBegin':
+          if (r.firstZoom < 0) {
+            r.firstZoom = wall;
+            r.zoomScales = num(e.scales);
+            r.zoomFusion = e.fusion;
+            r.zoomHeight = e.height;
+          } else if (r.secondZoom < 0) r.secondZoom = wall;
+          zoomAt = wall + ZOOM_CINEMATIC;
+          novelty('the zoom', false);
+          log?.(wall, `ZOOM ${e.from} → ${e.to}: +${fmt(e.scales)} Scales, fusion ×${e.fusion}, knights ${e.height} m`);
+          break;
+        case 'scalesGain':
+          r.scalesEarned += num(e.amount);
+          break;
+        case 'championJoin':
+        case 'abilityUse':
+          log?.(wall, `${e.type} ${e.id}`);
+          break;
       }
     }
     pending.length = 0;
@@ -293,10 +365,20 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
   let minute = 1;
   let paceFromKills = -1;
   let paceDone = false;
+  /** Wall time the modeled zoom cinematic dispatches 'switch' and 'end' (Infinity: no zoom playing). */
+  let zoomAt = Infinity;
 
   for (let f = 0; f < frames; f++) {
     // Input (between frames, in wall time).
-    if (clicking && wall >= clickStart && wall >= shopUntil && !(p.clickUntilFirstKill && r.firstKill >= 0)) {
+    // The zoom cinematic: ~9 s of nothing, then the stages the zoom director would dispatch.
+    if (wall >= zoomAt) {
+      zoomAt = Infinity;
+      act({ type: 'zoom', stage: 'switch' });
+      act({ type: 'zoom', stage: 'end' });
+    }
+    const holding = s.zoom.stage !== null;
+    if (!holding && p.abilities === 'onCooldown') for (const id of readyAbilities(s)) act({ type: 'useAbility', id });
+    if (!holding && clicking && wall >= clickStart && wall >= shopUntil && !(p.clickUntilFirstKill && r.firstKill >= 0)) {
       clickAcc += p.cps * FRAME_DT;
       while (clickAcc >= 1) {
         clickAcc -= 1;
@@ -315,7 +397,8 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     }
     sampleAffordable(); // a click may have paid for something the shop spends right away
     if (r.firstKill >= 0 && nextShop === Infinity) nextShop = wall + Math.min(1, p.shopEvery);
-    if (wall >= nextShop) {
+    if (wall >= nextShop && !holding) {
+      if (p.abilities === 'sometimes') for (const id of readyAbilities(s)) if (nextFloat(rng) < 0.5) act({ type: 'useAbility', id });
       const pause = shopPause(shop(s, p, act));
       if (pause > 0) {
         shopUntil = wall + pause;
@@ -343,18 +426,19 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
       r.sizeAt.push(s.dragon.size);
       sizeIdx++;
     }
+    // Kill counts are the run's totals (state.kills restarts in every tier).
     if (!bossDone && wall >= BOSS_AT - 1e-9) {
-      r.killsAtBoss = s.kills;
+      r.killsAtBoss = r.kills;
       bossDone = true;
     }
-    if (paceFromKills < 0 && wall >= PACE_FROM - 1e-9) paceFromKills = s.kills;
+    if (paceFromKills < 0 && wall >= PACE_FROM - 1e-9) paceFromKills = r.kills;
     if (!paceDone && wall >= PACE_TO - 1e-9) {
-      const n = s.kills - paceFromKills;
+      const n = r.kills - paceFromKills;
       r.killPace = n > 0 ? (PACE_TO - PACE_FROM) / n : Infinity;
       paceDone = true;
     }
     if (wall >= minute * 60 - 1e-9) {
-      r.killsByMinute.push(s.kills);
+      r.killsByMinute.push(r.kills);
       minute++;
     }
   }
@@ -365,15 +449,15 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     noveltyGap(end);
     r.longestBuyNoveltyGap = Math.max(r.longestBuyNoveltyGap, end - lastBuyNovelty);
   }
-  r.longestKillGap = Math.max(r.longestKillGap, wall - lastKill);
-  if (!bossDone) r.killsAtBoss = s.kills;
+  if (lastKill < gapEnd) r.longestKillGap = Math.max(r.longestKillGap, Math.min(wall, gapEnd) - lastKill);
+  if (!bossDone) r.killsAtBoss = r.kills;
   const winFrom = Math.max(0, r.firstKill);
   r.purchasesPerMin = end > winFrom ? (purchasesInWindow * 60) / (end - winFrom) : 0;
   r.dilation = wall > 0 ? logic / wall : 1;
   r.staggerGoldShare = killGoldSum + staggerGoldSum > 0 ? staggerGoldSum / (killGoldSum + staggerGoldSum) : 0;
   r.clickShare = clickDmg + armyDmg > 0 ? clickDmg / (clickDmg + armyDmg) : 0;
   if (log) {
-    log(wall, `end: ${s.kills} kills, dragon #${s.dragon.index} ${s.dragon.size.toFixed(1)} m, ${s.units.footman} footmen, ${s.units.archer} archers, gold ${fmt(s.gold)}, dilation ${r.dilation.toFixed(3)}`);
+    log(wall, `end: tier ${s.tier}, ${r.kills} kills, dragon #${s.dragon.index} ${s.dragon.size.toFixed(1)} m, ${s.units.footman} footmen, ${s.units.archer} archers, ${s.units.lancer} lancers, champions ${s.champions.aldric.level}/${s.champions.brunhild.level}, heraldry ${JSON.stringify(s.heraldry.levels)}, fusion ×${s.zoom.fusion}, gold ${fmt(s.gold)}, dilation ${r.dilation.toFixed(3)}`);
   }
   return r;
 }

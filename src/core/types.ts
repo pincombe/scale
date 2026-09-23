@@ -4,9 +4,10 @@
 import type { Decimal } from './decimal';
 import type { RngState } from '../lib/rng';
 
-export type UnitId = 'footman' | 'archer';
+/** 'lancer' (M2): the Mountain's cavalry. */
+export type UnitId = 'footman' | 'archer' | 'lancer';
 
-/** Tier-0 upgrade ids (one-shots). Actions and state key upgrades by plain string ids. */
+/** Upgrade ids (one-shots). Tier 0 first, then the Mountain's set. Actions and state key upgrades by plain string ids. */
 export type UpgradeId =
   | 'pointySwords'
   | 'drillSergeant'
@@ -16,7 +17,14 @@ export type UpgradeId =
   | 'warHorns'
   | 'heroicExample'
   | 'quickNock'
-  | 'grindstone';
+  | 'grindstone'
+  // ---- tier 1, the Mountain (unlock only in tier 1+) ----
+  | 'highForge'
+  | 'pikeWall'
+  | 'yewLongbows'
+  | 'mountainTithe'
+  | 'couchedLances'
+  | 'destriers';
 
 /**
  * 'leave' (M2): the dragon retreats off stage right (render: the entrance in reverse). A boss whose
@@ -78,6 +86,8 @@ export interface WyrmState {
   escapes: number;
   /** The tier's boss is beaten: the zoom is available (the first zoom of a save starts by itself). */
   cleared: boolean;
+  /** `kills` when the boss fell: kills since then are how far the player pushed (more Scales). */
+  clearedAt: number;
 }
 
 /** What a zoom will award, fixed at zoomBegin so the cinematic can show it. */
@@ -126,7 +136,10 @@ export interface ChampionState {
   specialT: number;
 }
 
-/** An archer volley in flight (core-private; render learns about it from the 'volley' event). */
+/**
+ * An archer volley or a lancer charge in flight (core-private; render learns about it from the
+ * 'volley' / 'cavalry' event).
+ */
 export interface PendingVolley {
   unit: UnitId;
   /** Id of the dragon it was loosed at; it lands on nothing if that dragon is gone. */
@@ -134,7 +147,10 @@ export interface PendingVolley {
   /** Seconds until impact. */
   t: number;
   damage: Decimal;
+  /** Arrows (or riders) to show when it lands. */
   arrows: number;
+  /** Dragonbane Volley (the ability), not the archers' own. */
+  ability?: boolean;
 }
 
 /** Lifetime counters (read-only for render/UI: chronicle lines, sim stats, first-strike reveal). */
@@ -152,6 +168,9 @@ export interface ArmyState {
   meleeT: number;
   /** Seconds until the next archer volley. */
   volleyT: number;
+  /** Seconds until the next lancer charge (M2). */
+  cavalryT: number;
+  /** Volleys and charges in flight. */
   volleys: PendingVolley[];
 }
 
@@ -236,10 +255,16 @@ export type Action =
 export type GameEvent =
   /** auto (M2): a Rally auto-strike rather than a click. */
   | { type: 'strike'; damage: Decimal; crit: boolean; weak: boolean; stagger: boolean; aimed: boolean; x: number; y: number; auto?: boolean }
-  /** A melee beat or a volley landing. hits = how many visible blows/arrows to show. */
-  | { type: 'armyHit'; unit: UnitId; damage: Decimal; hits: number }
-  /** Archers loosed; the matching 'armyHit' arrives `flight` seconds later (if the dragon lives). */
-  | { type: 'volley'; unit: UnitId; arrows: number; flight: number }
+  /**
+   * A melee beat, a volley or a lancer charge landing. hits = how many visible blows/arrows/riders
+   * to show. ability (M2): the Dragonbane Volley landing.
+   */
+  | { type: 'armyHit'; unit: UnitId; damage: Decimal; hits: number; ability?: boolean }
+  /**
+   * Archers loosed; the matching 'armyHit' arrives `flight` seconds later (if the dragon lives).
+   * ability (M2): the Dragonbane Volley (one huge volley, even with no archers).
+   */
+  | { type: 'volley'; unit: UnitId; arrows: number; flight: number; ability?: boolean }
   | { type: 'dragonSpawn'; id: number }
   | { type: 'dragonPhase'; id: number; phase: DragonPhase; dur: number }
   /** Kill reward (already added to gold); coins burst from the corpse. */
@@ -266,6 +291,8 @@ export type GameEvent =
   | { type: 'abilityEnd'; id: AbilityId }
   | { type: 'abilityReady'; id: AbilityId }
   | { type: 'championJoin'; id: ChampionId }
+  /** A champion's ordinary blow (on the footmen's melee beat; damage already applied). */
+  | { type: 'championHit'; id: ChampionId; damage: Decimal }
   /** A champion's special move landed (damage already applied). */
   | { type: 'championSpecial'; id: ChampionId; damage: Decimal }
   | { type: 'scalesGain'; amount: Decimal }

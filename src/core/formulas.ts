@@ -1,8 +1,8 @@
 // Economy formulas. Every number comes from content/balance.ts (BALANCE); this file is the math.
 // Pure functions of (state, content). Economy values are Decimals; multipliers and counts are numbers.
 import { Decimal, D } from './decimal';
-import { BALANCE, UNITS, UPGRADES, upgradeDefOf } from './content';
-import type { GameState, UnitId } from './types';
+import { BALANCE, CHAMPIONS, KNIGHT_M, UNITS, UNIT_IDS, UPGRADES, lastTier, tierNumber, tierOf, upgradeDefOf } from './content';
+import type { AbilityId, ChampionId, ChargeId, GameState, UnitId } from './types';
 
 /** Fixed logic step in seconds. tick() is always called with this dt. */
 export const TICK_DT = 1 / 20;
@@ -53,21 +53,43 @@ function hpLog10(index: number): number {
   return ln / LN10;
 }
 
+// ---- Tiers ----
+
+/** Dragon HP in tier t × this (vs the Meadow). */
+export function tierHpMult(tier: number): number {
+  return tierNumber(tier, 'hpMult');
+}
+
+/** Kill gold in tier t × this. */
+export function tierGoldMult(tier: number): number {
+  return tierNumber(tier, 'goldMult');
+}
+
+/** Unit, upgrade and champion-level costs in tier t × this (champion blows scale with it too). */
+export function tierCostMult(tier: number): number {
+  return tierNumber(tier, 'costMult');
+}
+
+/** Ordinary kills that fill tier t's Wyrm Gauge. */
+export function bossAt(tier: number): number {
+  return Math.max(1, Math.round(tierNumber(tier, 'bossAt')));
+}
+
 /** Max HP of the nth dragon of a tier. */
 export function dragonMaxHp(tier: number, index: number): Decimal {
   if (tier === 0 && index === 0) return D(BALANCE.dragon.firstHp);
-  return fromLog10(hpLog10(index) + tier * Math.log10(BALANCE.dragon.tierHpMult));
+  return fromLog10(hpLog10(index) + Math.log10(tierHpMult(tier)));
 }
 
 /** Kill reward before gold upgrades. */
 export function dragonGold(tier: number, index: number): Decimal {
   const b = BALANCE.dragon;
   if (tier === 0 && index === 0) return D(b.firstGold);
-  return fromLog10(hpLog10(index) + Math.log10(b.goldPerHp) + tier * Math.log10(b.tierGoldMult));
+  return fromLog10(hpLog10(index) + Math.log10(b.goldPerHp) + Math.log10(tierGoldMult(tier)));
 }
 
-/** Body length in meters: log-linear between BALANCE.dragon.sizeAnchors, then a steady ratio. */
-export function dragonSize(_tier: number, index: number): number {
+/** The Meadow's size curve (m): log-linear between BALANCE.dragon.sizeAnchors, then a steady ratio. */
+function baseSize(index: number): number {
   const anchors = BALANCE.dragon.sizeAnchors;
   const first = anchors[0]!;
   if (index <= first[0]) return first[1];
@@ -81,6 +103,31 @@ export function dragonSize(_tier: number, index: number): number {
   }
   const last = anchors[anchors.length - 1]!;
   return last[1] * Math.pow(BALANCE.dragon.sizeGrowthAfter, index - last[0]);
+}
+
+/**
+ * Body length in world meters: the Meadow's curve, scaled so the tier's dragon #0 is its
+ * `firstSize` (the Mountain's first wyvern is a knight's height, 1.8 m) and growing alike.
+ */
+export function dragonSize(tier: number, index: number): number {
+  const b = baseSize(index);
+  if (tier === 0) return b;
+  return (b * tierNumber(tier, 'firstSize')) / BALANCE.dragon.sizeAnchors[0]![1];
+}
+
+/** HP of the tier's boss: dragon #bossAt's × BALANCE.boss.hpMult (fixed per tier: an escape doesn't toughen it). */
+export function bossMaxHp(tier: number): Decimal {
+  return wholeCeil(dragonMaxHp(tier, bossAt(tier)).mul(BALANCE.boss.hpMult));
+}
+
+/** The boss's kill reward before gold upgrades. */
+export function bossGold(tier: number): Decimal {
+  return wholeCeil(dragonGold(tier, bossAt(tier)).mul(BALANCE.boss.goldMult));
+}
+
+/** Display meters of a world length at the current tier's scale (a knight = state.height). */
+export function displayMeters(state: GameState, worldM: number): number {
+  return (worldM * state.height) / KNIGHT_M;
 }
 
 // ---- Phase timing ----
@@ -121,19 +168,62 @@ export function clickMult(state: GameState): number {
   return m;
 }
 
-/** Weak-spot crit multiplier (×5, or ×10 with keenEye). */
+// ---- Heraldry (M2) ----
+
+/** Level of a heraldic charge (0 = not on the shield). */
+export function chargeLevel(state: GameState, id: ChargeId): number {
+  return state.heraldry.levels[id] ?? 0;
+}
+
+/** The compounding per-level multiplier of a charge whose effect has a `mult` (1 when not taken). */
+function heraldryMult(state: GameState, id: ChargeId): number {
+  const e = BALANCE.heraldry[id].effect;
+  const L = chargeLevel(state, id);
+  if (L <= 0 || !('mult' in e)) return 1;
+  return Math.pow(e.mult, L);
+}
+
+/** Scales for the next level of a charge. */
+export function heraldryCost(state: GameState, id: ChargeId): Decimal {
+  const b = BALANCE.heraldry[id];
+  const c = b.cost * Math.pow(b.growth, chargeLevel(state, id));
+  return Number.isFinite(c) && c < EXACT_BELOW ? D(ceilClean(c)) : wholeCeil(Decimal.pow(b.growth, chargeLevel(state, id)).mul(b.cost));
+}
+
+/** Lion: all damage × this. */
+export function lionMult(state: GameState): number {
+  return heraldryMult(state, 'lion');
+}
+
+/** Units of each kind Tower heraldry grants at the start of a tier. */
+export function towerUnits(state: GameState): { unit: UnitId; count: number } | null {
+  const e = BALANCE.heraldry.tower.effect;
+  const L = chargeLevel(state, 'tower');
+  if (L <= 0 || e.kind !== 'startUnits') return null;
+  return { unit: e.unit, count: e.count * L };
+}
+
+/**
+ * Multiplier on ALL damage (clicks, army, champions, abilities): the product of every Fusion Bonus
+ * so far × Lion heraldry.
+ */
+export function damageMult(state: GameState): number {
+  return state.zoom.fusion * lionMult(state);
+}
+
+/** Weak-spot crit multiplier (×5, or ×10 with keenEye; × Wyvern heraldry). */
 export function weakMult(state: GameState): number {
   let m = BALANCE.click.weakMult;
   for (const u of UPGRADES) {
     const e = u.effect;
     if (e.kind === 'weakMult' && hasUpgrade(state, u.id)) m = Math.max(m, e.value);
   }
-  return m;
+  return m * heraldryMult(state, 'wyvern');
 }
 
-/** Multiplier on kill gold (and the stagger bonus). */
+/** Multiplier on kill gold (and the stagger bonus): upgrades × Sun heraldry. */
 export function goldMult(state: GameState): number {
-  let m = 1;
+  let m = heraldryMult(state, 'sun');
   for (const u of UPGRADES) {
     const e = u.effect;
     if (e.kind === 'goldMult' && hasUpgrade(state, u.id)) m *= e.mult;
@@ -186,9 +276,9 @@ function unitUpgradeMult(state: GameState, unit: UnitId): number {
   return m;
 }
 
-/** Upgrade × milestone multiplier on one unit's damage. */
+/** Upgrade × milestone × all-damage multiplier on one unit's damage. */
 export function unitMult(state: GameState, unit: UnitId): Decimal {
-  return milestoneMult(state.units[unit]).mul(unitUpgradeMult(state, unit));
+  return milestoneMult(state.units[unit]).mul(unitUpgradeMult(state, unit) * damageMult(state));
 }
 
 /** Seconds between this unit type's beats/volleys (quickNock shortens archers). */
@@ -215,17 +305,26 @@ export function unitDps(state: GameState, unit: UnitId): Decimal {
   return unitDamage(state, unit).mul(n / unitPeriod(state, unit));
 }
 
-/** Average DPS of the whole army (not counting stagger). */
+/**
+ * Average DPS of the whole army's units (not counting stagger, Charge! or champions: see
+ * championDps). The Fusion Bonus and Lion are in it.
+ */
 export function armyDps(state: GameState): Decimal {
-  return unitDps(state, 'footman').add(unitDps(state, 'archer'));
+  let dps = D(0);
+  for (const id of UNIT_IDS) if (state.units[id] > 0) dps = dps.add(unitDps(state, id));
+  return dps;
 }
 
-/** Damage of one click before the weak-spot multiplier: (base + share × army DPS) × click upgrades. */
+/**
+ * Damage of one click before the weak-spot multiplier: (base × all-damage + share × army DPS) ×
+ * click upgrades. (Army DPS already carries the all-damage multiplier.)
+ */
 export function strikeDamage(state: GameState): Decimal {
   const mult = clickMult(state);
   const share = clickArmyShare(state);
-  if (share <= 0) return D(BALANCE.click.base * mult);
-  return D(BALANCE.click.base).add(armyDps(state).mul(share)).mul(mult);
+  const base = BALANCE.click.base * damageMult(state);
+  if (share <= 0) return D(base * mult);
+  return D(base).add(armyDps(state).mul(share)).mul(mult);
 }
 
 /** Damage of one click; `weak` = on the weak spot (crit). */
@@ -234,9 +333,9 @@ export function clickDamage(state: GameState, weak: boolean): Decimal {
   return weak ? d.mul(weakMult(state)) : d;
 }
 
-/** Gold paid for killing the current dragon (bounty included). */
+/** Gold paid for killing the current dragon (bounty and Sun included; a boss pays its own). */
 export function killGold(state: GameState): Decimal {
-  const g = dragonGold(state.tier, state.dragon.index);
+  const g = state.dragon.boss ? bossGold(state.tier) : dragonGold(state.tier, state.dragon.index);
   const m = goldMult(state);
   return m === 1 ? g : wholeCeil(g.mul(m));
 }
@@ -257,35 +356,177 @@ export const BUY_MAX = -1;
 /** Upper bound on one purchase (keeps counts sane when gold is astronomically ahead). */
 export const MAX_BUY = 1e6;
 
-/** Total gold to hire `amount` more of a unit (the geometric series sum, rounded up). */
-export function unitCost(state: GameState, unit: UnitId, amount = 1): Decimal {
-  const def = UNITS[unit];
-  if (!(amount >= 1)) return D(0);
-  const n = Math.floor(amount);
-  const owned = state.units[unit];
+/** Sum of `n` terms base × growth^(start..start+n-1), rounded up to a whole number. */
+function seriesCost(base: number, growth: number, start: number, n: number): Decimal {
   // Exact double arithmetic while it fits (clean integers), the Decimal closed form beyond.
-  const first = def.baseCost * Math.pow(def.costGrowth, owned);
-  const sum = (first * (Math.pow(def.costGrowth, n) - 1)) / (def.costGrowth - 1);
+  const first = base * Math.pow(growth, start);
+  const sum = (first * (Math.pow(growth, n) - 1)) / (growth - 1);
   if (Number.isFinite(sum) && sum < EXACT_BELOW) return D(ceilClean(sum));
-  return wholeCeil(Decimal.sumGeometricSeries(n, def.baseCost, def.costGrowth, owned));
+  return wholeCeil(Decimal.sumGeometricSeries(n, base, growth, start));
+}
+
+/** How many terms of that series `gold` covers (0 if not even one), capped at MAX_BUY. */
+function seriesAffordable(gold: Decimal, base: number, growth: number, start: number): number {
+  if (gold.lt(seriesCost(base, growth, start, 1))) return 0;
+  const est = Decimal.affordGeometricSeries(gold, base, growth, start).toNumber();
+  let n = Math.min(MAX_BUY, Math.max(1, Math.floor(Number.isFinite(est) ? est : MAX_BUY)));
+  // The closed form works in floats and we round costs up: nudge to the exact answer (bounded,
+  // so float plateaus at absurd counts can't loop forever).
+  for (let k = 0; k < 8 && n > 1 && gold.lt(seriesCost(base, growth, start, n)); k++) n--;
+  for (let k = 0; k < 8 && n < MAX_BUY && gold.gte(seriesCost(base, growth, start, n + 1)); k++) n++;
+  return n;
+}
+
+/** A unit's first cost in this tier's gold. */
+function unitBaseCost(state: GameState, unit: UnitId): number {
+  return UNITS[unit].baseCost * tierCostMult(state.tier);
+}
+
+/** Total gold to hire `amount` more of a unit in the current tier (the geometric series sum, rounded up). */
+export function unitCost(state: GameState, unit: UnitId, amount = 1): Decimal {
+  if (!(amount >= 1)) return D(0);
+  return seriesCost(unitBaseCost(state, unit), UNITS[unit].costGrowth, state.units[unit], Math.floor(amount));
 }
 
 /** How many of a unit the current gold buys (0 if not even one). Ignores the unlock flag. */
 export function maxAffordable(state: GameState, unit: UnitId): number {
-  const def = UNITS[unit];
-  const gold = state.gold;
-  if (gold.lt(unitCost(state, unit, 1))) return 0;
-  const est = Decimal.affordGeometricSeries(gold, def.baseCost, def.costGrowth, state.units[unit]).toNumber();
-  let n = Math.min(MAX_BUY, Math.max(1, Math.floor(Number.isFinite(est) ? est : MAX_BUY)));
-  // The closed form works in floats and we round costs up: nudge to the exact answer (bounded,
-  // so float plateaus at absurd counts can't loop forever).
-  for (let k = 0; k < 8 && n > 1 && gold.lt(unitCost(state, unit, n)); k++) n--;
-  for (let k = 0; k < 8 && n < MAX_BUY && gold.gte(unitCost(state, unit, n + 1)); k++) n++;
-  return n;
+  return seriesAffordable(state.gold, unitBaseCost(state, unit), UNITS[unit].costGrowth, state.units[unit]);
 }
 
 /** Cost of a one-shot upgrade, or null for an unknown id. */
 export function upgradeCost(id: string): Decimal | null {
   const u = upgradeDefOf(id);
   return u ? D(u.cost) : null;
+}
+
+// ---- Champions (M2) ----
+
+/**
+ * One ordinary blow of a champion (lands on every footman melee beat): damage × level ×
+ * 2^⌊level/doubleEvery⌋ × all-damage. Like a unit: levels cost tier-scaled gold, blows don't scale
+ * with the tier, so the levels a champion carries through a zoom are a head start that the new
+ * tier's dragons soon outgrow. 0 before it joins. Not counting stagger or Charge! (applied when it
+ * lands).
+ */
+export function championHit(state: GameState, id: ChampionId): Decimal {
+  const L = state.champions[id].level;
+  if (L <= 0) return D(0);
+  const b = BALANCE.champions[id];
+  return D(b.damage * L * damageMult(state)).mul(Decimal.pow(2, Math.floor(L / Math.max(1, b.doubleEvery))));
+}
+
+/** A champion's special move (every specialEvery s): specialMult × a blow. */
+export function championSpecialDamage(state: GameState, id: ChampionId): Decimal {
+  return championHit(state, id).mul(BALANCE.champions[id].specialMult);
+}
+
+/** Average DPS of a champion: blows on the footmen's beat plus its special. */
+export function championDps(state: GameState, id: ChampionId): Decimal {
+  const b = BALANCE.champions[id];
+  const hit = championHit(state, id);
+  return hit.mul(1 / unitPeriod(state, 'footman') + b.specialMult / b.specialEvery);
+}
+
+/** Every joined champion's DPS. */
+export function championsDps(state: GameState): Decimal {
+  let dps = D(0);
+  for (const id of Object.keys(CHAMPIONS) as ChampionId[]) dps = dps.add(championDps(state, id));
+  return dps;
+}
+
+/** Gold for the next `amount` levels of a champion (0 if it hasn't joined). */
+export function championCost(state: GameState, id: ChampionId, amount = 1): Decimal {
+  const L = state.champions[id].level;
+  if (L <= 0 || !(amount >= 1)) return D(0);
+  const b = BALANCE.champions[id];
+  return seriesCost(b.baseCost * tierCostMult(state.tier), b.costGrowth, L - 1, Math.floor(amount));
+}
+
+/** How many levels of a champion the current gold buys. */
+export function championMaxAffordable(state: GameState, id: ChampionId): number {
+  const L = state.champions[id].level;
+  if (L <= 0) return 0;
+  const b = BALANCE.champions[id];
+  return seriesAffordable(state.gold, b.baseCost * tierCostMult(state.tier), b.costGrowth, L - 1);
+}
+
+// ---- Abilities (M2) ----
+
+/** Full cooldown of an ability right now (Stag heraldry shortens it, down to its floor). */
+export function abilityCooldown(state: GameState, id: AbilityId): number {
+  const e = BALANCE.heraldry.stag.effect;
+  let m = 1;
+  const L = chargeLevel(state, 'stag');
+  if (L > 0 && e.kind === 'cooldownMult') m = Math.max(e.min, Math.pow(e.mult, L));
+  return BALANCE.abilities[id].cooldown * m;
+}
+
+/** Army (and champion) damage × this while Charge! is active. */
+export function chargeMult(state: GameState): number {
+  return state.abilities.charge.active > 0 ? BALANCE.abilities.chargeMult : 1;
+}
+
+/**
+ * The Dragonbane Volley's damage: volleySeconds × (army DPS + champions), and at least that many
+ * seconds of volleyMinClicks plain clicks/s (so it hits even with no army). × Charge! if active.
+ */
+export function volleyAbilityDamage(state: GameState): Decimal {
+  const a = BALANCE.abilities;
+  const army = armyDps(state).add(championsDps(state));
+  const floor = clickDamage(state, false).mul(a.volleyMinClicks);
+  const dps = army.gt(floor) ? army : floor;
+  return dps.mul(a.volleySeconds * chargeMult(state));
+}
+
+// ---- The zoom (M2) ----
+
+/** The boss is beaten, nothing is holding and a next tier exists in this build. */
+export function canZoom(state: GameState): boolean {
+  return state.wyrm.cleared && state.zoom.stage === null && state.tier < lastTier();
+}
+
+/** Kills since the tier's boss fell (0 before): how far the player pushed. */
+export function pushKills(state: GameState): number {
+  return state.wyrm.cleared ? Math.max(0, state.kills - state.wyrm.clearedAt) : 0;
+}
+
+/** Scales a zoom out of this tier pays now: the tier's base × pushScales^(kills since the boss). */
+export function scalesForZoom(state: GameState): Decimal {
+  const base = tierNumber(state.tier, 'scales');
+  return D(base).mul(Decimal.pow(BALANCE.zoom.pushScales, pushKills(state))).floor();
+}
+
+/** Units that would fuse into the colossus. */
+export function unitsFused(state: GameState): number {
+  let n = 0;
+  for (const id of UNIT_IDS) n += state.units[id];
+  return n;
+}
+
+/**
+ * This zoom's Fusion Bonus: 1 + fusionPerSqrtUnit × √(units) × (1 + Crown's add × level), rounded
+ * to 0.01. It multiplies into zoom.fusion (all damage) at the switch.
+ */
+export function fusionForZoom(state: GameState): number {
+  const e = BALANCE.heraldry.crown.effect;
+  const crown = e.kind === 'fusionBonus' ? 1 + e.add * chargeLevel(state, 'crown') : 1;
+  const f = 1 + BALANCE.zoom.fusionPerSqrtUnit * Math.sqrt(unitsFused(state)) * crown;
+  return Math.round(f * 100) / 100;
+}
+
+/** 3 significant digits (heights read as "221 m", "4.36 km"). */
+function round3(x: number): number {
+  if (!(x > 0) || !Number.isFinite(x)) return x;
+  const p = Math.pow(10, Math.floor(Math.log10(x)) - 2);
+  return Math.round(x / p) * p;
+}
+
+/** The colossus's height (display m) after zooming now: the next tier's baseHeight × fusion^heightExp. */
+export function heightForZoom(state: GameState): number {
+  return round3(tierNumber(state.tier + 1, 'baseHeight') * Math.pow(fusionForZoom(state), BALANCE.zoom.heightExp));
+}
+
+/** The tier's boss id. */
+export function bossOf(tier: number): string {
+  return tierOf(tier).boss;
 }

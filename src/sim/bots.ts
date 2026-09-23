@@ -1,6 +1,8 @@
 // Bot profiles (PLAN §8) and their shopping rules. Bots act in wall time, like a player, and draw
 // their own randomness (weak-spot aim) from a private RNG so the game's state.rng is untouched.
 import {
+  ABILITY_IDS,
+  CHAMPION_IDS,
   UNIT_IDS,
   UNITS,
   UPGRADES,
@@ -8,7 +10,7 @@ import {
   sel,
   unitCost,
 } from '../core';
-import type { Action, Decimal, GameState, UnitId } from '../core';
+import type { AbilityId, Action, ChampionId, ChargeId, Decimal, GameState, UnitId } from '../core';
 
 export type ProfileName = 'engaged' | 'casual' | 'nonAimer' | 'idle';
 
@@ -39,6 +41,11 @@ export interface Profile {
   /** Wall seconds between shopping trips (the first trip is right after the first kill). */
   shopEvery: number;
   shop: ShopPolicy;
+  /**
+   * Abilities (M2): 'onCooldown' uses each one the moment it's ready (and the dragon can be hit);
+   * 'sometimes' uses what's ready on a shopping trip, half the time; 'never'.
+   */
+  abilities: 'onCooldown' | 'sometimes' | 'never';
   /** Wall seconds to play. */
   seconds: number;
 }
@@ -55,7 +62,8 @@ export const PROFILES: Record<ProfileName, Profile> = {
     clickUntilFirstKill: false,
     shopEvery: 0.5,
     shop: 'greedy',
-    seconds: 240,
+    abilities: 'onCooldown',
+    seconds: 540,
   },
   casual: {
     name: 'casual',
@@ -69,7 +77,8 @@ export const PROFILES: Record<ProfileName, Profile> = {
     clickUntilFirstKill: false,
     shopEvery: 10,
     shop: 'cheapest',
-    seconds: 240,
+    abilities: 'sometimes',
+    seconds: 420,
   },
   // Clicks a lot but never aims (ignores the glowing spot) and shops like the engaged player: the
   // pacing must not depend on weak-spot skill.
@@ -84,6 +93,7 @@ export const PROFILES: Record<ProfileName, Profile> = {
     clickUntilFirstKill: false,
     shopEvery: 0.5,
     shop: 'greedy',
+    abilities: 'onCooldown',
     seconds: 240,
   },
   idle: {
@@ -97,6 +107,7 @@ export const PROFILES: Record<ProfileName, Profile> = {
     clickUntilFirstKill: true,
     shopEvery: 60,
     shop: 'cheapest',
+    abilities: 'never',
     seconds: 600,
   },
 };
@@ -125,7 +136,10 @@ function upgradeUseful(s: GameState, id: string): boolean {
   return true;
 }
 
-/** Casual / idle: affordable useful upgrades first (the glowing button), then the cheapest unit. */
+/**
+ * Casual / idle: affordable useful upgrades first (the glowing button), then the cheapest unit or
+ * champion level.
+ */
 function cheapestBuy(s: GameState): Action | null {
   let bestUp: string | null = null;
   let bestUpCost = Infinity;
@@ -137,7 +151,7 @@ function cheapestBuy(s: GameState): Action | null {
     }
   }
   if (bestUp) return { type: 'buyUpgrade', id: bestUp };
-  let best: UnitId | null = null;
+  let best: Action | null = null;
   let bestCost: Decimal | null = null;
   for (const id of UNIT_IDS) {
     if (!sel.unitVisible(s, id)) continue;
@@ -145,15 +159,33 @@ function cheapestBuy(s: GameState): Action | null {
     if (s.gold.lt(c)) continue;
     if (!bestCost || c.lt(bestCost)) {
       bestCost = c;
-      best = id;
+      best = { type: 'buyUnit', unit: id, amount: 1 };
     }
   }
-  return best ? { type: 'buyUnit', unit: best, amount: 1 } : null;
+  for (const id of CHAMPION_IDS) {
+    if (!sel.championVisible(s, id)) continue;
+    const c = sel.championCost(s, id);
+    if (s.gold.lt(c)) continue;
+    if (!bestCost || c.lt(bestCost)) {
+      bestCost = c;
+      best = { type: 'levelChampion', id, amount: 1 };
+    }
+  }
+  return best;
 }
 
-/** Damage per second this player deals right now (army + its own clicking). */
+/** Damage per second this player deals right now (army, champions and its own clicking). */
 export function effectiveDps(s: GameState, p: Profile): number {
-  return armyDps(s).add(sel.clickDps(s, p.clickUntilFirstKill ? 0 : p.cps, p.weakRate)).toNumber();
+  return armyDps(s).add(sel.championsDps(s)).add(sel.clickDps(s, p.clickUntilFirstKill ? 0 : p.cps, p.weakRate)).toNumber();
+}
+
+/** DPS gained per gold by one more level of a champion. */
+function championValue(s: GameState, p: Profile, id: ChampionId, base: number): number {
+  const cost = sel.championCost(s, id).toNumber();
+  s.champions[id].level++;
+  const after = effectiveDps(s, p);
+  s.champions[id].level--;
+  return (after - base) / cost;
 }
 
 /** DPS gained per gold by hiring one more of `unit` (milestone doublings included). */
@@ -192,11 +224,52 @@ function greedyBuy(s: GameState, p: Profile): Action | null {
       best = id;
     }
   }
+  // A champion level, when it buys more DPS per gold than the best unit.
+  let champ: ChampionId | null = null;
+  for (const id of CHAMPION_IDS) {
+    if (!sel.championVisible(s, id)) continue;
+    const v = championValue(s, p, id, base);
+    if (v > bestValue) {
+      bestValue = v;
+      champ = id;
+    }
+  }
+  if (champ) {
+    const cost = sel.championCost(s, champ);
+    if (cheapestUpgrade <= SAVE_FOR_UPGRADE * cost.toNumber()) return null;
+    return s.gold.gte(cost) ? { type: 'levelChampion', id: champ, amount: 1 } : null;
+  }
   if (!best) return null;
   const cost = unitCost(s, best);
   if (cheapestUpgrade <= SAVE_FOR_UPGRADE * cost.toNumber()) return null;
   return s.gold.gte(cost) ? { type: 'buyUnit', unit: best, amount: 1 } : null;
 }
+
+/** Heraldry the bots like best first (ties in price go to the earlier one). */
+const CHARGE_PRIORITY: readonly ChargeId[] = ['lion', 'sun', 'crown', 'wyvern', 'stag', 'tower'];
+
+/** The cheapest affordable charge, or null. */
+function heraldryBuy(s: GameState): Action | null {
+  let best: ChargeId | null = null;
+  let bestCost: Decimal | null = null;
+  for (const id of CHARGE_PRIORITY) {
+    if (!sel.heraldryAffordable(s, id)) continue;
+    const c = sel.heraldryCost(s, id);
+    if (!bestCost || c.lt(bestCost)) {
+      bestCost = c;
+      best = id;
+    }
+  }
+  return best ? { type: 'buyHeraldry', id: best } : null;
+}
+
+/** Abilities ready to use now (the dragon can be hit and is not arriving). */
+export function readyAbilities(s: GameState): AbilityId[] {
+  const ph = s.dragon.phase;
+  if (ph === 'enter' || ph === 'dying' || ph === 'leave') return [];
+  return ABILITY_IDS.filter((id) => sel.abilityReady(s, id));
+}
+
 
 /** Shopping costs clicking time: a trip that buys anything pauses clicks this long (wall s). */
 export const SHOP_PAUSE_BASE = 0.3;
@@ -207,9 +280,19 @@ export function shopPause(buys: number): number {
   return buys > 0 ? SHOP_PAUSE_BASE + SHOP_PAUSE_PER_BUY * buys : 0;
 }
 
-/** Everything the bot buys on one shopping trip, applied through `apply`. Returns the purchases made. */
+/**
+ * Everything the bot buys on one shopping trip, applied through `apply`: heraldry first (Scales
+ * are a separate purse), then gold. Nothing while a zoom holds. Returns the purchases made.
+ */
 export function shop(s: GameState, p: Profile, apply: (a: Action) => void): number {
+  if (s.zoom.stage !== null) return 0;
   let buys = 0;
+  for (let k = 0; k < MAX_BUYS_PER_TRIP; k++) {
+    const a = heraldryBuy(s);
+    if (!a) break;
+    apply(a);
+    buys++;
+  }
   for (let k = 0; k < MAX_BUYS_PER_TRIP; k++) {
     const a = p.shop === 'greedy' ? greedyBuy(s, p) : cheapestBuy(s);
     if (!a) break;

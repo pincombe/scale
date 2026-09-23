@@ -34,9 +34,10 @@ describe('pacing (engaged player)', () => {
     expect(m3).toBeLessThanOrEqual(30);
     expect(r.killsAt[195]).toBeGreaterThanOrEqual(27);
     expect(r.killsAt[195]).toBeLessThanOrEqual(38);
-    const size195 = r.state.dragon.size;
-    expect(size195).toBeGreaterThanOrEqual(10);
-    expect(size195).toBeLessThanOrEqual(40);
+    // M2: the gauge fills at 30 kills, the Elder Newt falls and the first zoom begins by itself
+    // around 3:00 (this bot runs a little ahead of the sim's juiced engaged player).
+    expect(r.firstZoom).toBeGreaterThan(160);
+    expect(r.firstZoom).toBeLessThan(215);
   });
 
   it.each(SEEDS.map((seed, i) => [seed, reports[i]!] as const))('seed %i never stalls and clicks stay relevant', (_seed, r) => {

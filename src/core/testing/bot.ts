@@ -1,6 +1,8 @@
 // A scripted player for pacing tests (and a reference for the balance sim, WP 1.9): clicks at a
 // fixed rate, hits the weak spot a fraction of the time (deterministically, from its own RNG),
-// and every `buyEvery` seconds buys upgrades as soon as affordable, else the cheapest unit.
+// and every `buyEvery` seconds buys upgrades as soon as affordable, else the cheapest unit. When a
+// zoom begins it plays the cinematic as ZOOM_HOLD seconds of nothing, then dispatches 'switch' and
+// 'end' (as the zoom director would).
 import { nextFloat, seedRng } from '../../lib/rng';
 import { applyAction } from '../actions';
 import { UNITS, UNIT_IDS, UPGRADES } from '../content';
@@ -26,6 +28,9 @@ export interface BotProfile {
 
 export const ENGAGED: BotProfile = { clicksPerSec: 6, weakRate: 0.3, windupWeakRate: 0.15, buyEvery: 0 };
 
+/** Seconds the bot waits after zoomBegin before dispatching 'switch' and 'end'. */
+export const ZOOM_HOLD = 9;
+
 export interface BotReport {
   state: GameState;
   /** Sim time of the first dragonDeath, or -1. */
@@ -36,8 +41,12 @@ export interface BotReport {
   firstBuyAt: Record<string, number>;
   /** Dragon size (m) sampled at each whole minute (index 0 = 0:00). */
   sizeAtMinute: number[];
-  /** kills at the given checkpoints (seconds → kills). */
+  /** Kills over the whole run (state.kills restarts every tier). */
+  kills: number;
+  /** Total kills at the given checkpoints (seconds → kills). */
   killsAt: Record<number, number>;
+  /** Sim time of the first zoomBegin, or -1. */
+  firstZoom: number;
   /** Longest stretch (s) between purchases after the first one. */
   longestBuyGap: number;
   purchases: number;
@@ -96,7 +105,9 @@ export function runBot(
     unlockAt: {},
     firstBuyAt: {},
     sizeAtMinute: [s.dragon.size],
+    kills: 0,
     killsAt: {},
+    firstZoom: -1,
     longestBuyGap: 0,
     purchases: 0,
     staggers: 0,
@@ -107,11 +118,17 @@ export function runBot(
   let lastBuy = -1;
   let minuteClick = 0;
   let minuteArmy = 0;
+  let zoomAt = Infinity;
   const emit = (e: GameEvent): void => {
     onEvent?.(e, s);
     switch (e.type) {
       case 'dragonDeath':
+        r.kills++;
         if (r.firstKill < 0) r.firstKill = s.t;
+        break;
+      case 'zoomBegin':
+        if (r.firstZoom < 0) r.firstZoom = s.t;
+        zoomAt = s.t + ZOOM_HOLD;
         break;
       case 'unlock':
         r.unlockAt[e.kind + '.' + e.id] = s.t;
@@ -144,6 +161,11 @@ export function runBot(
   let clickAcc = 0;
   const cps = new Set(checkpoints.map((c) => Math.round(c / TICK_DT)));
   for (let i = 0; i < ticks; i++) {
+    if (s.t >= zoomAt - 1e-9) {
+      zoomAt = Infinity;
+      applyAction(s, { type: 'zoom', stage: 'switch' }, emit);
+      applyAction(s, { type: 'zoom', stage: 'end' }, emit);
+    }
     if (s.t < clickUntil) {
       clickAcc += profile.clicksPerSec * TICK_DT;
       while (clickAcc >= 1) {
@@ -168,7 +190,7 @@ export function runBot(
       r.clickShareByMinute.push(tot > 0 ? minuteClick / tot : 0);
       minuteClick = minuteArmy = 0;
     }
-    if (cps.has(n)) r.killsAt[Math.round(n * TICK_DT)] = s.kills;
+    if (cps.has(n)) r.killsAt[Math.round(n * TICK_DT)] = r.kills;
   }
   return r;
 }

@@ -1,23 +1,57 @@
 // applyAction: the only way anything outside core changes the game. Applied immediately;
 // events go to the emit callback (the Game facade queues them until the next frame).
 import { D } from './decimal';
-import { PHASE, UNITS, upgradeDefOf } from './content';
-import { addGold, damageDragon, killDragon, setPhase, spawnDragon, startWindup } from './dragon';
-import { BUY_MAX, MAX_BUY, clickDamage, dyingDuration, enterDuration, maxAffordable, staggerGold, unitCost, upgradeCost } from './formulas';
-import { checkMilestones } from './progress';
+import { CHARGES, PHASE, TIERS, UNITS, upgradeDefOf } from './content';
+import { useAbility } from './abilities';
+import { addGold, damageDragon, dragonHittable, killDragon, setPhase, spawnDragon, startWindup } from './dragon';
+import {
+  BUY_MAX,
+  MAX_BUY,
+  bossAt,
+  canZoom,
+  championCost,
+  championMaxAffordable,
+  clickDamage,
+  dyingDuration,
+  enterDuration,
+  heraldryCost,
+  maxAffordable,
+  staggerGold,
+  unitCost,
+  upgradeCost,
+} from './formulas';
+import { checkMilestones, checkUnlocks } from './progress';
 import { weakSpotHittable } from './weakspot';
-import type { Action, DebugAction, DragonPhase, Emit, GameState } from './types';
+import { applyZoom, baseHeightOf, beginZoom, enterTier } from './zoom';
+import type { Action, ChampionId, ChargeId, DebugAction, DragonPhase, Emit, GameState } from './types';
+
+/** A zoom's cinematic is playing: strikes, purchases and abilities are ignored. */
+function holding(state: GameState): boolean {
+  return state.zoom.stage !== null;
+}
 
 export function applyAction(state: GameState, a: Action, emit: Emit): void {
   switch (a.type) {
     case 'strike':
-      strike(state, a, emit);
+      if (!holding(state)) strike(state, a, emit);
       break;
     case 'buyUnit':
-      buyUnit(state, a, emit);
+      if (!holding(state)) buyUnit(state, a, emit);
       break;
     case 'buyUpgrade':
-      buyUpgrade(state, a.id, emit);
+      if (!holding(state)) buyUpgrade(state, a.id, emit);
+      break;
+    case 'zoom':
+      applyZoom(state, a.stage, emit);
+      break;
+    case 'buyHeraldry':
+      if (!holding(state)) buyHeraldry(state, a.id, emit);
+      break;
+    case 'useAbility':
+      if (!holding(state) && state.abilities[a.id]) useAbility(state, a.id, emit);
+      break;
+    case 'levelChampion':
+      if (!holding(state)) levelChampion(state, a, emit);
       break;
     case 'debug':
       applyDebug(state, a, emit);
@@ -31,7 +65,7 @@ function finite(x: number): number {
 
 function strike(state: GameState, a: Extract<Action, { type: 'strike' }>, emit: Emit): void {
   const d = state.dragon;
-  if (d.phase === 'dying') return; // nothing to hit until the next dragon arrives
+  if (!dragonHittable(d.phase)) return; // nothing to hit until the next dragon arrives
   // Core has the last word on the weak spot: a weak click while none is live (the dragon is still
   // arriving) is a plain hit, and the event says so.
   const weak = a.weak === true && weakSpotHittable(d);
@@ -81,6 +115,31 @@ function buyUpgrade(state: GameState, id: string, emit: Emit): void {
   emit({ type: 'purchase', kind: 'upgrade', id, amount: 1 });
 }
 
+/** Spend Scales on the next level of a heraldic charge (needs feature.heraldry). */
+function buyHeraldry(state: GameState, id: ChargeId, emit: Emit): void {
+  if (!CHARGES[id] || !state.flags['feature.heraldry']) return;
+  const cost = heraldryCost(state, id);
+  if (state.scales.lt(cost)) return;
+  state.scales = state.scales.sub(cost);
+  const h = state.heraldry;
+  if (h.levels[id] <= 0 && !h.order.includes(id)) h.order.push(id);
+  h.levels[id]++;
+  emit({ type: 'purchase', kind: 'heraldry', id, amount: 1 });
+}
+
+/** Buy `amount` levels of a joined champion (BUY_MAX = as many as gold allows). All-or-nothing. */
+function levelChampion(state: GameState, a: Extract<Action, { type: 'levelChampion' }>, emit: Emit): void {
+  const c = state.champions[a.id as ChampionId];
+  if (!c || c.level <= 0) return;
+  const amount = a.amount === BUY_MAX ? championMaxAffordable(state, a.id) : Math.min(MAX_BUY, Math.floor(finite(a.amount)));
+  if (!(amount >= 1)) return;
+  const cost = championCost(state, a.id, amount);
+  if (state.gold.lt(cost)) return;
+  state.gold = state.gold.sub(cost);
+  c.level += amount;
+  emit({ type: 'purchase', kind: 'champion', id: a.id, amount });
+}
+
 function defaultDur(state: GameState, phase: DragonPhase): number {
   switch (phase) {
     case 'enter':
@@ -112,7 +171,7 @@ function applyDebug(state: GameState, a: DebugAction, emit: Emit): void {
       break;
     }
     case 'kill':
-      if (state.dragon.phase !== 'dying') killDragon(state, emit);
+      if (dragonHittable(state.dragon.phase)) killDragon(state, emit);
       break;
     case 'next':
       state.army.volleys.length = 0;
@@ -146,15 +205,44 @@ function applyDebug(state: GameState, a: DebugAction, emit: Emit): void {
         setPhase(state, a.phase, defaultDur(state, a.phase), emit);
       }
       break;
-    case 'tier':
-      state.tier = Math.max(0, Math.floor(finite(a.amount)));
-      state.kills = 0;
-      state.army.volleys.length = 0;
-      spawnDragon(state, 0, emit);
+    case 'tier': {
+      // Like a zoom without the cinematic or the reward: the tier's base height, the resets, the
+      // tier's unlocks, a resync. Counts as having zoomed there (no automatic first zoom later).
+      const tier = Math.max(0, Math.min(TIERS.length - 1, Math.floor(finite(a.amount))));
+      state.zoom.stage = null;
+      state.zoom.pending = null;
+      state.zoom.count = Math.max(state.zoom.count, tier);
+      enterTier(state, tier, baseHeightOf(tier));
       emit({ type: 'resync' });
+      checkUnlocks(state, emit);
       break;
+    }
     case 'flag':
       state.flags[a.flag] = a.value;
       break;
+    case 'boss':
+      // Fill the gauge: the boss comes after the current dragon.
+      state.wyrm.cleared = false;
+      state.wyrm.charge = bossAt(state.tier);
+      break;
+    case 'cleared': {
+      // The tier's boss counts as beaten; a save that has never zoomed begins its zoom at once.
+      const w = state.wyrm;
+      if (w.cleared) break;
+      w.cleared = true;
+      w.clearedAt = state.kills;
+      w.bossT = 0;
+      if (state.zoom.count === 0 && canZoom(state)) beginZoom(state, emit);
+      break;
+    }
+    case 'scales': {
+      const amount = Math.floor(finite(a.amount));
+      if (amount <= 0) return;
+      state.scales = state.scales.add(amount);
+      state.lifetimeScales = state.lifetimeScales.add(amount);
+      emit({ type: 'scalesGain', amount: D(amount) });
+      checkUnlocks(state, emit);
+      break;
+    }
   }
 }
