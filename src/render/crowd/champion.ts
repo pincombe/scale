@@ -200,6 +200,11 @@ export class Champion {
   private sStart = -100;
   private sImpact = -100;
   private sEnd = -100;
+  /** Wind-up time scale (1 = as authored; < 1 when the special had to start late). */
+  private sPre = 1;
+  /** A cancelled wind-up eases back from this pose, starting at recT0. */
+  private readonly recFrom = new Pose();
+  private recT0 = -100;
   private sFromX = 0;
   private sToX = 0;
   private sEventT = -100;
@@ -228,9 +233,13 @@ export class Champion {
   onImpact: ((c: Champion, x: number, y: number, damage: unknown) => void) | null = null;
 
   // Art.
-  private readonly shieldArt = new ShieldArt();
+  private shieldArt = new ShieldArt();
   private hasShield = false;
-  private readonly bannerArt = new BannerArt();
+  private bannerArt = new BannerArt();
+  /** Aldric's arms pre-baked for the next tier's palette (prepare), swapped in at the switch. */
+  private nextBanner: BannerArt | null = null;
+  private nextShield: ShieldArt | null = null;
+  private nextPal: Palette | null = null;
   private artPal: Palette | null = null;
   private mid = '#888';
   private plumeFill = '#eee';
@@ -347,10 +356,13 @@ export class Champion {
     this.sEventT = now;
     this.sDamage = damage;
     if (!this.specialActive(now) && this.move === Move.Idle) {
-      // No telegraph ran (it just joined, or the timer was held): a quick one, impact at once.
+      // No telegraph ran (it fired the moment the dragon became hittable, or it just joined): a
+      // quick but whole move, its impact a beat after the event, on its own clock (locked: core's
+      // timer has already reset to the next period).
       this.sToX = Math.max(this.x + 0.3, this.lastFront - this.style.reach);
-      this.startSpecial(now, now + 0.08);
-    }
+      this.startSpecial(now, now + 0.24);
+      this.sLocked = true;
+    } else if (this.specialActive(now)) this.sLocked = true;
   }
 
   /** Zoom rally: run to (x, y) on the pile, arriving at `at`, then stand there. */
@@ -409,9 +421,15 @@ export class Champion {
 
   // ---- motion ----
 
+  /**
+   * Start the special with its impact at `impact`. With less time than the authored wind-up, the
+   * wind-up plays faster from its first key (never starting mid-leap).
+   */
   private startSpecial(now: number, impact: number): void {
     const keys = this.style.special;
-    this.sStart = Math.min(now, impact + keys[0]!.t);
+    const lead = -keys[0]!.t;
+    this.sPre = Math.min(1, Math.max(0.2, (impact - now) / lead));
+    this.sStart = impact - lead * this.sPre;
     this.sImpact = impact;
     this.sEnd = impact + keys[keys.length - 1]!.t;
     this.sFromX = this.x;
@@ -420,11 +438,21 @@ export class Champion {
     this.strikeT0 = -100;
   }
 
+  /** Stand down from a telegraphed special (before the leap): ease back to the guard. */
+  private cancelSpecial(now: number): void {
+    this.poseAt(now, this.from);
+    this.sStart = this.sImpact = this.sEnd = -100;
+    this.sPre = 1;
+    copyPose(this.recFrom, this.from);
+    this.recT0 = now;
+  }
+
   /** Keyed special pose at time t (writes out; returns false when no special is playing). */
   private specialPose(t: number, out: Pose): boolean {
     if (t < this.sStart || t >= this.sEnd) return false;
     const keys = this.style.special;
-    const r = t - this.sImpact;
+    let r = t - this.sImpact;
+    if (r < 0) r /= this.sPre;
     let i = 0;
     while (i < keys.length - 2 && r >= keys[i + 1]!.t) i++;
     const a = keys[i]!;
@@ -439,7 +467,8 @@ export class Champion {
   private keyAt(t: number, field: 'u' | 'lift'): number {
     if (t < this.sStart || t >= this.sEnd) return 0;
     const keys = this.style.special;
-    const r = t - this.sImpact;
+    let r = t - this.sImpact;
+    if (r < 0) r /= this.sPre;
     let i = 0;
     while (i < keys.length - 2 && r >= keys[i + 1]!.t) i++;
     const a = keys[i]!;
@@ -514,6 +543,8 @@ export class Champion {
 
   /** Two-handed weapons: the near fist rides the haft above the far one. */
   private finish(p: Pose): Pose {
+    const rc = this.now - this.recT0;
+    if (rc >= 0 && rc < 0.3) lerpPose(p, this.recFrom, p, smooth(rc / 0.3));
     const k = this.style.twoHand;
     if (k > 0) {
       p.nHandX = p.fHandX + Math.cos(p.weapon) * k;
@@ -555,9 +586,11 @@ export class Champion {
         if (!this.specialActive(now) && inp.specialIn >= 0 && inp.specialIn <= st.lead && now > this.sEnd + 0.2) {
           this.sToX = Math.max(this.x + 0.3, inp.frontX - st.reach);
           this.startSpecial(now, now + inp.specialIn);
-        } else if (this.specialActive(now) && !this.sLocked && now < this.sImpact) {
-          // Keep the impact on the core's clock (a held timer delays it: hold the wind-up).
-          if (inp.specialIn >= 0) {
+        } else if (this.specialActive(now) && !this.sLocked && now < this.sImpact && this.sEventT < this.sStart - 0.05) {
+          // Keep the impact on the core's clock (a held timer delays it: hold the wind-up); if the
+          // dragon stops being hittable while he's still gathering himself, stand down.
+          if (inp.specialIn < 0 && now - this.sImpact < this.style.special[1]!.t * this.sPre) this.cancelSpecial(now);
+          else if (inp.specialIn >= 0) {
             const want = now + inp.specialIn;
             if (Math.abs(want - this.sImpact) > 0.002) {
               const shift = want - this.sImpact;
@@ -682,10 +715,29 @@ export class Champion {
     this.wingLo = mixHex(az, p.silhouette, 0.6);
     this.wingHi = mixHex('#8fb8ff', p.rim, 0.35);
     if (this.style.kind === 'aldric') {
+      if (this.nextPal === p && this.nextBanner && this.nextShield) {
+        this.bannerArt = this.nextBanner;
+        this.shieldArt = this.nextShield;
+      }
+      this.nextBanner = this.nextShield = null;
+      this.nextPal = null;
       this.bannerArt.update(ALDRIC_ARMS, p);
       this.shieldArt.update(ALDRIC_ARMS, p);
       this.hasShield = true;
     }
+  }
+
+  /** Pre-bake the painted art (Aldric's banner and shield) for another palette. Returns work done. */
+  prepare(p: Palette): boolean {
+    if (this.style.kind !== 'aldric' || p === this.artPal || p === this.nextPal) return false;
+    const b = new BannerArt();
+    b.update(ALDRIC_ARMS, p);
+    const s = new ShieldArt();
+    s.update(ALDRIC_ARMS, p);
+    this.nextBanner = b;
+    this.nextShield = s;
+    this.nextPal = p;
+    return true;
   }
 
   private drawBraid(b: CanvasRenderingContext2D, ox: number, oy: number): void {
@@ -919,10 +971,17 @@ export class Champion {
   private static buffer(bw: number, bh: number, realTime: number): CanvasRenderingContext2D {
     const buf = Champion.buf;
     if (!buf || buf.width < bw || buf.height < bh) {
-      Champion.buf = makeCanvas(Math.max(bw, buf?.width ?? 0), Math.max(bh, buf?.height ?? 0));
+      // Grow with headroom: a camera pushing in must not allocate a new buffer every frame.
+      const nw = Math.max(bw, Math.min(MAX_BUF, Math.ceil(Math.max(bw, buf?.width ?? 0) * 1.3)));
+      const nh = Math.max(bh, Math.min(MAX_BUF, Math.ceil(Math.max(bh, buf?.height ?? 0) * 1.3)));
+      if (buf) {
+        buf.width = 0;
+        buf.height = 0;
+      }
+      Champion.buf = makeCanvas(nw, nh);
       Champion.bctx = context2d(Champion.buf);
       Champion.bufSmallT = 0;
-    } else if (buf.width * buf.height > 3 * bw * bh) {
+    } else if (buf.width * buf.height > 4 * bw * bh) {
       if (Champion.bufSmallT === 0) Champion.bufSmallT = realTime;
       else if (realTime - Champion.bufSmallT > 2) {
         buf.width = 0;

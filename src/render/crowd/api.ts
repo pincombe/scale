@@ -33,6 +33,12 @@ export interface CrowdView {
    * setFused(false) (the hero snaps there with no march-in). Optional (null stand-ins).
    */
   heroRest?(out: Vec2): Vec2;
+  /**
+   * M2 zoom: start pre-baking the crowd's art (sprite sheets, banners, shields) for
+   * paletteFor(tier) over the next frames, a bounded step per frame, so the palette swap at the
+   * zoom's switch is instant. Call it when the rally starts. Optional (null stand-ins).
+   */
+  prepareTier?(tier: number): void;
 }
 
 /** A coat of arms (M1: placeholder red field, gold sword; M2 adds the full `coat`). */

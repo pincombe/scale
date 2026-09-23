@@ -114,6 +114,10 @@ export class Hero {
   private flurryUntil = -100;
   private flurryNext = -100;
   private flurryIdx = 0;
+  /** When the current flurry blow connects (s), or -1. */
+  private blowAt = -1;
+  /** Called as each flurry blow connects (the crowd puts its sparks on the dragon). */
+  onBlow: (() => void) | null = null;
   /** Held raise (the rally pile: sword up, standing on the army), eased. */
   private holdOn = false;
   private holdW = 0;
@@ -141,7 +145,10 @@ export class Hero {
 
   private buf: HTMLCanvasElement | null = null;
   private bctx: CanvasRenderingContext2D | null = null;
-  private readonly shieldArt = new ShieldArt();
+  private shieldArt = new ShieldArt();
+  /** The shield face pre-baked for the next tier's palette (prepare), swapped in at the switch. */
+  private nextShield: ShieldArt | null = null;
+  private nextShieldPal: Palette | null = null;
   private artPal: Palette | null = null;
   private artHer: Heraldry | null = null;
   private bufSmallT = 0;
@@ -198,6 +205,7 @@ export class Hero {
     this.swing = move > 0 ? FLURRY_SWING : SWING;
     this.uWind = move > 0 ? FLURRY_U_WIND : U_WIND;
     this.uSlash = move > 0 ? FLURRY_U_SLASH : U_SLASH;
+    this.blowAt = move > 0 ? now + FLURRY_SWING * (FLURRY_U_WIND + (FLURRY_U_SLASH - FLURRY_U_WIND) * 0.6) : -1;
   }
 
   /**
@@ -322,6 +330,10 @@ export class Hero {
       this.flurryNext = Math.max(now, this.flurryNext) + FLURRY_BEATS[i]!;
       this.flurryIdx++;
     }
+    if (this.blowAt >= 0 && now >= this.blowAt) {
+      this.blowAt = -1;
+      this.onBlow?.();
+    }
     // Hit-stop / pause freezes the clock right after a click: freeze the hero AT contact (blade
     // through the target, smear drawn), never in the windup.
     if (dt === 0 && realDt > 0) {
@@ -424,7 +436,21 @@ export class Hero {
     this.artPal = p;
     this.artHer = h;
     // Shield face: the coat of arms in the kite at the right level of detail (banner.ts ShieldArt).
+    if (this.nextShield && this.nextShieldPal === p) {
+      this.shieldArt = this.nextShield;
+      this.nextShield = null;
+      this.nextShieldPal = null;
+    }
     this.shieldArt.update(h, p);
+  }
+
+  /** Pre-bake the shield face for another palette (the zoom's next tier), off the switch frame. */
+  prepare(p: Palette, h: Heraldry): void {
+    if (p === this.artPal || p === this.nextShieldPal) return;
+    const s = new ShieldArt();
+    s.update(h, p);
+    this.nextShield = s;
+    this.nextShieldPal = p;
   }
 
   private drawCape(ctx: CanvasRenderingContext2D, ox: number, oy: number): void {
@@ -563,10 +589,17 @@ export class Hero {
     if (bw < 2) return;
     const buf = this.buf;
     if (!buf || buf.width < bw || buf.height < bh) {
-      this.buf = makeCanvas(Math.max(bw, buf?.width ?? 0), Math.max(bh, buf?.height ?? 0));
+      // Grow with headroom (a camera pushing in must not allocate a buffer every frame).
+      const nw = Math.max(bw, Math.min(MAX_BUF, Math.ceil(Math.max(bw, buf?.width ?? 0) * 1.3)));
+      const nh = Math.max(bh, Math.min(MAX_BUF, Math.ceil(Math.max(bh, buf?.height ?? 0) * 1.3)));
+      if (buf) {
+        buf.width = 0;
+        buf.height = 0;
+      }
+      this.buf = makeCanvas(nw, nh);
       this.bctx = context2d(this.buf);
       this.bufSmallT = 0;
-    } else if (buf.width * buf.height > 2.5 * bw * bh) {
+    } else if (buf.width * buf.height > 3.5 * bw * bh) {
       // Shrink after the camera has pulled back for a while (don't thrash on zoom punches).
       if (this.bufSmallT === 0) this.bufSmallT = v.realTime;
       else if (v.realTime - this.bufSmallT > 2) {

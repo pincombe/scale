@@ -29,6 +29,7 @@ import { context2d, makeCanvas } from '../atlas';
 import { CURVE_FADE, particleSpec, type ParticleSpec } from '../particles';
 import { KNIGHT_HEIGHT } from '../world';
 import type { Palette } from '../palette';
+import { paletteFor } from '../palette';
 import {
   A_BRACE,
   A_CHEER,
@@ -56,7 +57,7 @@ import {
   animDuration,
   oneShotFrame,
 } from './anims';
-import { KnightSheets, LOD_COUNT, lodFor } from './sheets';
+import { KnightSheets, LOD_COUNT, lodSticky } from './sheets';
 import { Hero } from './hero';
 import { Arrows } from './arrows';
 import { BannerArt, CountLabels, FLAG_H, FLAG_SMALL, FLAG_W, POLE_DOWN, POLE_UP, defaultHeraldry, drawFinial, drawFlag } from './banner';
@@ -138,8 +139,9 @@ const RAISE_DUR = 1.35;
 const HIP = 46;
 /** Foreground lane depth (m) for knights knocked out of the ranks. */
 const LANE = 0.42;
-/** World y range (m) the haze-band buffer covers: lance tips and banner tops to below the front row's feet. */
-const BAND_TOP = -4.6;
+/** World y range (m) the haze-band buffer covers: banner tops (lance tips, with lancers) to below the front row's feet. */
+const BAND_TOP = -3.6;
+const BAND_TOP_LANCE = -4.6;
 const BAND_BOT = 0.6;
 /** Haze strength for the far band (archers, lancers: rows 3+) and the mid band (row 2). */
 const BAND_HAZE = [0.26, 0.12] as const;
@@ -152,7 +154,9 @@ const HIT_DUR = 0.3;
 const WHEEL_DUR = 0.42;
 /** Lance angles (figure space): upright at rest (tilted a touch forward), couched for the charge. */
 const LANCE_UP = -1.42;
-const LANCE_COUCH = 0.07;
+const LANCE_COUCH = 0.14;
+/** Milliseconds per frame all of update's baking may take (sheets, the zoom's pre-bakes, prepareTier). */
+const BAKE_BUDGET = 3;
 /** Ride-back speed (m/s). */
 const HORSE_RUN = 8;
 
@@ -168,7 +172,7 @@ export function createCrowd(scene: Scene): CrowdRender {
   const sheets = new KnightSheets();
   const hero = new Hero();
   const arrows = new Arrows();
-  const bannerArt = new BannerArt();
+  let bannerArt = new BannerArt();
   const labels = new CountLabels();
   const champs = CHAMP_IDS.map((id) => new Champion(id));
   const pile = new PileLayout(MAXK);
@@ -278,6 +282,13 @@ export function createCrowd(scene: Scene): CrowdRender {
   let pileTop = 0;
   let heroFromX = 0;
   let heroFromY = 0;
+  // prepareTier: the next tier's palette, pre-baked a step per frame before the zoom's switch.
+  let prepPal: Palette | null = null;
+  let prepStage = 0;
+  let nextBanner: BannerArt | null = null;
+  /** Debug: the slowest prepare step (ms) and the bytes both palettes held at the switch. */
+  let prepMaxMs = 0;
+  let switchBytes = 0;
   let lanceCol: LanceColors | null = null;
   let lanceColPal: Palette | null = null;
   let lanceColHer: Heraldry | null = null;
@@ -528,13 +539,9 @@ export function createCrowd(scene: Scene): CrowdRender {
   game.on('strike', (e) => {
     if (holding()) return;
     if (e.auto) {
-      // Rally's auto-strikes (x = y = 0 from core): the hero's flurry, and its blows on the dragon.
+      // Rally's auto-strikes (x = y = 0 from core): they keep the hero's flurry going; its sparks
+      // land on the blows (hero.onBlow), not on the events.
       hero.flurry(now);
-      if (lastLod <= 2 && rand() < 0.5) {
-        scene.dragon.impactPoint(tmp);
-        const front = scene.dragon.bounds(tmpR).x;
-        scene.fx.burst('sparks', Math.min(tmp.x, front + 0.3 + rand() * 0.4), tmp.y, 0.45);
-      }
       return;
     }
     hero.strike(now);
@@ -616,10 +623,10 @@ export function createCrowd(scene: Scene): CrowdRender {
     scene.camera.visibleRect(vis, 0);
     const looseDef = sheets.frames[sheets.frameIndex(SK_ARCHER, A_STRIKE, 3)]!.anchor;
     const n = Math.min(170, Math.max(90, Math.round(count * 2.6)));
-    const edge = Math.min(vis.x, heroX - 4);
-    // The storm's apex stays inside the frame (a sheet of arrows sweeping across the sky), and
-    // each arrow's own arc varies a little so the sheet has depth.
-    const sky = Math.max(3, -vis.y * 0.62);
+    // The storm rises from the left of the frame (the army's rear and the host beyond it), peaks
+    // mid-frame and sweeps across the whole stage onto the dragon: a sheet of arrows darkening the
+    // sky for the whole flight. Each arrow's arc varies a little so the sheet has depth.
+    const left = Math.min(vis.x + vis.w * 0.3, heroX - 1);
     for (let a = 0; a < n; a++) {
       let x0: number;
       let y0: number;
@@ -633,15 +640,16 @@ export function createCrowd(scene: Scene): CrowdRender {
         y0 = ROW_Y[row[k]!]! + looseDef.launchY * sc;
         lead = Math.min(LOOSE_T + seed[k]! * 0.12, flight * 0.5);
       } else {
-        // The unseen host behind the army: a deep band of bowmen off the left edge.
-        x0 = edge - 0.5 - rand() * Math.max(6, vis.w * 0.35);
-        y0 = -0.9 - rand() * 0.9;
-        lead = rand() * Math.min(0.38, flight * 0.35);
+        // Bowmen behind the army: loosed from the left of the frame, nearly all at once.
+        x0 = vis.x - 0.3 + (left - vis.x + 0.3) * rand();
+        y0 = -0.6 - rand() * 1.2;
+        lead = rand() * Math.min(0.14, flight * 0.15);
       }
       scene.dragon.impactPoint(tmp);
-      const dist = Math.abs(tmp.x - x0);
-      // High, steep arcs: the storm darkens the sky and comes down on the dragon from above.
-      arrows.fire(x0, y0, tmp.x, tmp.y, now + lead, flight - lead, Math.min(sky * (0.75 + 0.35 * rand()), 2.6 + dist * 0.42 + rand() * 1.6), headX, headY);
+      // Apex at 42-58% of the visible sky's height, whatever the framing.
+      const apex = -vis.y * (0.42 + 0.16 * rand());
+      const lift = Math.max(1.2, apex - Math.max(-y0, -tmp.y));
+      arrows.fire(x0, y0, tmp.x, tmp.y, now + lead, flight - lead, lift, headX, headY);
     }
   };
 
@@ -654,7 +662,9 @@ export function createCrowd(scene: Scene): CrowdRender {
     if (shownL === 0) return;
     scene.dragon.bounds(tmpR);
     const bx = tmpR.x;
+    const deep = Math.min(0.55, tmpR.w * 0.3);
     const spread = Math.min(0.55, Math.max(0.15, tmpR.w * 0.08));
+    scene.camera.visibleRect(vis, 0);
     let j = 0;
     for (let i = 0; i < shownL && j < riders; i++) {
       const k = lanceRec[i]!;
@@ -663,11 +673,13 @@ export function createCrowd(scene: Scene): CrowdRender {
       const reach = (lanceGrip.poleX + Math.cos(LANCE_COUCH) * LANCE_FWD) * sc;
       const rank = j >> 1;
       // Lance points spread over the dragon's front; each rank rides a horse-length behind the last.
-      const tipX = bx + 0.15 + (rank % 3) * spread + (j & 1) * spread * 0.45 + rand() * 0.1;
+      // Lances bite deep (the horses end the charge in plain view, past the hero's shoulder).
+      const tipX = bx + deep + (rank % 3) * spread + (j & 1) * spread * 0.45 + rand() * 0.1;
       const x1 = tipX - reach - rank * 1.25 * (sc / UNIT);
       // Still out by the dragon from the last charge: it rides this one out.
       if (kx[k]! > x1 - 0.8) continue;
-      chX0[k] = kx[k]!;
+      // Riding from far off screen, start just past the left edge so the whole charge is seen.
+      chX0[k] = Math.max(kx[k]!, Math.min(x1 - 3, vis.x - 1.6 - rank * 1.4));
       chX1[k] = x1;
       chDur[k] = Math.max(0.3, travel + rank * 0.07 + (j & 1) * 0.03);
       pend[k] = M_NONE;
@@ -866,6 +878,13 @@ export function createCrowd(scene: Scene): CrowdRender {
     onRaise(e.unit === 'archer' ? U_ARCH : e.unit === 'lancer' ? U_LANCE : U_FOOT);
   });
 
+  hero.onBlow = () => {
+    if (lastLod > 3) return;
+    scene.dragon.impactPoint(tmp);
+    const front = scene.dragon.bounds(tmpR).x;
+    scene.fx.burst('sparks', Math.min(tmp.x, front + 0.25 + rand() * 0.35), tmp.y, 0.5);
+  };
+
   // ---- champions ----
   const champ = (id: ChampionId): Champion | null => {
     for (const c of champs) if (c.id === id) return c;
@@ -922,8 +941,8 @@ export function createCrowd(scene: Scene): CrowdRender {
   game.on('abilityUse', (e) => {
     if (holding()) return;
     if (e.id === 'charge') {
-      // Charge!: a war cry, then the ranks run in close behind the hero, banners up, dust flying.
-      surgeOn = true;
+      // Charge!: a war cry, then the ranks run in close behind the hero, banners up, dust flying
+      // (the surge itself follows state.abilities.charge, see update).
       hero.cheer(now);
       for (const c of champs) c.cheer(now + 0.05);
       for (let k = 0; k < MAXK; k++) {
@@ -933,10 +952,6 @@ export function createCrowd(scene: Scene): CrowdRender {
       if (lastLod <= 2) for (let i = 0; i < 6; i++) puff(heroX - 0.8 - i * 0.9 - room, 0.1, 3, 1);
     }
   });
-  game.on('abilityEnd', (e) => {
-    if (e.id === 'charge') surgeOn = false;
-  });
-
   // ---- the zoom ----
   game.on('zoomBegin', () => {
     // Everything in flight is dropped; one-shots are cancelled so nothing fights the rally.
@@ -1045,13 +1060,15 @@ export function createCrowd(scene: Scene): CrowdRender {
   };
 
   const setFused = (on: boolean): void => {
-    if (on === fused) return;
-    fused = on;
-    if (!on) {
-      // Back from state in the (new) tier: hero, champions, any starting troops, placed.
-      snap = true;
-      rallyOn = false;
+    if (on) {
+      fused = true;
+      return;
     }
+    // Back from state in the (new) tier: hero, champions, any starting troops, placed. Also ends
+    // a rally the zoom never fused.
+    if (fused || rallyOn) snap = true;
+    fused = false;
+    rallyOn = false;
   };
 
   /** Snap everything to state with no effects (resync, un-fuse). */
@@ -1112,12 +1129,62 @@ export function createCrowd(scene: Scene): CrowdRender {
     },
     rally,
     setFused,
+    prepareTier(tier: number) {
+      prepareTier(tier);
+    },
     heroRest(out: Vec2) {
       const s = scene.game.state;
       out.x = scene.dragon.bounds(tmpR).x - heroStandOff(s.dragon.size);
       out.y = 0.12;
       return out;
     },
+  };
+
+  /**
+   * The zoom's rally calls prepareTier(next): bake the next tier's art over the coming frames, one
+   * bounded step per frame, so the switch itself re-bakes nothing (the palette swap is instant).
+   */
+  const prepareTier = (tier: number): void => {
+    const p = paletteFor(tier);
+    if (p === pal || p === prepPal) return;
+    prepPal = p;
+    prepStage = 0;
+    prepMaxMs = 0;
+    sheets.prepare(p);
+  };
+
+  const prepareStep = (budget: number): void => {
+    // Each step is bounded; the painted-heraldry steps can't be split, so they wait for a frame
+    // with most of the budget free.
+    if (budget < (prepStage < 4 ? BAKE_BUDGET * 0.7 : 0.5)) return;
+    const p = prepPal!;
+    const t0 = performance.now();
+    const h = heraldry ?? defaultHeraldry(p);
+    switch (prepStage) {
+      case 0:
+        nextBanner = new BannerArt();
+        nextBanner.update(h, p);
+        break;
+      case 1:
+        hero.prepare(p, h);
+        break;
+      case 2:
+      case 3:
+        champs[prepStage - 2]!.prepare(p);
+        break;
+      case 4:
+        scene.atlas.tint(scene.sprites.dust, mixHex(p.haze, p.rim, 0.25));
+        break;
+      default:
+        // The footmen who start the next tier (Tower heraldry), at the close framing it opens on.
+        if (!sheets.prepareStep(0, 3, Math.max(0.4, budget - 1))) {
+          prepMaxMs = Math.max(prepMaxMs, performance.now() - t0);
+          return;
+        }
+        break;
+    }
+    prepMaxMs = Math.max(prepMaxMs, performance.now() - t0);
+    if (prepStage < 5) prepStage++;
   };
 
   // ---- per-frame update ----
@@ -1251,10 +1318,10 @@ export function createCrowd(scene: Scene): CrowdRender {
         if (el > GETUP_DUR) enter(k, M_MOVE);
         break;
       case M_CHARGE: {
-        // Accelerate out of the ranks, arrive at full gallop: x(u) = u (0.55 + 0.45 u).
+        // Spring out of the ranks, arrive at full gallop: x(u) = u (0.75 + 0.25 u).
         const u = Math.min(1, el / chDur[k]!);
         const before = kx[k]!;
-        kx[k] = chX0[k]! + (chX1[k]! - chX0[k]!) * u * (0.55 + 0.45 * u);
+        kx[k] = chX0[k]! + (chX1[k]! - chX0[k]!) * u * (0.75 + 0.25 * u);
         const r0 = run[k]!;
         run[k] = r0 + Math.max(dt * 1.2, Math.abs(kx[k]! - before) / STRIDE_M);
         if (((run[k]! * 2) | 0) !== ((r0 * 2) | 0) && lastLod <= 2) puff(kx[k]! - 0.5, ROW_Y[row[k]!]!, 2, 0.9);
@@ -1355,6 +1422,15 @@ export function createCrowd(scene: Scene): CrowdRender {
   };
 
   const ensureArt = (p: Palette): void => {
+    if (p !== pal && pal) {
+      // A new tier: take what prepareTier baked ahead, drop whatever wasn't for this palette.
+      if (p === prepPal) {
+        switchBytes = sheets.bytes + sheets.nextBytes;
+        if (nextBanner) bannerArt = nextBanner;
+      }
+      nextBanner = null;
+      prepPal = null;
+    }
     sheets.setPalette(p);
     if (!heraldry || (!customHeraldry && pal !== p)) heraldry = defaultHeraldry(p);
     pal = p;
@@ -1699,6 +1775,8 @@ export function createCrowd(scene: Scene): CrowdRender {
       now = v.time;
       const dt = v.dt;
       const s = v.state;
+      // Fused (the flash, just before the switch): the rest of the frame is idle, so keep preparing.
+      if (prepPal && fused) prepareStep(BAKE_BUDGET);
       if (fused) {
         // The colossus stands in for the army: nothing to update or draw.
         cpuAcc += performance.now() - c0;
@@ -1711,7 +1789,15 @@ export function createCrowd(scene: Scene): CrowdRender {
       const front = tmpR.x - standOff;
       const dragonFront = tmpR.x;
       hero.setTarget(s.dragon.size, standOff);
-      if (snap) snapAll();
+      // A resync while the army piles up for the zoom (the tab was hidden): rebuild the pile from
+      // state for the rally's remaining time instead of snapping back to the formation.
+      let reRally = -1;
+      if (snap) {
+        if (rallyOn && s.zoom.stage === 'begin') reRally = Math.max(0.25, rallyT0 + rallyDur - now);
+        snapAll();
+      }
+      // Charge! follows the state (it survives a reload); the war cry itself is event-driven.
+      surgeOn = s.abilities.charge.active > 0 && s.zoom.stage === null && !rallyOn;
       heroX = snap ? front : heroX + (front - heroX) * (1 - Math.exp(-2.5 * dt));
       surge += ((surgeOn ? 1 : 0) - surge) * (1 - Math.exp(-(surgeOn ? 5 : 1.6) * dt));
       if (surge < 0.001) surge = 0;
@@ -1775,6 +1861,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       const want = champRoom(champN);
       room = snap ? want : room + (want - room) * (1 - Math.exp(-3 * dt));
       snap = false;
+      if (reRally > 0) rally(rallyX, reRally);
       if (orderDirty) resortOrder();
 
       if (!rallyOn) sweepTail();
@@ -1790,8 +1877,15 @@ export function createCrowd(scene: Scene): CrowdRender {
         champInput.frontX = dragonFront;
         const st = s.champions[c.id as ChampionId];
         const ph = s.dragon.phase;
-        const canSpecial = !hold && !!st && ph !== 'dying' && ph !== 'leave' && ph !== 'enter';
-        champInput.specialIn = canSpecial ? Math.max(0, st.specialT - v.alpha * TICK_DT) : -1;
+        // Seconds until core lands the special: its timer, or (arriving dragon) the end of `enter`,
+        // whichever is later (core holds a due special until the dragon has entered). -1: not now.
+        const lag = v.alpha * TICK_DT;
+        let sIn = -1;
+        if (!hold && st && st.level > 0 && ph !== 'dying' && ph !== 'leave') {
+          sIn = Math.max(0, st.specialT - lag);
+          if (ph === 'enter') sIn = Math.max(sIn, s.dragon.phaseDur - s.dragon.phaseT - lag);
+        }
+        champInput.specialIn = sIn;
         champInput.surge = surge;
         if (rallyOn) c.rallyTarget(rallyX + (ci === 0 ? -0.62 : 0.66) * pileSqueeze(), 0.12 - Math.max(0, pileTop - 0.9) * pileGrow());
         c.update(dt, now, v.realDt, champInput);
@@ -1802,7 +1896,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       // Sprite memory follows the camera: bake the LOD on screen a little each frame (and the next
       // smaller one while the camera pulls back), release any LOD unused for 3 s.
       const pxu = v.camera.zoomEff * v.dpr * UNIT;
-      lastLod = lodFor(pxu);
+      lastLod = lodSticky(pxu, lastLod);
       const z = v.camera.zoom;
       if (z < prevZoom * 0.9995) pullT = v.realTime;
       prevZoom = z;
@@ -1813,8 +1907,20 @@ export function createCrowd(scene: Scene): CrowdRender {
       // The lookahead skips the lancers (their frames are big and they ride mostly off screen when
       // the camera is close): they bake on first use at the next LOD, which keeps the pull-back's
       // transient sprite memory near the knights' own.
+      // All baking in update shares one budget per frame: the LOD on screen first, then (rally)
+      // the next two LODs the zoom's pull-back will need, then the next tier's art (prepareTier).
+      const bake0 = performance.now();
       sheets.prewarm(lastLod, mask, 1.5, pulling, mask & 7);
-      sheets.evict(v.realTime, 3);
+      if (rallyOn) {
+        // No first-use bakes in the draw while the camera flies out over the pile.
+        for (let l = lastLod + 1; l <= Math.min(LOD_COUNT - 1, lastLod + 2); l++) {
+          sheets.touch(l, v.realTime);
+          const left = BAKE_BUDGET - (performance.now() - bake0);
+          if (left > 0.3) sheets.prewarm(l, mask, left, false);
+        }
+      }
+      if (prepPal) prepareStep(BAKE_BUDGET - (performance.now() - bake0));
+      sheets.evict(v.realTime, 3, lastLod);
       cpuAcc += performance.now() - c0;
     },
 
@@ -1835,7 +1941,7 @@ export function createCrowd(scene: Scene): CrowdRender {
       fF = cam.f * dpr;
       fW = Math.ceil(v.width * dpr);
       fPxu = cam.zoomEff * dpr * UNIT;
-      fLod = lodFor(fPxu);
+      fLod = lastLod;
       fMargin = 2.2 * cam.zoomEff * dpr;
       fFlagSize = fPxu > 1.3 ? 0 : 1;
       fPal = p;
@@ -1855,10 +1961,11 @@ export function createCrowd(scene: Scene): CrowdRender {
       // From the screen's left edge: recruits march in from there, in every row.
       const xl = 0;
       const xr = out ? fW : Math.min(fW, fA * (heroX + 1.5) + fE);
-      const yt = fB * tmpR.x + fD * BAND_TOP + fF;
+      const bandTop = shownL > 0 ? BAND_TOP_LANCE : BAND_TOP;
+      const yt = fB * tmpR.x + fD * bandTop + fF;
       const yb = fB * tmpR.x + fD * BAND_BOT + fF;
       bandX = Math.max(0, Math.floor(Math.min(xl, xr)) - 4);
-      bandY = Math.max(0, Math.floor(Math.min(yt, fB * (heroX + 1.5) + fD * BAND_TOP + fF)) - 40);
+      bandY = Math.max(0, Math.floor(Math.min(yt, fB * (heroX + 1.5) + fD * bandTop + fF)) - 40);
       bandW = Math.min(fW, Math.ceil(Math.max(xl, xr)) + 4) - bandX;
       bandH = Math.min(H, Math.ceil(Math.max(yb, fB * (heroX + 1.5) + fD * BAND_BOT + fF)) + 40) - bandY;
       const canBand = !rallyOn && bandW > 0 && bandH > 0 && Math.abs(cam.rotEff) < 0.2;
@@ -1869,7 +1976,8 @@ export function createCrowd(scene: Scene): CrowdRender {
         const k = order[oi]!;
         if (offBand(k)) continue;
         const r = row[k]!;
-        const b = !canBand ? 2 : r >= 3 ? 0 : r === 2 ? 1 : 2;
+        // Riders out on a charge take the lighter mid haze: behind the infantry, but not lost in the far band.
+        const b = !canBand ? 2 : r >= 3 && !riding(k) ? 0 : r >= 2 ? 1 : 2;
         if (b !== band) {
           if (band === 0 || band === 1) flushBand(ctx, band);
           band = b;
@@ -1968,6 +2076,7 @@ export function createCrowd(scene: Scene): CrowdRender {
     pile: () => ({ n: pile.n, layers: pile.layers, top: pileTop, rallyOn, fused }),
     /** Crowd CPU per frame (ms, update + draw, averaged over 30 frames) and sprite count (debug). */
     cpu: () => ({ ms: cpuAvg, sprites: orderN, squad, lod: lastLod, mb: sheets.memory() / 1048576 }),
+    prep: () => ({ pending: prepPal !== null, stage: prepStage, maxMs: prepMaxMs, nextMB: sheets.nextBytes / 1048576, switchMB: switchBytes / 1048576 }),
   };
   scene.debug.watch('crowd', () => `${orderN} spr ×${squad} lod ${lastLod} ${cpuAvg.toFixed(2)} ms ${(sheets.bytes / 1048576).toFixed(1)} MB`);
 
