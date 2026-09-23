@@ -24,6 +24,8 @@ import {
   type VoiceCap,
 } from './sfxMath';
 import type { Out } from './synth/kit';
+import { rubbleBuffer } from './synth/kit';
+import { brownBuffer, grainBuffer } from './synth/grains';
 import { startWind } from './synth/ambience';
 import * as S from './sfxSounds';
 
@@ -308,10 +310,16 @@ class Sfx {
   private peakNodes = 0;
   private readonly catNodes = new Map<Cat, number>();
 
+  /** The zoom's buffers are being (or have been) built ahead (prewarmZoom). */
+  private warming = false;
+
   constructor(private readonly scene: Scene) {
     const { game, input, audio, settings } = scene;
     input.onFirstGesture(() => (this.firstGestureAt = performance.now()));
-    audio.onReady(() => this.startAmbience());
+    audio.onReady(() => {
+      this.startAmbience();
+      this.prewarmZoom(2.5);
+    });
     settings.onChange(() => this.syncWind());
 
     game.on('strike', (e) => {
@@ -518,6 +526,7 @@ class Sfx {
 
     game.on('bossSummon', () => {
       this.hookScene();
+      this.prewarmZoom(0.8);
       this.play('horn', 0.1, S.sBossHorn);
     });
 
@@ -687,6 +696,27 @@ class Sfx {
   }
 
   /** Should sounds be generated right now? */
+  /**
+   * The zoom's sounds synthesize their buffers on first use (the armored rush's footfalls, the
+   * brown-noise rumble bed, the rubble of the flash and the avalanche): ~45 ms, cold, on the
+   * rally's frame. Build them ahead instead, one per quiet moment (each a few ms, well inside a
+   * frame), `after` s from now. Idempotent (they are cached per context).
+   */
+  private prewarmZoom(after: number): void {
+    if (this.warming) return;
+    const ctx = this.scene.audio.ctx;
+    if (!ctx) return;
+    this.warming = true;
+    const jobs: (() => unknown)[] = [() => grainBuffer(ctx, 'step'), () => brownBuffer(ctx), () => rubbleBuffer(ctx)];
+    let i = 0;
+    const next = (): void => {
+      if (i >= jobs.length) return;
+      jobs[i++]!();
+      window.setTimeout(next, 350);
+    };
+    window.setTimeout(next, after * 1000);
+  }
+
   private canPlay(): boolean {
     const ctx = this.scene.audio.ctx;
     if (!ctx || !this.audible()) return false;

@@ -1,6 +1,7 @@
 // What index.ts needs from each tier's backdrop (the Meadow, the Mountain), and what it gives them.
 import type { Scene } from '../../app/scene';
 import type { View } from '../types';
+import type { Vec2 } from '../../lib/vec';
 
 export interface BackdropStats {
   backMs: number;
@@ -27,6 +28,13 @@ export interface BackdropHost {
 /** One tier's backdrop. Only the active tier keeps its caches; free() drops them all. */
 export interface TierBackdrop {
   update(view: View): void;
+  /**
+   * Bake the next piece of this tier's art ahead of its first frame (the zoom's rally), for the
+   * main `view` of the tier still on screen. Returns true once everything is ready.
+   */
+  prepare?(view: View): boolean;
+  /** This tier's sun (or afterglow) on screen for a view of it, CSS px. */
+  sunPoint?(view: View, out: Vec2): Vec2;
   drawBack(ctx: CanvasRenderingContext2D, view: View): void;
   drawFront(ctx: CanvasRenderingContext2D, view: View): void;
   openEye(): void;

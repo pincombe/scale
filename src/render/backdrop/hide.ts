@@ -39,8 +39,19 @@ const DETAIL_PX = 8;
 const MAX_SCALES = 2500;
 /** Deep rows never get narrower than this (width / pitch). */
 const MIN_ASPECT = 1.2;
+/**
+ * Close-up (the zoom's hide beat): rows whose pitch spans NEAR0..NEAR1 px ease into their close
+ * look (the haze of distance lifts, the rim sharpens, snow shows packed in the crevices). Below
+ * NEAR0 (every in-tier framing) the hide is drawn exactly as before.
+ */
+const NEAR0 = 42;
+const NEAR1 = 150;
+/** Height of the snow drifted against a row's crowns (fraction of its pitch). */
+const CREVICE = 0.13;
 /** Arc height of a scale's rounded top, as a fraction of its row's pitch. */
 const ARC = 0.6;
+/** A plate reaches this many pitches below its row's top (the next rows cover the rest). */
+const PLATE_BOTTOM = 2.15;
 
 const LOG_GROWTH = Math.log(1 + HIDE_K);
 
@@ -121,6 +132,94 @@ export function hideScaleAt(wx: number, wy: number, out: Rect): Rect {
   return out;
 }
 
+/** One scale's whole plate in world meters (as traceRow draws it, before the next rows cover it). */
+export interface ScaleShape {
+  /** Row and index in the row. */
+  n: number;
+  i: number;
+  /** Center x, half-width, and the lean of its crown (m). */
+  cx: number;
+  sx: number;
+  lean: number;
+  /** Top of the crown, the arc's height, and the plate's bottom (world y, m). */
+  top: number;
+  ry: number;
+  bottom: number;
+  /** The row's top line and pitch (m). */
+  rowY: number;
+  pitch: number;
+}
+
+export function scaleShape(): ScaleShape {
+  return { n: 0, i: 0, cx: 0, sx: 0, lean: 0, top: 0, ry: 0, bottom: 0, rowY: 0, pitch: 1 };
+}
+
+/** Scale i of row n (see hideScaleShape). */
+export function hideScaleOf(n: number, i: number, out: ScaleShape): ScaleShape {
+  const pitch = hidePitch(n);
+  const w = hideWidth(n);
+  const g = scaleGeom(n, i, w, rowOffset(n, w), geom);
+  const rowY = hideRowY(n);
+  out.n = n;
+  out.i = i;
+  out.cx = g.cx;
+  out.sx = g.sx;
+  out.lean = g.lean;
+  out.top = rowY + g.top * pitch;
+  out.ry = g.ry * pitch;
+  out.bottom = rowY + PLATE_BOTTOM * pitch;
+  out.rowY = rowY;
+  out.pitch = pitch;
+  return out;
+}
+
+/** The scale containing world point (wx, wy), as its whole plate. */
+export function hideScaleShape(wx: number, wy: number, out: ScaleShape): ScaleShape {
+  const n = hideRowAt(wy);
+  const w = hideWidth(n);
+  return hideScaleOf(n, Math.floor((wx - rowOffset(n, w)) / w), out);
+}
+
+/** Index of the scale of row n whose slot holds world x. */
+export function hideIndexAt(n: number, wx: number): number {
+  const w = hideWidth(n);
+  return Math.floor((wx - rowOffset(n, w)) / w);
+}
+
+/**
+ * Emit one scale's whole plate into the current path, in world meters (the caller applies its
+ * camera), shifted by (dx, dy): the same curves traceRow draws. `lift` (pitches) raises the crown
+ * while the plate still reaches down under the rows in front: a scale sitting proud of its row.
+ */
+export function traceScale(ctx: CanvasRenderingContext2D, s: ScaleShape, dx = 0, dy = 0, lift = 0): void {
+  const cx = s.cx + dx;
+  const sx = s.sx;
+  const top = s.top + dy - lift * s.pitch;
+  const ry = s.ry;
+  const lean = s.lean;
+  ctx.moveTo(cx - sx, top + ry);
+  ctx.bezierCurveTo(cx - sx, top + ry * 0.35, cx - sx * 0.45 + lean, top, cx + lean * 0.6, top);
+  ctx.bezierCurveTo(cx + sx * 0.45 + lean, top, cx + sx, top + ry * 0.35, cx + sx, top + ry);
+  ctx.lineTo(cx + sx * 0.8, s.bottom + dy);
+  ctx.lineTo(cx - sx * 0.8, s.bottom + dy);
+  ctx.closePath();
+}
+
+/**
+ * Where a picture of aspect `aspect` (height / width) sits in scale `s` lifted by `lift` pitches:
+ * as wide as the plate, its top at the crown (the crown's arc takes its upper corners), its lower
+ * part under the rows in front. The zoom's meadow and the backdrop's keepsake share it.
+ */
+export function scalePictureRect(s: ScaleShape, lift: number, aspect: number, out: Rect): Rect {
+  const w = s.sx * 2 * 1.02;
+  const h = w * aspect;
+  out.x = s.cx - w * 0.5;
+  out.y = s.top - lift * s.pitch - h * 0.015;
+  out.w = w;
+  out.h = h;
+  return out;
+}
+
 // ---------------------------------------------------------------- colors (per palette)
 
 interface HideColors {
@@ -128,6 +227,11 @@ interface HideColors {
   /** Average hide tone (the base fill: what tiny rows blend into). */
   base: string;
   rim: string;
+  /** The close-up rim: brighter, nearly opaque. */
+  rimNear: string;
+  /** Close up: snow drifted against each row's crowns, and its lit crest. */
+  crevice: string;
+  creviceLit: string;
   /** Snow over drifted scales (a top-lit gradient would need a context: flat, translucent). */
   drift: string;
   /** Body stops (row-local 0..2), and the atmospheric haze per row. */
@@ -142,6 +246,12 @@ const gradCtx: (CanvasRenderingContext2D | null)[] = [null, null];
 const gradVal: (CanvasGradient | null)[] = [null, null];
 const gradPal: (Palette | null)[] = [null, null];
 let gradNext = 0;
+/** The close-up body (the pockets' soft snow band gives way to the mounds), cached the same way. */
+const nearCtx: (CanvasRenderingContext2D | null)[] = [null, null];
+const nearVal: (CanvasGradient | null)[] = [null, null];
+const nearPal: (Palette | null)[] = [null, null];
+let nearNext = 0;
+
 
 function hideColors(pal: Palette): HideColors {
   if (colors && colors.palette === pal) return colors;
@@ -157,6 +267,9 @@ function hideColors(pal: Palette): HideColors {
     palette: pal,
     base: mixHex(dark, snowDeep, 0.3),
     rim: rgba(mixHex(pal.rim, '#ffd9c8', 0.1), 0.5),
+    rimNear: rgba(mixHex(pal.rim, '#ffe8dc', 0.3), 0.9),
+    crevice: mixHex(mixHex('#aab3ea', tint, 0.18), pal.silhouette, 0.2),
+    creviceLit: mixHex(mixHex('#e6eaff', pal.rim, 0.25), tint, 0.05),
     drift: rgba(mixHex(snow, '#b3bbe8', 0.45), 0.34),
     body: [
       [0, mixHex(bulge, pal.rim, 0.05)],
@@ -186,6 +299,22 @@ function bodyGradient(ctx: CanvasRenderingContext2D, pal: Palette): CanvasGradie
   gradCtx[slot] = ctx;
   gradVal[slot] = g;
   gradPal[slot] = pal;
+  return g;
+}
+
+/** The body close up: the same crown and shade, but dark on down (no soft snow band in the pockets). */
+function nearGradient(ctx: CanvasRenderingContext2D, pal: Palette): CanvasGradient {
+  for (let i = 0; i < 2; i++) if (nearCtx[i] === ctx && nearPal[i] === pal) return nearVal[i]!;
+  const c = hideColors(pal);
+  const g = ctx.createLinearGradient(0, 0, 0, 2.1);
+  const body = c.body;
+  for (let k = 0; k < 5; k++) g.addColorStop(body[k]![0] / 2.1, body[k]![1]);
+  g.addColorStop(1, body[4]![1]);
+  const slot = nearNext;
+  nearNext = (nearNext + 1) & 1;
+  nearCtx[slot] = ctx;
+  nearVal[slot] = g;
+  nearPal[slot] = pal;
   return g;
 }
 
@@ -229,10 +358,90 @@ function traceRow(ctx: CanvasRenderingContext2D, n: number, w: number, off: numb
       const d = drift(n, i);
       ctx.quadraticCurveTo(cx + lean * 0.3, top + ry * (0.25 + 0.5 * d), cx - sx, top + ry);
     } else {
-      ctx.lineTo(cx + sx * 0.8, 2.15 + dy);
-      ctx.lineTo(cx - sx * 0.8, 2.15 + dy);
+      ctx.lineTo(cx + sx * 0.8, PLATE_BOTTOM + dy);
+      ctx.lineTo(cx - sx * 0.8, PLATE_BOTTOM + dy);
     }
     ctx.closePath();
+  }
+}
+
+/** Options for drawHide (all optional). */
+export interface HideOpts {
+  /** Opacity of everything drawn (1). */
+  alpha?: number;
+  /** Skip rows before this one (0): redraw the rows in front of a scale over it. */
+  rowMin?: number;
+  /** Paint the base tone under the rows (true); off when drawing over existing hide. */
+  base?: boolean;
+}
+
+/** A half-crown's height at distance u from its apex (quarter ellipse of half-width w, drop ry). */
+function crownY(u: number, w: number, top: number, ry: number): number {
+  const q = u / w;
+  return top + ry * (1 - Math.sqrt(Math.max(0, 1 - q * q)));
+}
+
+/**
+ * Emit the silhouettes of the rows from `rowMin` on that drawHide(..., { rowMin }) would draw over
+ * the world rect, into the current path in world meters (the caller applied its camera): a clip
+ * for light that must fall on those rows only.
+ */
+export function traceRows(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, pxPerM: number, rowMin: number): void {
+  if (!(pxPerM > 0) || !(x1 > x0) || !(y1 > 0)) return;
+  const top = y0 > 0 ? y0 : 0;
+  const nEnd = hideRowAt(y1);
+  for (let n = Math.max(rowMin, hideRowAt(top) - 2); n <= nEnd; n++) {
+    const pitch = hidePitch(n);
+    if (pitch * pxPerM < MIN_PX) continue;
+    const yTop = hideRowY(n);
+    if (yTop + pitch * 2.2 < top) continue;
+    const w = hideWidth(n);
+    const off = rowOffset(n, w);
+    ctx.save();
+    ctx.translate(0, yTop);
+    ctx.scale(1, pitch);
+    traceRow(ctx, n, w, off, Math.floor((x0 - off) / w) - 1, Math.ceil((x1 - off) / w), 0, 0);
+    ctx.restore();
+  }
+}
+
+const notchA: ScaleGeom = { cx: 0, sx: 0, top: 0, ry: 0, lean: 0 };
+const notchB: ScaleGeom = { cx: 0, sx: 0, top: 0, ry: 0, lean: 0 };
+
+/**
+ * Snow mounds in the notches of row n (row-local y, units of pitch), shifted up by dy: one where
+ * each pair of neighboring crowns meet, sized and present by a hash (a third stay bare). Drawn
+ * before the row, so its own crowns cover the mounds' lower halves.
+ */
+function traceNotches(ctx: CanvasRenderingContext2D, n: number, w: number, off: number, i0: number, i1: number, dy: number): void {
+  for (let i = i0; i < i1; i++) {
+    const h = hash2f(i, n * 7 + 9);
+    if (h < 0.33) continue;
+    const a = scaleGeom(n, i, w, off, notchA);
+    const b = scaleGeom(n, i + 1, w, off, notchB);
+    const l = b.cx - b.sx;
+    const r = a.cx + a.sx;
+    if (r <= l) continue;
+    // The V's bottom: where A's crown, falling to its right, meets B's, rising from its left
+    // (each half-crown modeled as a quarter ellipse from its apex down to its shoulder).
+    const ax = a.cx + a.lean * 0.6;
+    const bx = b.cx + b.lean * 0.6;
+    const aw = Math.max(1e-6, a.cx + a.sx - ax);
+    const bw = Math.max(1e-6, bx - (b.cx - b.sx));
+    let lo = Math.max(l, ax);
+    let hi = Math.min(r, bx);
+    if (hi <= lo) continue;
+    for (let k = 0; k < 12; k++) {
+      const m = (lo + hi) * 0.5;
+      if (crownY(m - ax, aw, a.top, a.ry) < crownY(bx - m, bw, b.top, b.ry)) lo = m;
+      else hi = m;
+    }
+    const x = (lo + hi) * 0.5;
+    const y = crownY(x - ax, aw, a.top, a.ry) + dy;
+    const rx = Math.min(r - l, (a.sx + b.sx) * 0.5) * (0.3 + 0.22 * h);
+    const ry = CREVICE * (0.42 + 0.45 * h);
+    ctx.moveTo(x + rx, y);
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
   }
 }
 
@@ -252,16 +461,22 @@ export function drawHide(
   pxPerM: number,
   lx: number,
   ly: number,
+  opts?: HideOpts,
 ): void {
   if (!(pxPerM > 0) || !(x1 > x0) || !(y1 > 0)) return;
+  const alpha = opts?.alpha ?? 1;
+  if (!(alpha > 0.002)) return;
   const c = hideColors(pal);
   // The base fill starts at the ridge line; the first rows' tops may rise a little above it.
   const top = y0 > 0 ? y0 : 0;
-  ctx.fillStyle = c.base;
-  ctx.fillRect(x0, top, x1 - x0, y1 - top);
+  if (opts?.base !== false) {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = c.base;
+    ctx.fillRect(x0, top, x1 - x0, y1 - top);
+  }
   const grad = bodyGradient(ctx, pal);
   // Rows are drawn from the first one reaching into the rect (it may hang down into it).
-  let n = Math.max(0, hideRowAt(top) - 2);
+  let n = Math.max(opts?.rowMin ?? 0, hideRowAt(top) - 2);
   const nEnd = hideRowAt(y1);
   let budget = MAX_SCALES;
   const rimPx = 1.3;
@@ -278,23 +493,52 @@ export function drawHide(
     if (i1 - i0 > budget) i1 = i0 + budget;
     budget -= i1 - i0 + 1;
     const fade = px >= FADE_PX ? 1 : (px - MIN_PX) / (FADE_PX - MIN_PX);
+    const near = px <= NEAR0 ? 0 : px >= NEAR1 ? 1 : ((px - NEAR0) / (NEAR1 - NEAR0)) ** 2 * (3 - (2 * (px - NEAR0)) / (NEAR1 - NEAR0));
     ctx.save();
     ctx.translate(0, yTop);
     ctx.scale(1, pitch);
-    ctx.globalAlpha = fade;
+    ctx.globalAlpha = fade * alpha;
     // Rim: the whole shape in the rim color, then the body shifted away from the light.
     const detail = px >= DETAIL_PX;
     const d = detail ? Math.min(0.25, (rimPx * Math.max(1, px / 26)) / px) : 0;
+    if (detail && near > 0.01 && n > 0) {
+      // Close up: snow lodged in the notches between this row's crowns (mounds laid on the row
+      // behind, then half covered by this row's crowns), some notches full, some bare.
+      const sn = Math.min(1, near * 1.6);
+      ctx.globalAlpha = fade * alpha * sn;
+      ctx.beginPath();
+      traceNotches(ctx, n, w, off, i0, i1, 0);
+      ctx.fillStyle = c.crevice;
+      ctx.fill();
+      ctx.beginPath();
+      traceNotches(ctx, n, w, off, i0, i1, -0.028);
+      ctx.fillStyle = c.creviceLit;
+      ctx.globalAlpha = fade * alpha * sn * 0.75;
+      ctx.fill();
+      ctx.globalAlpha = fade * alpha;
+    }
     if (detail) {
       ctx.beginPath();
       traceRow(ctx, n, w, off, i0, i1, 0, 0);
       ctx.fillStyle = c.rim;
       ctx.fill();
+      if (near > 0.01) {
+        ctx.globalAlpha = fade * alpha * near;
+        ctx.fillStyle = c.rimNear;
+        ctx.fill();
+        ctx.globalAlpha = fade * alpha;
+      }
     }
     ctx.beginPath();
     traceRow(ctx, n, w, off, i0, i1, -lx * d * pitch, -ly * d);
     ctx.fillStyle = grad;
     ctx.fill();
+    if (near > 0.01) {
+      ctx.globalAlpha = fade * alpha * near;
+      ctx.fillStyle = nearGradient(ctx, pal);
+      ctx.fill();
+      ctx.globalAlpha = fade * alpha;
+    }
     // Drifts: snow lying over patches of scales (each only where its own top shows).
     if (detail) {
       ctx.beginPath();
@@ -302,8 +546,8 @@ export function drawHide(
       ctx.fillStyle = c.drift;
       ctx.fill();
     }
-    // Atmosphere: far rows lean into the haze.
-    const h = rowHaze(pitch);
+    // Atmosphere: far rows lean into the haze (lifting close up: the zoom brings them near).
+    const h = rowHaze(pitch) * (1 - 0.8 * near);
     if (h > 0.01) {
       ctx.beginPath();
       traceRow(ctx, n, w, off, i0, i1, 0, 0);
@@ -314,3 +558,61 @@ export function drawHide(
   }
   ctx.globalAlpha = 1;
 }
+
+/**
+ * The meadow's scale (the zoom leaves the old tier in one plate of the hide): scale `s` drawn as
+ * the hide draws it (rim, then the body inset away from the light) with `picture` faint inside and
+ * a warm cast, then the rows in front of it laid back over it, only where it is. World transform
+ * applied by the caller; `warm` 0..1 scales the picture and the warmth. Allocation-free.
+ */
+export function drawMarkedScale(
+  ctx: CanvasRenderingContext2D,
+  pal: Palette,
+  s: ScaleShape,
+  picture: HTMLCanvasElement | null,
+  pxPerM: number,
+  lx: number,
+  ly: number,
+  warm: number,
+  lift = 0,
+): void {
+  const px = s.pitch * pxPerM;
+  if (px < MIN_PX || warm <= 0.002) return;
+  const c = hideColors(pal);
+  const d = px >= DETAIL_PX ? Math.min(0.25, (1.3 * Math.max(1, px / 26)) / px) : 0;
+  ctx.save();
+  ctx.beginPath();
+  traceScale(ctx, s, 0, 0, lift);
+  ctx.fillStyle = c.rim;
+  ctx.fill();
+  ctx.beginPath();
+  traceScale(ctx, s, -lx * d * s.pitch, -ly * d * s.pitch, lift);
+  ctx.clip();
+  ctx.save();
+  ctx.translate(0, s.rowY - lift * s.pitch);
+  ctx.scale(1, s.pitch);
+  ctx.fillStyle = bodyGradient(ctx, pal);
+  ctx.fillRect(s.cx - s.sx - 0.1, -1, s.sx * 2 + 0.2, PLATE_BOTTOM + lift + 2);
+  ctx.restore();
+  if (picture && picture.width > 0) {
+    const r = scalePictureRect(s, lift, picture.height / picture.width, markRect);
+    ctx.globalAlpha = KEEPSAKE_PICTURE * warm;
+    ctx.drawImage(picture, r.x, r.y, r.w, r.h);
+  }
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.1 * warm;
+  ctx.fillStyle = pal.sun.glow;
+  ctx.fillRect(s.cx - s.sx, s.top - lift * s.pitch, s.sx * 2, s.bottom - s.top + lift * s.pitch);
+  ctx.restore();
+  // The rows in front of it, back over it (only inside it: everything else is already drawn).
+  ctx.save();
+  ctx.beginPath();
+  traceScale(ctx, s, 0, 0, lift);
+  ctx.clip();
+  drawHide(ctx, pal, s.cx - s.sx * 1.2, s.rowY + s.pitch * 0.5, s.cx + s.sx * 1.2, s.bottom + s.pitch, pxPerM, lx, ly, { rowMin: s.n + 1, base: false });
+  ctx.restore();
+}
+
+const markRect: Rect = { x: 0, y: 0, w: 1, h: 1 };
+/** How strongly the old tier shows in the meadow's scale (faint: an easter egg for who looks). */
+const KEEPSAKE_PICTURE = 0.4;

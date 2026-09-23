@@ -331,10 +331,22 @@ export class Colossus {
    * Draw the colossus. `tf`: figure units -> device px; `pxu`: device px per figure unit (for the
    * rim width and the level of detail); `detail` 0..1 fades the armor in; `alpha` < 1 composites
    * the whole figure through a buffer (the hand-over), so its layers never show through each other.
+   * `overlay` (optional) paints over the figure's own pixels only (source-atop, in the buffer: the
+   * mist the crowd's hero stands in), given the buffer's origin in device px.
    */
-  draw(ctx: CanvasRenderingContext2D, tf: FigTransform, pxu: number, dpr: number, p: Palette, h: Heraldry, detail: number, alpha: number): void {
+  draw(
+    ctx: CanvasRenderingContext2D,
+    tf: FigTransform,
+    pxu: number,
+    dpr: number,
+    p: Palette,
+    h: Heraldry,
+    detail: number,
+    alpha: number,
+    overlay: ((g: CanvasRenderingContext2D, ox: number, oy: number) => void) | null = null,
+  ): void {
     if (alpha <= 0.002) return;
-    if (alpha >= 0.998) {
+    if (alpha >= 0.998 && !overlay) {
       this.paint(ctx, tf.a, tf.b, tf.c, tf.d, tf.e, tf.f, pxu, dpr, p, h, detail);
       return;
     }
@@ -378,6 +390,12 @@ export class Colossus {
     g.globalCompositeOperation = 'source-over';
     g.clearRect(0, 0, bw + 2, bh + 2);
     this.paint(g, tf.a, tf.b, tf.c, tf.d, tf.e - x0, tf.f - y0, pxu, dpr, p, h, detail);
+    if (overlay) {
+      g.save();
+      g.globalCompositeOperation = 'source-atop';
+      overlay(g, x0, y0);
+      g.restore();
+    }
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = alpha;

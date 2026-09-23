@@ -141,6 +141,10 @@ export class Wisps {
   private palette: Palette | null = null;
   private seeded = false;
 
+  ready(pal: Palette): boolean {
+    return this.palette === pal && this.art.length > 0;
+  }
+
   ensure(pal: Palette): void {
     if (this.palette === pal && this.art.length) return;
     this.free();

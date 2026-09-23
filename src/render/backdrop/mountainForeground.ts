@@ -119,6 +119,10 @@ export class MountainForeground {
   private pieces: Piece[] = [];
   private palette: Palette | null = null;
 
+  ready(pal: Palette): boolean {
+    return this.palette === pal && this.pieces.length > 0;
+  }
+
   ensure(pal: Palette): void {
     if (this.palette === pal && this.pieces.length) return;
     this.free();

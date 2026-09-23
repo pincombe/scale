@@ -8,6 +8,7 @@ import { readyAbilities, shop, shopPause } from './bots';
 import type { Profile } from './bots';
 import { JuiceClock } from './juice';
 import { createEyeSchedule, stepEyeSchedule } from '../render/backdrop/eyeTimeline';
+import { zoomDoneAt, zoomSwitchAt } from '../render/zoom/timeline';
 
 export const FRAME_DT = 1 / 60;
 /** Checkpoints (wall s): dragon size sampled at the minutes, kills at 3:15 (the M2 boss). */
@@ -17,10 +18,12 @@ export const BOSS_AT = 195;
 export const PACE_FROM = 40;
 export const PACE_TO = 120;
 /**
- * The zoom cinematic as the sim models it (wall s): nothing happens for this long after zoomBegin,
- * then the bot dispatches 'switch' and 'end' (WP 2.1 owns the real timing).
+ * The zoom cinematic as the sim models it (wall s after zoomBegin), from the director's own
+ * timeline (render/zoom/timeline.ts): the bot dispatches 'switch' at the flash and 'end' when play
+ * resumes; nothing happens in between (the core holds).
  */
-export const ZOOM_CINEMATIC = 9;
+export const ZOOM_SWITCH = zoomSwitchAt();
+export const ZOOM_CINEMATIC = zoomDoneAt();
 /** The Mountain's army is "back" at this many units (from the zoom's end). */
 export const ARMY_BACK = 20;
 /**
@@ -453,6 +456,7 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
             r.zoomFusion = e.fusion;
             r.zoomHeight = e.height;
           } else if (r.secondZoom < 0) r.secondZoom = wall;
+          zoomSwitchAtWall = wall + ZOOM_SWITCH;
           zoomAt = wall + ZOOM_CINEMATIC;
           novelty('the zoom', false);
           log?.(wall, `ZOOM ${e.from} → ${e.to}: +${fmt(e.scales)} Scales, fusion ×${e.fusion}, knights ${e.height} m`);
@@ -504,7 +508,8 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
   let minute = 1;
   let paceFromKills = -1;
   let paceDone = false;
-  /** Wall time the modeled zoom cinematic dispatches 'switch' and 'end' (Infinity: no zoom playing). */
+  /** Wall times the modeled zoom cinematic dispatches 'switch' and 'end' (Infinity: no zoom playing). */
+  let zoomSwitchAtWall = Infinity;
   let zoomAt = Infinity;
   /** 'onCooldown' players: when they'll press each ability that is ready now. */
   const abilityAt: Partial<Record<AbilityId, number>> = {};
@@ -515,10 +520,14 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     // After the build's last boss, a short informational tail, then the run stops.
     if (finaleAt >= 0 && wall >= finaleAt + FINALE_TAIL) break;
     // Input (between frames, in wall time).
-    // The zoom cinematic: ~9 s of nothing, then the stages the zoom director would dispatch.
+    // The zoom cinematic: the stages the zoom director dispatches, on its timeline.
+    if (wall >= zoomSwitchAtWall) {
+      zoomSwitchAtWall = Infinity;
+      act({ type: 'zoom', stage: 'switch' });
+    }
     if (wall >= zoomAt) {
       zoomAt = Infinity;
-      act({ type: 'zoom', stage: 'switch' });
+      if (s.zoom.stage === 'begin') act({ type: 'zoom', stage: 'switch' });
       act({ type: 'zoom', stage: 'end' });
       if (r.zoomEnd < 0) {
         r.zoomEnd = wall;

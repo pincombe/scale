@@ -5,19 +5,22 @@
 //
 // Flash framing (old tier): the camera the rally and fusion ease into, and the one the snapshot is
 // taken with. Both boots span the stage (BOOTS_FILL of its width), the ground line where the in-tier
-// director keeps it, so the moment the colossus appears its armored boots fill the screen. A mighty
-// colossus (big ratio) means a wide meadow shot; a small one, a close one.
+// director keeps it, so the moment the colossus appears its armored boots fill the screen. At the
+// switch the camera becomes the new tier's equivalent (same screen, zoom x ratio): the snapshot is
+// then exactly the world rect the camera sees, and the colossus stands in it.
 //
-// Pull-back (new tier): one continuous zoom-out, interpolated in log space, from that framing (the
-// camera jumps to the new tier's equivalent at the switch: same screen, zoom x ratio) to the
-// in-tier director's framing, where the colossus is the hero at its base size. The colossus's
-// root glides on screen from its flash spot to the hero's spot. Both boots filling the screen and
-// the hero at 29% of the stage fix that zoom at ~15x, whatever the ratio.
+// Camera path (new tier, CameraPath): it rests on the boots, then pulls back in three strokes, each
+// a zoom about its own fixed screen point (the one point that stays put while the view scales, so
+// the motion never slides sideways), each starting and landing at rest (pullEase), so they chain
+// without a jolt: the boots -> the hold (the meadow's scale at the colossus's feet, ~a fifth of the
+// stage wide), a slow drift about the scale itself, then the hold -> the in-tier director's framing,
+// where the colossus is the hero at its base size.
 //
-// The meadow (the snapshot) first shrinks with the colossus, so it still stands in the meadow; then
-// (`shrink` window) it shrinks faster, and (`drift` window) glides from under the boots into its
-// scale on the hide, the new tier's ground: at the end it sits exactly in that scale. Its log scale
-// is the colossus's plus an eased extra, so the whole motion stays one smooth exponential.
+// The meadow (MeadowMorph): a world-space rect. At the switch it is the screen (the colossus stands
+// in it, and the camera's pull-back shrinks both alike); over the first stroke it condenses into the
+// picture rect of one scale of the hide, just in front of the colossus's toes (its log-size and the
+// point under his feet interpolated), while its frame morphs from the rectangle into the scale's
+// plate. From the hold on it is that scale.
 import { KNIGHT_HEIGHT } from '../world';
 
 /** The crowd's hero is this much taller than a knight (mirrors crowd/hero.ts HERO_SCALE). */
@@ -39,9 +42,29 @@ function clamp(x: number, lo: number, hi: number): number {
   return x < lo ? lo : x > hi ? hi : x;
 }
 
-function smoothstep(e0: number, e1: number, x: number): number {
+export function smootherstep(e0: number, e1: number, x: number): number {
   const t = clamp((x - e0) / (e1 - e0), 0, 1);
-  return t * t * (3 - 2 * t);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+/** The stroke easing (mirrors timeline.pullEase; kept local so geometry has no timing import). */
+function stroke(u: number, a: number, b: number): number {
+  if (u <= 0) return 0;
+  if (u >= 1) return 1;
+  const v = 1 / (1 - (a + b) / 2);
+  if (u < a) return v * (u / 2 - (a / (2 * Math.PI)) * Math.sin((Math.PI * u) / a));
+  const mid = 1 - a - b;
+  if (u <= a + mid) return v * (a / 2 + (u - a));
+  const w = u - (a + mid);
+  return v * (a / 2 + mid + w / 2 + (b / (2 * Math.PI)) * Math.sin((Math.PI * w) / b));
+}
+
+function strokeSpeed(u: number, a: number, b: number): number {
+  if (u <= 0 || u >= 1) return 0;
+  const v = 1 / (1 - (a + b) / 2);
+  if (u < a) return (v * (1 - Math.cos((Math.PI * u) / a))) / 2;
+  if (u <= 1 - b) return v;
+  return (v * (1 + Math.cos((Math.PI * (u - (1 - b))) / b))) / 2;
 }
 
 export interface FlashFraming {
@@ -87,89 +110,126 @@ export function computeFlashFraming(
   return out;
 }
 
+/** Stroke ramps (fractions of each stroke's time): in, out. */
+export const STROKE1_A = 0.34;
+export const STROKE1_B = 0.44;
+export const HOLD_A = 0.5;
+export const HOLD_B = 0.5;
+export const STROKE2_A = 0.36;
+export const STROKE2_B = 0.4;
+
+/** Pull-back stage (CameraPath.stage). */
+export const enum Stroke {
+  Boots = 0,
+  Closing = 1,
+  Hold = 2,
+  Landscape = 3,
+  Landed = 4,
+}
+
 /**
- * The pull-back at log-zoom progress e (0..1): camera, the colossus's root on screen, and the
- * snapshot's rect. Set the inputs (all public), then call at(e); outputs are fields. Allocation-free.
+ * The new tier's camera from the flash to the landing. Set the inputs (public fields), then at(t);
+ * outputs are fields. Allocation-free.
  */
-export class PullBack {
-  // ---- inputs ----
-  /** The snapshot's size (CSS px): the view at the switch. */
-  snapW = 1;
-  snapH = 1;
-  /** Stage center now (CSS px). */
-  stageCX = 0;
-  stageCY = 0;
-  /** The colossus's root (new-tier world m): the hero's feet. */
-  rootX = 0;
-  rootY = HERO_Y;
-  /** Start (the flash, converted to the new tier): the root on screen and the zoom. */
+export class CameraPath {
+  // ---- inputs: times (s) ----
+  pullStart = 0;
+  holdStart = 1;
+  holdEnd = 2;
+  pullEnd = 3;
+  // ---- inputs: keyframes (CSS px per meter; the colossus's root on screen, CSS px) ----
+  /** The boots (the flash, in the new tier's meters). */
+  z0 = 1;
   sx0 = 0;
   sy0 = 0;
-  z0 = 1;
-  /** End (the in-tier director's framing): the root on screen and the zoom. */
+  /** The hold: where the first stroke lands. */
+  zh = 1;
+  sxh = 0;
+  syh = 0;
+  /** The hold's drift: zoom at its end, and the screen point it scales about (the scale). */
+  zh2 = 1;
+  fhx = 0;
+  fhy = 0;
+  /** The in-tier director's framing. */
+  ze = 1;
   sxe = 0;
   sye = 0;
-  ze = 1;
-  /**
-   * Where the snapshot ends (new-tier world m): its top-left and width. The cinematic places it in
-   * its scale on the hide so the meadow's horizon shows in the scale's exposed face.
-   */
-  ex = 0;
-  ey = 0;
-  ew = 1;
-  /** The meadow's extra shrink (beyond the colossus's) eases in over e in [shrink0, shrink1]... */
-  shrink0 = 0.35;
-  shrink1 = 1;
-  /** ...and it glides from under the boots to its scale over [drift0, drift1]. */
-  drift0 = 0.45;
-  drift1 = 1;
+  /** The colossus's root (world m) and the stage center (CSS px), for the camera center. */
+  rootX = 0;
+  rootY = HERO_Y;
+  stageCX = 0;
+  stageCY = 0;
 
   // ---- outputs ----
-  /** Camera: CSS px per meter and center (new-tier world m). */
   zoom = 1;
-  camX = 0;
-  camY = 0;
-  /** The root on screen (CSS px). */
   rootSX = 0;
   rootSY = 0;
-  /** The colossus's scale relative to the flash (1 -> z_end / z_start). */
-  scale = 1;
-  /** Snapshot rect: top-left (CSS px) and scale (its size is k x (snapW, snapH)). */
-  k = 1;
-  ax = 0;
-  ay = 0;
-  /** log2 of the snapshot's width over its final width at the current zoom (0 = it has landed). */
-  fit = 0;
+  camX = 0;
+  camY = 0;
+  /** d(ln zoom)/dt (negative while pulling back). */
+  speed = 0;
+  stage: Stroke = Stroke.Boots;
+  /** Progress of the current stroke's time (0..1). */
+  u = 0;
 
-  at(e: number): this {
-    const u = clamp(e, 0, 1);
-    const lz0 = Math.log(this.z0);
-    const lze = Math.log(this.ze);
-    const lz = lz0 + (lze - lz0) * u;
-    const z = Math.exp(lz);
-    this.zoom = z;
-    this.scale = z / this.z0;
-    const rsx = this.sx0 + (this.sxe - this.sx0) * u;
-    const rsy = this.sy0 + (this.sye - this.sy0) * u;
-    this.rootSX = rsx;
-    this.rootSY = rsy;
-    this.camX = this.rootX - (rsx - this.stageCX) / z;
-    this.camY = this.rootY - (rsy - this.stageCY) / z;
-
-    // The meadow: the colossus's scale, plus an eased extra so it ends as its scale's face.
-    const lkEnd = Math.log((this.ew * this.ze) / this.snapW);
-    const extra = lkEnd - (lze - lz0);
-    const k = Math.exp(lz - lz0 + extra * smoothstep(this.shrink0, this.shrink1, u));
-    this.k = k;
-    // Scaled about the root (the colossus stands in it), plus the glide into its scale.
-    const kEnd = Math.exp(lkEnd);
-    const dx = this.sxe + (this.ex - this.rootX) * this.ze - (this.sxe - kEnd * this.sx0);
-    const dy = this.sye + (this.ey - this.rootY) * this.ze - (this.sye - kEnd * this.sy0);
-    const g = smoothstep(this.drift0, this.drift1, u);
-    this.ax = rsx - k * this.sx0 + dx * g;
-    this.ay = rsy - k * this.sy0 + dy * g;
-    this.fit = Math.log2((k * this.snapW) / (this.ew * z));
+  at(t: number): this {
+    if (t < this.pullStart) {
+      this.set(Stroke.Boots, 0, this.z0, this.sx0, this.sy0, 0);
+    } else if (t < this.holdStart) {
+      const u = (t - this.pullStart) / (this.holdStart - this.pullStart);
+      this.scaleAbout(Stroke.Closing, u, this.z0, this.sx0, this.sy0, this.zh, this.sxh, this.syh, STROKE1_A, STROKE1_B, this.holdStart - this.pullStart);
+    } else if (t < this.holdEnd) {
+      const u = (t - this.holdStart) / (this.holdEnd - this.holdStart);
+      const e = stroke(u, HOLD_A, HOLD_B);
+      const lr = Math.log(this.zh2 / this.zh);
+      const z = this.zh * Math.exp(lr * e);
+      const k = z / this.zh;
+      this.set(Stroke.Hold, u, z, this.fhx + (this.sxh - this.fhx) * k, this.fhy + (this.syh - this.fhy) * k, (lr * strokeSpeed(u, HOLD_A, HOLD_B)) / (this.holdEnd - this.holdStart));
+    } else if (t < this.pullEnd) {
+      const u = (t - this.holdEnd) / (this.pullEnd - this.holdEnd);
+      const k = this.zh2 / this.zh;
+      const sx1 = this.fhx + (this.sxh - this.fhx) * k;
+      const sy1 = this.fhy + (this.syh - this.fhy) * k;
+      this.scaleAbout(Stroke.Landscape, u, this.zh2, sx1, sy1, this.ze, this.sxe, this.sye, STROKE2_A, STROKE2_B, this.pullEnd - this.holdEnd);
+    } else {
+      this.set(Stroke.Landed, 1, this.ze, this.sxe, this.sye, 0);
+    }
     return this;
+  }
+
+  /**
+   * One stroke: zoom from za to zb about the fixed screen point that carries the root from
+   * (xa, ya) to (xb, yb) (a straight, never-sliding path), eased in log-zoom.
+   */
+  private scaleAbout(stage: Stroke, u: number, za: number, xa: number, ya: number, zb: number, xb: number, yb: number, a: number, b: number, dur: number): void {
+    const e = stroke(u, a, b);
+    const lr = Math.log(zb / za);
+    const z = za * Math.exp(lr * e);
+    const s = zb / za;
+    let x: number;
+    let y: number;
+    if (Math.abs(1 - s) > 0.04) {
+      const fx = (xb - s * xa) / (1 - s);
+      const fy = (yb - s * ya) / (1 - s);
+      const k = z / za;
+      x = fx + (xa - fx) * k;
+      y = fy + (ya - fy) * k;
+    } else {
+      x = xa + (xb - xa) * e;
+      y = ya + (yb - ya) * e;
+    }
+    this.set(stage, u, z, x, y, (lr * strokeSpeed(u, a, b)) / Math.max(1e-6, dur));
+  }
+
+  private set(stage: Stroke, u: number, z: number, x: number, y: number, speed: number): void {
+    this.stage = stage;
+    this.u = u;
+    this.zoom = z;
+    this.rootSX = x;
+    this.rootSY = y;
+    this.speed = speed;
+    this.camX = this.rootX - (x - this.stageCX) / z;
+    this.camY = this.rootY - (y - this.stageCY) / z;
   }
 
   /** World (new tier) -> screen at the last at(): writes out. */
@@ -177,5 +237,61 @@ export class PullBack {
     out.x = this.stageCX + (wx - this.camX) * this.zoom;
     out.y = this.stageCY + (wy - this.camY) * this.zoom;
     return out;
+  }
+}
+
+/**
+ * The meadow picture as a world rect (new-tier meters): the screen at the switch (r0) condensing
+ * into its scale's picture rect (r1) over the first stroke. `at(u)`: u = the first stroke's time
+ * fraction (0 = the boots, 1 = the hold). Allocation-free.
+ */
+export class MeadowMorph {
+  // ---- inputs ----
+  /** The screen at the switch, in world meters. */
+  x0 = 0;
+  y0 = 0;
+  w0 = 1;
+  h0 = 1;
+  /** Its scale's picture rect (same aspect as r0). */
+  x1 = 0;
+  y1 = 0;
+  w1 = 1;
+  /** The colossus's root (world m): the point of the meadow under his feet. */
+  rootX = 0;
+  rootY = HERO_Y;
+  /** Windows (fractions of the stroke) for the size and the glide, and the frame's morph. */
+  size0 = 0.02;
+  size1 = 0.9;
+  glide0 = 0;
+  glide1 = 0.92;
+  frame0 = 0.02;
+  frame1 = 0.82;
+
+  // ---- outputs ----
+  x = 0;
+  y = 0;
+  w = 1;
+  h = 1;
+  /** 0 = the picture's own rect, 1 = the scale's plate. */
+  frame = 0;
+
+  at(u: number): this {
+    const aspect = this.h0 / this.w0;
+    const gs = smootherstep(this.size0, this.size1, u);
+    const gp = smootherstep(this.glide0, this.glide1, u);
+    const w = Math.exp(Math.log(this.w0) + (Math.log(this.w1) - Math.log(this.w0)) * gs);
+    const h = w * aspect;
+    // The point of the meadow under the colossus's feet: at his feet, gliding to its place in r1.
+    const fx = (this.rootX - this.x0) / this.w0;
+    const fy = (this.rootY - this.y0) / this.h0;
+    const h1 = this.w1 * aspect;
+    const ax = this.rootX + (this.x1 + fx * this.w1 - this.rootX) * gp;
+    const ay = this.rootY + (this.y1 + fy * h1 - this.rootY) * gp;
+    this.w = w;
+    this.h = h;
+    this.x = ax - fx * w;
+    this.y = ay - fy * h;
+    this.frame = smootherstep(this.frame0, this.frame1, u);
+    return this;
   }
 }

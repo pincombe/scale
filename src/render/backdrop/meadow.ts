@@ -445,6 +445,7 @@ export function createMeadow(host: BackdropHost): TierBackdrop {
     update: back.update,
     drawBack: back.draw,
     drawFront: front.draw,
+    sunPoint: (view: View, out: Vec2) => sunPos(view, out),
     openEye,
     birds: () => ambient.birds(scene.camera.viewW, scene.camera.viewH),
     eyeState: () => (eyeT < 0 ? 'shut' : `${eyeT.toFixed(1)} s, ${stats.eyeMs.toFixed(3)} ms`),

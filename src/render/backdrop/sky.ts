@@ -78,94 +78,151 @@ export interface SkyGlow {
  * the baked glow under the sun when the stage center moves (panel open).
  */
 export function bakeSky(p: Palette, w: number, h: number, glow: SkyGlow, extra: number): HTMLCanvasElement {
-  const c = makeCanvas(w + extra, h);
-  const ctx = context2d(c);
-  const img = ctx.createImageData(c.width, c.height);
-  const d = img.data;
-  const W = c.width;
-  const H = c.height;
-  const rows = new Float32Array(H * 3);
-  const col: RGB = { r: 0, g: 0, b: 0 };
-  const horizonPx = Math.max(1, p.horizon * H);
-  for (let y = 0; y < H; y++) {
-    skyAt(p, y / horizonPx, col);
-    rows[y * 3] = col.r;
-    rows[y * 3 + 1] = col.g;
-    rows[y * 3 + 2] = col.b;
-  }
-  // Low-frequency mottle (a painted wash, not flat vector): coarse grid, bilinear.
-  const n = new Noise(0x5c7);
-  const GRID = 48;
-  const gw = Math.ceil(W / GRID) + 2;
-  const gh = Math.ceil(H / GRID) + 2;
-  const grid = new Float32Array(gw * gh);
-  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) grid[j * gw + i] = n.fbm2(i * 0.35, j * 0.5, 3);
-  let s = 0x9e3779b9 | 0;
-  const LN = 512;
-  const lut = glowLut(LN);
-  const gc = parseHex(p.sun.glow, { r: 0, g: 0, b: 0 });
-  const G = Math.max(1, glow.r);
-  const iG = 1 / G;
-  const iBx = 1 / (2.4 * G);
-  const iBy = 1 / (0.32 * G);
-  for (let y = 0; y < H; y++) {
-    let r0 = rows[y * 3]!;
-    let g0 = rows[y * 3 + 1]!;
-    let b0 = rows[y * 3 + 2]!;
-    const dy = y - glow.y;
-    const inGlow = Math.abs(dy) < G;
-    const rowR = r0;
-    const rowG = g0;
-    const rowB = b0;
-    const gy = y / GRID;
-    const j = gy | 0;
-    const fy = gy - j;
-    // Mottle strongest mid-sky, gone at the horizon glow.
-    const mAmp = 5 * (1 - Math.min(1, y / horizonPx) ** 3);
-    for (let x = 0; x < W; x++) {
-      r0 = rowR;
-      g0 = rowG;
-      b0 = rowB;
-      if (inGlow) {
-        const dx = x - glow.x;
-        let a = 0;
-        const q = Math.sqrt(dx * dx + dy * dy) * iG;
-        if (q < 1) a += glow.a * lut[(q * LN) | 0]!;
-        const bx = dx * iBx;
-        const by = dy * iBy;
-        const qb = Math.sqrt(bx * bx + by * by);
-        if (qb < 1) a += glow.band * lut[(qb * LN) | 0]!;
-        r0 += gc.r * a;
-        g0 += gc.g * a;
-        b0 += gc.b * a;
-      }
-      const gx = x / GRID;
-      const i = gx | 0;
-      const fx = gx - i;
-      const k = j * gw + i;
-      const m0 = grid[k]! + (grid[k + 1]! - grid[k]!) * fx;
-      const m1 = grid[k + gw]! + (grid[k + gw + 1]! - grid[k + gw]!) * fx;
-      const m = (m0 + (m1 - m0) * fy) * mAmp;
-      // xorshift32 x2 -> triangular dither in (-1, 1)
-      s ^= s << 13;
-      s ^= s >>> 17;
-      s ^= s << 5;
-      const u1 = (s >>> 0) / 4294967296;
-      s ^= s << 13;
-      s ^= s >>> 17;
-      s ^= s << 5;
-      const u2 = (s >>> 0) / 4294967296;
-      const dz = u1 - u2;
-      const o = (y * W + x) * 4;
-      d[o] = r0 + m + dz * 1.2 + 0.5;
-      d[o + 1] = g0 + m * 0.8 + dz * 1.2 + 0.5;
-      d[o + 2] = b0 + m * 1.1 + dz * 1.2 + 0.5;
-      d[o + 3] = 255;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-  return c;
+  const b = new SkyBaker(p, w, h, glow, extra);
+  b.step(Infinity);
+  return b.canvas;
 }
+
+/**
+ * bakeSky, resumable: step(budgetMs) computes rows until the budget is spent (the zoom's rally
+ * bakes the next tier's sky a slice per frame), then writes the pixels once. Same result.
+ */
+export class SkyBaker {
+  readonly canvas: HTMLCanvasElement;
+  done = false;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly img: ImageData;
+  private readonly rows: Float32Array;
+  private readonly grid: Float32Array;
+  private readonly gw: number;
+  private readonly lut: Float32Array;
+  private readonly gc: RGB;
+  private readonly horizonPx: number;
+  private y = 0;
+  private s = 0x9e3779b9 | 0;
+
+  constructor(
+    private readonly p: Palette,
+    w: number,
+    h: number,
+    private readonly glow: SkyGlow,
+    extra: number,
+  ) {
+    const c = makeCanvas(w + extra, h);
+    this.canvas = c;
+    this.ctx = context2d(c);
+    this.img = this.ctx.createImageData(c.width, c.height);
+    const W = c.width;
+    const H = c.height;
+    const rows = new Float32Array(H * 3);
+    const col: RGB = { r: 0, g: 0, b: 0 };
+    this.horizonPx = Math.max(1, p.horizon * H);
+    for (let y = 0; y < H; y++) {
+      skyAt(p, y / this.horizonPx, col);
+      rows[y * 3] = col.r;
+      rows[y * 3 + 1] = col.g;
+      rows[y * 3 + 2] = col.b;
+    }
+    this.rows = rows;
+    // Low-frequency mottle (a painted wash, not flat vector): coarse grid, bilinear.
+    const n = new Noise(0x5c7);
+    const gw = Math.ceil(W / SKY_GRID) + 2;
+    const gh = Math.ceil(H / SKY_GRID) + 2;
+    const grid = new Float32Array(gw * gh);
+    for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) grid[j * gw + i] = n.fbm2(i * 0.35, j * 0.5, 3);
+    this.grid = grid;
+    this.gw = gw;
+    this.lut = glowLut(SKY_LN);
+    this.gc = parseHex(p.sun.glow, { r: 0, g: 0, b: 0 });
+  }
+
+  /** Compute rows for up to `budgetMs`; true once the canvas holds the finished sky. */
+  step(budgetMs: number): boolean {
+    if (this.done) return true;
+    const t0 = performance.now();
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const d = this.img.data;
+    const rows = this.rows;
+    const grid = this.grid;
+    const gw = this.gw;
+    const lut = this.lut;
+    const gc = this.gc;
+    const glow = this.glow;
+    const horizonPx = this.horizonPx;
+    const G = Math.max(1, glow.r);
+    const iG = 1 / G;
+    const iBx = 1 / (2.4 * G);
+    const iBy = 1 / (0.32 * G);
+    let s = this.s;
+    let y = this.y;
+    for (; y < H; y++) {
+      if ((y & 15) === 0 && y > this.y && performance.now() - t0 > budgetMs) break;
+      let r0 = rows[y * 3]!;
+      let g0 = rows[y * 3 + 1]!;
+      let b0 = rows[y * 3 + 2]!;
+      const dy = y - glow.y;
+      const inGlow = Math.abs(dy) < G;
+      const rowR = r0;
+      const rowG = g0;
+      const rowB = b0;
+      const gy = y / SKY_GRID;
+      const j = gy | 0;
+      const fy = gy - j;
+      // Mottle strongest mid-sky, gone at the horizon glow.
+      const mAmp = 5 * (1 - Math.min(1, y / horizonPx) ** 3);
+      for (let x = 0; x < W; x++) {
+        r0 = rowR;
+        g0 = rowG;
+        b0 = rowB;
+        if (inGlow) {
+          const dx = x - glow.x;
+          let a = 0;
+          const q = Math.sqrt(dx * dx + dy * dy) * iG;
+          if (q < 1) a += glow.a * lut[(q * SKY_LN) | 0]!;
+          const bx = dx * iBx;
+          const by = dy * iBy;
+          const qb = Math.sqrt(bx * bx + by * by);
+          if (qb < 1) a += glow.band * lut[(qb * SKY_LN) | 0]!;
+          r0 += gc.r * a;
+          g0 += gc.g * a;
+          b0 += gc.b * a;
+        }
+        const gx = x / SKY_GRID;
+        const i = gx | 0;
+        const fx = gx - i;
+        const k = j * gw + i;
+        const m0 = grid[k]! + (grid[k + 1]! - grid[k]!) * fx;
+        const m1 = grid[k + gw]! + (grid[k + gw + 1]! - grid[k + gw]!) * fx;
+        const m = (m0 + (m1 - m0) * fy) * mAmp;
+        // xorshift32 x2 -> triangular dither in (-1, 1)
+        s ^= s << 13;
+        s ^= s >>> 17;
+        s ^= s << 5;
+        const u1 = (s >>> 0) / 4294967296;
+        s ^= s << 13;
+        s ^= s >>> 17;
+        s ^= s << 5;
+        const u2 = (s >>> 0) / 4294967296;
+        const dz = u1 - u2;
+        const o = (y * W + x) * 4;
+        d[o] = r0 + m + dz * 1.2 + 0.5;
+        d[o + 1] = g0 + m * 0.8 + dz * 1.2 + 0.5;
+        d[o + 2] = b0 + m * 1.1 + dz * 1.2 + 0.5;
+        d[o + 3] = 255;
+      }
+    }
+    this.s = s;
+    this.y = y;
+    if (y < H) return false;
+    this.ctx.putImageData(this.img, 0, 0);
+    this.done = true;
+    return true;
+  }
+}
+
+const SKY_GRID = 48;
+const SKY_LN = 512;
 
 // ---------------------------------------------------------------- sun
 

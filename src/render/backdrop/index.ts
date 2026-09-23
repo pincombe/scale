@@ -13,12 +13,13 @@
 // setGrade (WP 2.2: a painter run at the end of backdrop.back, over the backdrop's art only).
 import type { Scene } from '../../app/scene';
 import type { Layer, View } from '../types';
-import type { BackdropApi, WyrmPose } from './api';
+import type { BackdropApi, HideDrawOpts, WyrmPose } from './api';
 import type { BackdropHost, BackdropStats, TierBackdrop } from './tier';
 import { createMeadow } from './meadow';
 import { createMountain } from './mountain';
 import { drawHide, hideScaleAt } from './hide';
 import { MOUNTAIN } from '../palette';
+import type { Vec2 } from '../../lib/vec';
 
 export { drawHide, hideScaleAt, hideBaseColor, hidePitch, hideRowY, hideRowAt, HIDE_S0, HIDE_K, HIDE_ASPECT } from './hide';
 
@@ -30,7 +31,11 @@ export interface Backdrop extends BackdropApi {
   onEyeOpen(fn: () => void): () => void;
   setTransition(on: boolean): void;
   wyrmPose(pose: WyrmPose | null): void;
-  drawHide(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, pxPerM: number): void;
+  prepare(tier: number | null): void;
+  markScale(mark: { x: number; y: number; picture: HTMLCanvasElement | null; lift?: number } | null): void;
+  drawKneeMist(ctx: CanvasRenderingContext2D, view: View): void;
+  sunPoint(out: Vec2): Vec2;
+  drawHide(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, pxPerM: number, opts?: HideDrawOpts): void;
   hideScaleAt(x: number, y: number, out: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number };
   /** Send a flock of birds across the sky now. */
   birds(): void;
@@ -71,6 +76,8 @@ export function createBackdrop(scene: Scene): Backdrop {
   const mountain = createMountain(host);
   const worlds: TierBackdrop[] = [meadow, mountain];
   let active = worldOf(scene.game.state.tier);
+  /** The world being baked ahead for the zoom (null: none). */
+  let preparing: 0 | 1 | null = null;
 
   /** The world for this view; a switch frees the old world's canvases. */
   const worldFor = (view: View): TierBackdrop => {
@@ -87,6 +94,11 @@ export function createBackdrop(scene: Scene): Backdrop {
     visible: true,
     update(view: View) {
       worldFor(view).update(view);
+      // The zoom's rally: the next world bakes a piece per frame while this one is on screen.
+      if (preparing !== null) {
+        if (preparing === active) preparing = null;
+        else if (worlds[preparing]!.prepare?.(view) ?? true) preparing = null;
+      }
     },
     draw(ctx: CanvasRenderingContext2D, view: View) {
       const t0 = performance.now();
@@ -126,8 +138,32 @@ export function createBackdrop(scene: Scene): Backdrop {
     wyrmPose(pose) {
       mountain.pose(pose);
     },
-    drawHide(ctx, x0, y0, x1, y1, pxPerM) {
-      drawHide(ctx, MOUNTAIN, x0, y0, x1, y1, pxPerM, MOUNTAIN.light.x, MOUNTAIN.light.y);
+    prepare(tier) {
+      if (tier === null) {
+        // Cancelled: a world baked ahead but never shown gives its memory back.
+        if (preparing !== null && preparing !== active) worlds[preparing]!.free();
+        preparing = null;
+        return;
+      }
+      const w = worldOf(tier);
+      preparing = w === active ? null : w;
+    },
+    markScale(mark) {
+      mountain.markScale(mark);
+    },
+    drawKneeMist(ctx, view) {
+      if (worldOf(view.state.tier) === 1) mountain.drawKneeMist(ctx, view);
+    },
+    sunPoint(out) {
+      const v = scene.renderer.view;
+      const w = worlds[worldOf(v.state.tier)]!;
+      if (w.sunPoint) return w.sunPoint(v, out);
+      out.x = v.width * 0.5;
+      out.y = v.height * 0.5;
+      return out;
+    },
+    drawHide(ctx, x0, y0, x1, y1, pxPerM, opts) {
+      drawHide(ctx, MOUNTAIN, x0, y0, x1, y1, pxPerM, MOUNTAIN.light.x, MOUNTAIN.light.y, opts);
     },
     hideScaleAt,
     birds: () => worlds[active]!.birds(),
@@ -147,6 +183,10 @@ export function createBackdrop(scene: Scene): Backdrop {
   dbg.watch('backdrop ms', () => `${stats.backMs.toFixed(2)} + ${stats.frontMs.toFixed(2)}`);
   dbg.watch('backdrop MB', () => `${api.memMB().toFixed(1)} (${active === 0 ? 'meadow' : 'mountain'})`);
   dbg.watch('bakes', () => `${stats.bakes}, max ${stats.bakeMsMax.toFixed(1)} ms ${stats.bakeWorst ?? ''}`);
+  dbg.watch('prepared', () => {
+    const p = mountain.prepStats;
+    return `${p.pieces} pieces ${p.ms.toFixed(0)} ms, worst ${p.worst.toFixed(1)} ${p.worstName}${preparing !== null ? ' (baking)' : ''}`;
+  });
   dbg.watch('eye', () => worlds[active]!.eyeState());
   dbg.toggle('zoom transition', () => transition, (v) => (transition = v));
   // The world wyrm, posed by hand (as the zoom will) or by a scripted reveal.

@@ -2,8 +2,6 @@
 //   Puffs    a small pool of dust clouds and embers in world meters: the rally's tremor, the pile's
 //            sparks, the colossus's landing (a ring of dust rolling out from the soles)
 //   Streaks  radial speed lines converging on the pull-back's focus, as long as the zoom is fast
-//   Trail    motion trails: the frame so far, echoed a little larger behind itself (the world was
-//            bigger a moment ago), only while the zoom is at speed
 // Fixed pools, baked sprites, cached strings: nothing allocates per frame.
 import type { Camera } from '../camera';
 import type { SpriteAtlas } from '../atlas';
@@ -200,55 +198,6 @@ export class Streaks {
   }
 }
 
-// ---------------------------------------------------------------- trail
-
-/**
- * Motion trails for the fast part of the pull-back: the frame so far (ctx.canvas, as drawn this
- * frame up to the zoom layer), copied into a half-resolution buffer and laid back over itself
- * scaled up about the focus, twice, faintly. Reads as the world streaming inward. ~2 full-screen
- * blits at half resolution.
- */
-export class Trail {
-  private buf: HTMLCanvasElement | null = null;
-  private g: CanvasRenderingContext2D | null = null;
-
-  draw(ctx: CanvasRenderingContext2D, fx: number, fy: number, dpr: number, stretch: number, amount: number): void {
-    if (amount <= 0.02 || stretch <= 0.002) return;
-    const src = ctx.canvas as HTMLCanvasElement;
-    const W = src.width;
-    const H = src.height;
-    const bw = Math.max(1, Math.ceil(W / 2));
-    const bh = Math.max(1, Math.ceil(H / 2));
-    if (!this.buf || this.buf.width !== bw || this.buf.height !== bh) {
-      this.release();
-      this.buf = makeCanvas(bw, bh);
-      this.g = context2d(this.buf);
-    }
-    const g = this.g!;
-    g.globalCompositeOperation = 'copy';
-    g.drawImage(src, 0, 0, bw, bh);
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const cx = fx * dpr;
-    const cy = fy * dpr;
-    for (let i = 1; i <= 2; i++) {
-      const s = 1 + stretch * i;
-      ctx.globalAlpha = amount * (i === 1 ? 0.3 : 0.16);
-      ctx.drawImage(this.buf, 0, 0, bw, bh, cx - cx * s, cy - cy * s, W * s, H * s);
-    }
-    ctx.restore();
-  }
-
-  release(): void {
-    if (this.buf) {
-      this.buf.width = 0;
-      this.buf.height = 0;
-    }
-    this.buf = null;
-    this.g = null;
-  }
-}
-
 /**
  * A soft column of light (64 x 256): a gaussian across, bright at the base fading upward. `color`
  * at `a0`. Stretch it over a rect; its sides are soft at any width.
@@ -274,19 +223,6 @@ export function bakeColumn(color: string, a0: number): HTMLCanvasElement {
   up.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = up;
   g.fillRect(0, 0, 64, 256);
-  return c;
-}
-
-/** A vertical gradient strip (2 x 256): `color` rising from `a0` at the bottom to 0 at the top. */
-export function bakeRise(color: string, a0: number): HTMLCanvasElement {
-  const c = makeCanvas(2, 256);
-  const g = context2d(c);
-  const gr = g.createLinearGradient(0, 256, 0, 0);
-  gr.addColorStop(0, rgbaHex(color, a0));
-  gr.addColorStop(0.35, rgbaHex(color, a0 * 0.75));
-  gr.addColorStop(1, rgbaHex(color, 0));
-  g.fillStyle = gr;
-  g.fillRect(0, 0, 2, 256);
   return c;
 }
 

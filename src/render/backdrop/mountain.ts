@@ -23,11 +23,13 @@ import { mixHex, rgba } from '../../lib/color';
 import { rect, vec2, type Vec2 } from '../../lib/vec';
 import { clamp01, hash2f } from '../../lib/math';
 import { SAFE_MARGIN } from '../world';
-import { bakeClouds, bakeGlow, bakeRays, bakeSky, type CloudBank, type CloudSpec } from './sky';
+import { bakeClouds, bakeGlow, bakeRays, SkyBaker, type CloudBank, type CloudSpec, type SkyGlow } from './sky';
 import { RidgeCache, type Light } from './ridges';
 import { CASTLE_X, FAR_COIL, SLOPES, SPINE, slopesHeight } from './mountainRidges';
 import { CloudSea } from './cloudSea';
 import { MountainGround } from './mountainGround';
+import { drawMarkedScale, hideScaleShape, scaleShape, type ScaleShape } from './hide';
+import { MOUNTAIN } from '../palette';
 import { Snow, Wisps } from './mountainAmbient';
 import { MountainForeground } from './mountainForeground';
 import { Flock } from './ambient';
@@ -75,6 +77,10 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
   pose(p: WyrmPose | null): void;
   avalanche(): void;
   poseNow(): WyrmPose;
+  markScale(mark: { x: number; y: number; picture: HTMLCanvasElement | null; lift?: number } | null): void;
+  drawKneeMist(ctx: CanvasRenderingContext2D, view: View): void;
+  /** Milliseconds of the prepare pieces baked so far (debug), and the worst one. */
+  readonly prepStats: { pieces: number; ms: number; worst: number; worstName: string };
 } {
   const scene = host.scene;
   const stats = host.stats;
@@ -103,6 +109,15 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
   let pendW = 0;
   let pendH = 0;
   let pendSince = 0;
+
+  // The meadow's scale (the zoom's easter egg): kept faintly warm for the rest of the tier.
+  const mark: ScaleShape = scaleShape();
+  let marked = false;
+  let markPic: HTMLCanvasElement | null = null;
+  let markLift = 0;
+  // Preparing (the zoom's rally, while the Meadow is still on screen): one piece per frame.
+  let prepView: View | null = null;
+  const prepStats = { pieces: 0, ms: 0, worst: 0, worstName: '' };
 
   const home = new Camera();
   const tmp: Vec2 = vec2();
@@ -144,28 +159,60 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
       }
       if (now - pendSince < RESIZE_SETTLE_MS) return s;
     }
+    const b = skyBakerFor(view);
+    b.step(Infinity);
+    return adoptSky(view, b);
+  };
+
+  // The sky gradient is the Mountain's biggest bake (~25 ms): the zoom's rally bakes it a slice per
+  // frame (prepare), then adopts it with the small sky art.
+  let skyBaker: SkyBaker | null = null;
+  let skyBakerPal: Palette | null = null;
+  let skyBakerW = 0;
+  let skyBakerH = 0;
+  const skyGlow: SkyGlow = { x: 0, y: 0, r: 1, a: 0.42, band: 0.62 };
+  const skyBakerFor = (view: View): SkyBaker => {
+    const p = view.palette;
+    const w = view.width;
+    const h = view.height;
+    if (skyBaker && skyBakerPal === p && skyBakerW === w && skyBakerH === h) return skyBaker;
+    skyBakerPal = p;
+    skyBakerW = w;
+    skyBakerH = h;
+    // The afterglow: a soft round glow and a wide band along the horizon.
+    skyGlow.x = w * 0.5 + GLOW_DX * h;
+    skyGlow.y = p.sun.y * h;
+    skyGlow.r = p.sun.glowRadius * h;
+    skyBaker = new SkyBaker(p, w, h, skyGlow, Math.ceil(w * 0.4));
+    return skyBaker;
+  };
+  /** The finished gradient, with the rest of the sky art (the glow sprite, cirrus, the dim stars). */
+  const adoptSky = (view: View, b: SkyBaker): SkyArt => {
+    const p = view.palette;
+    const w = view.width;
+    const h = view.height;
+    const s = sky;
     if (s) {
       s.sky.width = s.sky.height = 0;
       for (const c of s.clouds) c.canvas.width = c.canvas.height = 0;
     }
     const extra = Math.ceil(w * 0.4);
-    const glowX0 = w * 0.5 + GLOW_DX * h;
-    const G = p.sun.glowRadius * h;
     const art: SkyArt = {
       palette: p,
       w,
       h,
       dpr: view.dpr,
-      // The afterglow: a soft round glow and a wide band along the horizon.
-      sky: bakeSky(p, w, h, { x: glowX0, y: p.sun.y * h, r: G, a: 0.42, band: 0.62 }, extra),
+      sky: b.canvas,
       extra,
-      glowX0,
+      glowX0: w * 0.5 + GLOW_DX * h,
       glow: bakeGlow(p.sun.glow, 256),
       clouds: bakeClouds(p, w, h, Math.min(view.dpr, 1.25), CIRRUS),
       birdColor: mixHex(p.silhouette, p.depthTint ?? p.haze, 0.35),
     };
     bakeStars(art.sky, w, h, extra);
     sky = art;
+    skyBaker = null;
+    skyBakerPal = null;
     return art;
   };
 
@@ -555,10 +602,100 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
     drawSea(ctx, view, seaLow, SEA_LOW_P, t);
     if (!seaLow.ready(view.palette)) drawSeaFloor(ctx, view, SEA_LOW_P, 0.3, view.palette.haze);
 
-    // The hide we stand on, and the wisps drifting behind the army.
+    // The hide we stand on (with the meadow's scale in it), and the wisps drifting behind the army.
     cam.visibleRect(vis, SAFE_MARGIN);
     ground.draw(ctx, view, vis, host.frozen(), sun.x, art.glow);
+    if (marked) drawMark(ctx, view, t);
     wisps.draw(ctx, view, 0, t);
+  };
+
+  /** The meadow's scale: the old tier faint inside it, a slow warm breath around it. */
+  const drawMark = (ctx: CanvasRenderingContext2D, view: View, t: number): void => {
+    const cam = view.camera;
+    const pal = view.palette;
+    if (mark.bottom < vis.y || mark.top - markLift * mark.pitch > vis.y + vis.h || mark.cx + mark.sx < vis.x || mark.cx - mark.sx > vis.x + vis.w) return;
+    ctx.save();
+    cam.apply(ctx);
+    drawMarkedScale(ctx, pal, mark, markPic, cam.zoomEff, pal.light.x, pal.light.y, 1, markLift);
+    ctx.restore();
+    if (!amberGlow) return;
+    cam.worldToScreen(mark.cx, mark.top + (mark.bottom - mark.top) * 0.35, tmp);
+    const r = mark.sx * 2.6 * cam.zoomEff;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.07 + 0.035 * Math.sin(t * 0.9);
+    ctx.drawImage(amberGlow, tmp.x - r, tmp.y - r * 0.55, r * 2, r * 1.1);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  };
+
+  /**
+   * Bake the next piece of the Mountain's art for its first frame (the zoom's rally, the Meadow on
+   * screen): the small art one piece a frame, then the silhouettes and the hide for the home framing
+   * (bakeStep, frozen: the zoom holds the transition on). True when all of it is ready.
+   */
+  const prepare = (view: View): boolean => {
+    const pal = MOUNTAIN;
+    let pv = prepView;
+    if (!pv) pv = prepView = { ...view, palette: pal };
+    pv.state = view.state;
+    pv.alpha = view.alpha;
+    pv.dt = view.dt;
+    pv.time = view.time;
+    pv.realDt = view.realDt;
+    pv.realTime = view.realTime;
+    pv.camera = view.camera;
+    pv.palette = pal;
+    pv.width = view.width;
+    pv.height = view.height;
+    pv.dpr = view.dpr;
+    pv.frame = view.frame;
+    const t0 = performance.now();
+    let name = '';
+    if (!rays) {
+      ensureSprites(pv);
+      name = 'sprites';
+    } else if (!sky || sky.palette !== pal || sky.w !== pv.width || sky.h !== pv.height || sky.dpr !== pv.dpr) {
+      // A slice of the gradient per frame, then the rest of the sky art.
+      const b = skyBakerFor(pv);
+      if (b.done) {
+        adoptSky(pv, b);
+        name = 'sky art';
+      } else {
+        b.step(4);
+        name = 'sky';
+      }
+    } else if (!seaHigh.ready(pal)) {
+      seaHigh.ensure(pal, pv.height);
+      name = 'seaHigh';
+    } else if (!seaFar.ready(pal)) {
+      seaFar.ensure(pal, pv.height);
+      name = 'seaFar';
+    } else if (!seaLow.ready(pal)) {
+      seaLow.ensure(pal, pv.height);
+      name = 'seaLow';
+    } else if (!wisps.ready(pal)) {
+      wisps.ensure(pal);
+      name = 'wisps';
+    } else if (!fg.ready(pal)) {
+      fg.ensure(pal);
+      name = 'foreground';
+    } else if (!host.frozen()) {
+      // The silhouettes bake for the home framing only while the zoom holds the transition.
+      return true;
+    } else {
+      const before = stats.bakes;
+      bakeStep(pv);
+      if (stats.bakes === before) return true;
+      name = stats.bakeWorst ?? 'bake';
+    }
+    const ms = performance.now() - t0;
+    prepStats.pieces++;
+    prepStats.ms += ms;
+    if (ms > prepStats.worst) {
+      prepStats.worst = ms;
+      prepStats.worstName = name;
+    }
+    return false;
   };
 
   const drawFront = (ctx: CanvasRenderingContext2D, view: View): void => {
@@ -586,6 +723,23 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
     update,
     drawBack,
     drawFront,
+    prepare,
+    prepStats,
+    sunPoint: (view: View, out: Vec2) => glowPos(view, out),
+    markScale(m) {
+      if (!m) {
+        marked = false;
+        markPic = null;
+        return;
+      }
+      hideScaleShape(m.x, m.y, mark);
+      markPic = m.picture;
+      markLift = m.lift ?? 0;
+      marked = true;
+    },
+    drawKneeMist(ctx, view) {
+      wisps.draw(ctx, view, 1, view.time);
+    },
     openEye() {
       if (!isDriven) forceWake = true;
     },
@@ -619,6 +773,9 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
       return b;
     },
     free() {
+      if (skyBaker) skyBaker.canvas.width = skyBaker.canvas.height = 0;
+      skyBaker = null;
+      skyBakerPal = null;
       for (const r of ridges) r.free();
       ground.free();
       wyrm.free();
@@ -637,7 +794,9 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
         for (const c of sky.clouds) zero(c.canvas);
         sky = null;
       }
-      // A fresh visit starts the wyrm asleep.
+      // The meadow's scale belongs to this visit; a fresh visit starts the wyrm asleep.
+      marked = false;
+      markPic = null;
       resetWyrmIdle(idle);
       cur.rise = cur.eye = cur.jaw = 0;
       eyeArmed = roarArmed = shedArmed = true;

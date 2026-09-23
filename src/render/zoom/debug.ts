@@ -68,10 +68,10 @@ export function installZoomDebug(scene: Scene, cin: Cinematic, markFake: () => v
   dbg.button('Zoom now', () => zoomNow(true), 'z');
   dbg.button('no fall', () => zoomNow(false));
   dbg.button('abort', () => cin.abort());
-  dbg.slider('zoom t', 0, 12, 0.05, () => (cin.running ? cin.t : cin.hold >= 0 ? cin.hold : 0), (v) => cin.scrub(v));
+  dbg.slider('zoom t', 0, 14, 0.05, () => (cin.running ? cin.t : cin.hold >= 0 ? cin.hold : 0), (v) => cin.scrub(v));
   dbg.toggle('freeze', () => cin.hold >= 0, (v) => cin.scrub(v ? Math.max(0, cin.t) : -1));
   dbg.button('perf report', () => console.log(cin.perf.report()));
-  dbg.watch('zoom', () => (cin.running ? `${cin.stage} t=${cin.t.toFixed(2)} z=${cin.geo.zoom.toFixed(0)} fit=${cin.geo.fit.toFixed(2)}` : 'idle'));
+  dbg.watch('zoom', () => (cin.running ? `${cin.stage} t=${cin.t.toFixed(2)} z=${cin.path.zoom.toFixed(0)} scale ${cin.plate.chosen ? `${(cin.morph.w * cin.path.zoom).toFixed(0)} px` : '-'}` : 'idle'));
   dbg.watch('zoom beats', () => ZOOM_BEATS.map((b) => `${b[0]}${cin.tl.beats[b].toFixed(1)}`).join(' '));
   dbg.watch('zoom mem', () => `${cin.memMB().toFixed(1)} MB`);
 

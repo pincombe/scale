@@ -1,6 +1,7 @@
 // Contract: what the rest of the game may ask of the backdrop (scene.backdrop). Owned by
 // render/backdrop. Add members freely; never change or remove existing ones.
 import type { View } from '../types';
+import type { Vec2 } from '../../lib/vec';
 
 /** The world wyrm's head on the Mountain horizon, as the zoom's reveal poses it (all 0..1). */
 export interface WyrmPose {
@@ -37,7 +38,7 @@ export interface BackdropApi {
    * layer at any magnification, so the zoom's close-up hands off to it without a seam.
    * Allocation-free per call.
    */
-  drawHide?(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, pxPerM: number): void;
+  drawHide?(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, pxPerM: number, opts?: HideDrawOpts): void;
   /**
    * The hide's scale around world point (x, y >= 0), as drawn: writes its exposed face into `out`
    * (x, w = its span; y = its top edge; h = its row's pitch, the height left uncovered by the next
@@ -45,4 +46,35 @@ export interface BackdropApi {
    * pull-back: put the snapshot in one.
    */
   hideScaleAt?(x: number, y: number, out: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number };
+  /**
+   * WP 2.1B: start baking `tier`'s art now, a piece per frame, so the zoom's switch finds it ready
+   * (the zoom calls it at zoomBegin with the tier it is flying to). null cancels, freeing whatever
+   * was baked for a tier that is not on screen.
+   */
+  prepare?(tier: number | null): void;
+  /**
+   * WP 2.1B: the meadow's scale. The hide scale around world point (x, y) keeps the old tier in
+   * it, faintly warm (`picture`: a small snapshot the backdrop keeps; null = just the warmth), for
+   * the rest of the tier, sitting `lift` row pitches proud of its row (as the zoom left it). null
+   * clears it. The Mountain only.
+   */
+  markScale?(mark: { x: number; y: number; picture: HTMLCanvasElement | null; lift?: number } | null): void;
+  /**
+   * WP 2.1B: the mist the active tier draws in front of the army (the Mountain's knee-deep wisps),
+   * in world meters through view.camera, into ctx's current transform (device px: scale(dpr), or a
+   * buffer's offset). The zoom lays it over the colossus as it becomes the hero. No-op elsewhere.
+   */
+  drawKneeMist?(ctx: CanvasRenderingContext2D, view: View): void;
+  /** WP 2.1B: the active tier's sun (the Mountain: its afterglow) on the main view, CSS px. */
+  sunPoint?(out: Vec2): Vec2;
+}
+
+/** drawHide options (WP 2.1B). */
+export interface HideDrawOpts {
+  /** Opacity of everything drawn (default 1). */
+  alpha?: number;
+  /** Skip rows before this one (default 0): redraw the rows in front of a scale over it. */
+  rowMin?: number;
+  /** Paint the base tone under the rows (default true); false when drawing over existing hide. */
+  base?: boolean;
 }

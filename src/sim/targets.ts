@@ -148,7 +148,7 @@ export const TARGETS: Target[] = [
   { profile: 'engaged', metric: 'volleyUnlocked', stat: 'median', lo: 270, hi: 300, note: 'the Dragonbane Volley at ~4:45' },
   { profile: 'engaged', metric: 'brunhildJoins', stat: 'median', lo: 285, hi: 315, note: 'Dame Brunhild joins at ~5:00' },
   { profile: 'engaged', metric: 'mountainNoveltyGap', stat: 'worst', hi: 45, note: 'the Mountain: something new every ≤ 45 s' },
-  { profile: 'engaged', metric: 'secondBoss', stat: 'median', lo: 405, hi: 435, note: 'Grimmaw is summoned at ~7:00' },
+  { profile: 'engaged', metric: 'secondBoss', stat: 'median', lo: 405, hi: 445, note: 'Grimmaw is summoned at ~7:00–7:25 (incl. the full ~10.5 s zoom cinematic)' },
   { profile: 'engaged', metric: 'secondBossFight', stat: 'median', lo: 12, hi: 22, note: 'the Grimmaw fight lasts 12–22 s' },
   { profile: 'engaged', metric: 'secondBossEscapes', stat: 'worst', hi: 0, note: 'Grimmaw never escapes' },
   { profile: 'engaged', metric: 'secondBossKill', stat: 'median', lo: 435, hi: 465, note: 'Grimmaw falls at 7:15–7:45 (PLAN: zoom #2 ~7:30)' },
