@@ -6,7 +6,7 @@
 //
 // Not for per-frame use: it builds gradients and clip paths. Bake it (banners, the hero's shield)
 // or redraw on change (the UI panel).
-import type { Coat, CoatCharge, CoatRegion, Line, Motif, Tincture } from './coat';
+import type { Coat, CoatCharge, CoatRegion, Ground, Line, Motif, Tincture } from './coat';
 import { INK, PAINT } from './tinctures';
 import { T_DETAIL, T_GOLD, T_GULES, T_HOLE, T_LINE, T_SHADE, chargeArt } from './charges';
 
@@ -327,7 +327,7 @@ function drawCharge(st: St, c: CoatCharge, x: number, y: number, w: number, h: n
   const dpu = st.ppu * k; // device px per charge unit
   const chPx = bh * dpu;
   // Outline weight (device px, the visible half): bold like engraved heraldry, never clogging.
-  const olPx = lod === 0 ? 0.5 : lod === 1 ? Math.min(1.5, 0.7 + chPx * 0.01) : Math.min(5, Math.max(1.4, chPx * 0.0095));
+  const olPx = chPx < 10 ? 0 : lod === 0 ? 0.4 : lod === 1 ? Math.min(1.5, 0.7 + chPx * 0.01) : Math.min(5, Math.max(1.4, chPx * 0.0095));
   const ol = (olPx * 2) / dpu;
   const flat = lod === 0;
   const main: Fill = flat ? PAINT[c.tincture].base : sheen(ctx, c.tincture, art.x0, art.y0, art.x1, art.y1);
@@ -383,7 +383,8 @@ function diaper(st: St, t: Tincture, x0: number, y0: number, x1: number, y1: num
   const metal = t === 'or' || t === 'argent';
   const tone = metal ? p.dark : p.light;
   ctx.save();
-  ctx.globalAlpha = metal ? 0.3 : 0.26;
+  const a0 = ctx.globalAlpha;
+  ctx.globalAlpha = a0 * (metal ? 0.3 : 0.26);
   ctx.strokeStyle = tone;
   ctx.lineWidth = Math.max(0.6 / st.ppu, 0.35);
   const s = 7;
@@ -397,7 +398,7 @@ function diaper(st: St, t: Tincture, x0: number, y0: number, x1: number, y1: num
   }
   ctx.stroke(path);
   // A tiny quatrefoil dot in every other lozenge.
-  ctx.globalAlpha = metal ? 0.38 : 0.34;
+  ctx.globalAlpha = a0 * (metal ? 0.38 : 0.34);
   ctx.fillStyle = tone;
   const dots = new Path2D();
   const r = 0.75;
@@ -482,26 +483,102 @@ function motif(p: Path2D, m: Motif, x: number, y: number, s: number): void {
   }
 }
 
-/** The field strewn (semé) with a motif, in rows offset like brickwork. Skipped when tiny. */
+/**
+ * The field strewn (semé) with a motif, in rows offset like brickwork. Fewer, larger motifs as the
+ * detail drops, so a distant banner still shows them as a scatter of bright points.
+ */
 function semy(st: St, m: Motif, t: Tincture, x0: number, y0: number, x1: number, y1: number): void {
-  if (st.lod === 0) return;
   const ctx = st.ctx;
-  const sp = 12.5;
-  const s = 5.2;
+  const lod = st.lod;
+  const sp = lod === 0 ? 20 : lod === 1 ? 15 : 12.5;
+  const s = lod === 0 ? 9.5 : lod === 1 ? 7 : 5.2;
   const p = new Path2D();
   let row = 0;
   for (let y = y0 + sp * 0.4; y < y1 + sp; y += sp * 0.87, row++) {
     for (let x = (row % 2 ? sp / 2 : 0) + Math.floor((x0 - sp) / sp) * sp; x < x1 + sp; x += sp) motif(p, m, x, y, s);
   }
-  if (st.lod >= 2) {
+  if (lod >= 2) {
+    const a0 = ctx.globalAlpha;
     ctx.lineWidth = 1.4 / st.ppu;
     ctx.strokeStyle = INK;
-    ctx.globalAlpha = 0.55;
+    ctx.globalAlpha = a0 * 0.55;
     ctx.stroke(p);
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = a0;
   }
   ctx.fillStyle = fieldFill(st, t);
   ctx.fill(p, 'nonzero');
+}
+
+/** Append the field2 parts of a division centred on (cx, cy) to p, and its partition lines to lines. */
+function division(p: Path2D, lines: Path2D, d: number, cx: number, cy: number): void {
+  const R = 400;
+  if (d === 1) {
+    p.rect(cx, cy - R, R, R * 2);
+    lines.moveTo(cx, cy - R);
+    lines.lineTo(cx, cy + R);
+  } else if (d === 2) {
+    p.rect(cx, cy - R, R, R);
+    p.rect(cx - R, cy, R, R);
+    lines.moveTo(cx, cy - R);
+    lines.lineTo(cx, cy + R);
+    lines.moveTo(cx - R, cy);
+    lines.lineTo(cx + R, cy);
+  } else if (d === 3) {
+    // Per saltire: the upper and lower quarters of an X.
+    p.moveTo(cx, cy);
+    p.lineTo(cx - R, cy - R);
+    p.lineTo(cx + R, cy - R);
+    p.closePath();
+    p.moveTo(cx, cy);
+    p.lineTo(cx + R, cy + R);
+    p.lineTo(cx - R, cy + R);
+    p.closePath();
+    lines.moveTo(cx - R, cy - R);
+    lines.lineTo(cx + R, cy + R);
+    lines.moveTo(cx + R, cy - R);
+    lines.lineTo(cx - R, cy + R);
+  } else if (d >= 4) {
+    // Gyronny of d (a bordure: compony of d), the first boundary straight up.
+    for (let i = 0; i < d; i++) {
+      const a0 = -Math.PI / 2 + (i * Math.PI * 2) / d;
+      const a1 = a0 + (Math.PI * 2) / d;
+      lines.moveTo(cx, cy);
+      lines.lineTo(cx + Math.cos(a0) * R, cy + Math.sin(a0) * R);
+      if (i % 2 === 0) continue;
+      p.moveTo(cx, cy);
+      p.lineTo(cx + Math.cos(a0) * R, cy + Math.sin(a0) * R);
+      p.lineTo(cx + Math.cos(a1) * R, cy + Math.sin(a1) * R);
+      p.closePath();
+    }
+  }
+}
+
+/**
+ * Paint a ground inside `clip`: its field, its division into the second tincture around (cx, cy),
+ * its damask and its semé, and the partition lines (box x0..y1 bounds the patterns).
+ */
+function paintGround(st: St, g: Ground, clip: Path2D, rule: CanvasFillRule, cx: number, cy: number, x0: number, y0: number, x1: number, y1: number, sep: number): void {
+  const ctx = st.ctx;
+  ctx.save();
+  ctx.clip(clip, rule);
+  ctx.fillStyle = fieldFill(st, g.field);
+  ctx.fillRect(x0 - 2, y0 - 2, x1 - x0 + 4, y1 - y0 + 4);
+  let lines: Path2D | null = null;
+  if (g.division > 0) {
+    const p = new Path2D();
+    lines = new Path2D();
+    division(p, lines, g.division, cx, cy);
+    ctx.fillStyle = fieldFill(st, g.field2);
+    ctx.fill(p);
+  }
+  if (g.diaper) diaper(st, g.field, x0, y0, x1, y1);
+  if (lines && sep > 0) {
+    ctx.lineWidth = sep * 0.8;
+    ctx.strokeStyle = INK;
+    ctx.stroke(lines);
+  }
+  if (g.semy) semy(st, g.semy, g.semyTincture, x0, y0, x1, y1);
+  ctx.restore();
 }
 
 // ---- the coat --------------------------------------------------------------------------------
@@ -552,26 +629,7 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
   const iw = ix1 - ix0;
   const ih = iy1 - iy0;
 
-  ctx.save();
-  ctx.clip(outerPath);
-  // Bordure: the whole shape in its tincture; the field is painted inside.
-  if (bord) {
-    ctx.fillStyle = fieldFill(st, bord.field);
-    ctx.fill(outerPath);
-    if (bord.diaper) {
-      ctx.save();
-      diaper(st, bord.field, -W / 2, -50, W / 2, 50);
-      ctx.restore();
-    }
-  }
-  ctx.save();
-  ctx.clip(innerPath);
-  ctx.fillStyle = fieldFill(st, coat.field);
-  ctx.fillRect(-W / 2 - 1, -51, W + 2, 102);
-  if (coat.diaper) diaper(st, coat.field, ix0, iy0, ix1, iy1);
-  if (coat.semy) semy(st, coat.semy, coat.semyTincture, ix0, iy0, ix1, iy1);
-
-  // Chief, cantons and base.
+  // Layout: chief and base heights, the principal area between them, the principal's centre.
   const chief = coat.chief;
   const base = coat.base;
   const chiefH = chief ? ih * (lod === 0 ? 0.24 : 0.26) : 0;
@@ -580,6 +638,35 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
   const yb = iy1 - baseH;
   const chiefAmp = chief ? lineAmp(chief.line, lod) : 0;
   const baseAmp = base ? lineAmp(base.line, lod) : 0;
+  const cw = iw / 3;
+  const cantonBottom = yc + chiefAmp / 2 + (chiefAmp > 0 ? 0.6 : 0);
+  const top = chief ? cantonBottom + chiefAmp / 2 : iy0;
+  const bot = base ? yb - baseAmp / 2 : iy1;
+  const areaH = bot - top;
+  let pcx = 0;
+  let availW = iw;
+  if (shape === 'banner') {
+    const f = opts.focus ?? 0.5;
+    pcx = (f - 0.5) * W * (mirror ? -1 : 1);
+    pcx = Math.max(ix0 + iw * 0.3, Math.min(ix1 - iw * 0.3, pcx));
+    availW = 2 * Math.min(pcx - ix0, ix1 - pcx);
+  }
+  const pcy = top + areaH * (shape === 'heater' ? (base ? 0.5 : 0.46) : shape === 'kite' ? (base ? 0.5 : 0.42) : 0.5);
+
+  ctx.save();
+  ctx.clip(outerPath);
+  // Bordure: plain, or compony (segments alternating its two tinctures).
+  if (bord) {
+    const band = new Path2D();
+    toPath(outer, band);
+    toPath(inner, band);
+    paintGround(st, bord.ground, band, 'evenodd', 0, shape === 'banner' ? 0 : -8, -W / 2, -50, W / 2, 50, sep);
+  }
+  ctx.save();
+  ctx.clip(innerPath);
+  paintGround(st, coat.main, innerPath, 'nonzero', pcx, pcy, ix0, iy0, ix1, iy1, sep);
+
+  // Chief, cantons and base, each on its own ground.
   const seps = new Path2D();
   if (base) {
     const p = new Path2D();
@@ -587,11 +674,11 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
     p.lineTo(ix1 + 2, 52);
     p.lineTo(ix0 - 2, 52);
     p.closePath();
-    ctx.fillStyle = fieldFill(st, base.field);
-    ctx.fill(p);
-    if (base.diaper) regionDiaper(st, p, base.field, ix0, yb - baseAmp, ix1, iy1);
+    paintGround(st, base.ground, p, 'nonzero', shape === 'banner' ? ix0 + iw / 2 : 0, yb + (iy1 - yb) * 0.45, ix0, yb - baseAmp, ix1, iy1, sep);
     edge(seps, ix0 - 2, ix1 + 2, yb, base.line, -1, lod, true);
   }
+  const cx0 = coat.canton ? ix0 + cw : ix0;
+  const cx1 = coat.canton2 ? ix1 - cw : ix1;
   if (chief) {
     const p = new Path2D();
     p.moveTo(ix0 - 2, -52);
@@ -599,13 +686,9 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
     p.lineTo(ix1 + 2, yc);
     edge(p, ix1 + 2, ix0 - 2, yc, chief.line, 1, lod, false);
     p.closePath();
-    ctx.fillStyle = fieldFill(st, chief.field);
-    ctx.fill(p);
-    if (chief.diaper) regionDiaper(st, p, chief.field, ix0, iy0, ix1, yc + chiefAmp);
+    paintGround(st, chief.ground, p, 'nonzero', (cx0 + cx1) / 2, (iy0 + yc) / 2, ix0, iy0, ix1, yc + chiefAmp, sep);
     edge(seps, ix0 - 2, ix1 + 2, yc, chief.line, 1, lod, true);
   }
-  const cw = iw / 3;
-  const cantonBottom = yc + chiefAmp / 2 + (chiefAmp > 0 ? 0.6 : 0);
   const cantons: [CoatRegion | null, number][] = [
     [coat.canton, ix0],
     [coat.canton2, ix1 - cw],
@@ -614,9 +697,7 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
     if (!r) continue;
     const p = new Path2D();
     p.rect(x - (x === ix0 ? 2 : 0), -52, cw + 2, cantonBottom + 52);
-    ctx.fillStyle = fieldFill(st, r.field);
-    ctx.fill(p);
-    if (r.diaper) regionDiaper(st, p, r.field, x, iy0, x + cw, cantonBottom);
+    paintGround(st, r.ground, p, 'nonzero', x + cw / 2, (iy0 + cantonBottom) / 2, x, iy0, x + cw, cantonBottom, sep);
     const inX = x === ix0 ? x + cw : x;
     seps.moveTo(inX, -52);
     seps.lineTo(inX, cantonBottom);
@@ -629,33 +710,19 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
     ctx.stroke(seps);
   }
 
-  // The principal area between the chief and the base.
-  const top = chief ? cantonBottom + chiefAmp / 2 : iy0;
-  const bot = base ? yb - baseAmp / 2 : iy1;
-  let pcx = 0;
-  let availW = iw;
-  if (shape === 'banner') {
-    const f = opts.focus ?? 0.5;
-    pcx = (f - 0.5) * W * (mirror ? -1 : 1);
-    pcx = Math.max(ix0 + iw * 0.3, Math.min(ix1 - iw * 0.3, pcx));
-    availW = 2 * Math.min(pcx - ix0, ix1 - pcx);
-  }
-  const areaH = bot - top;
-  const fitPoly = inner;
+  // The principal.
   if (shape === 'heater') {
     const pw = Math.min(iw * 0.84, availW);
     const ph = areaH * (base ? 0.9 : 0.84);
-    drawCharge(st, coat.principal, pcx, top + areaH * (base ? 0.5 : 0.46), pw, ph, fitPoly);
+    drawCharge(st, coat.principal, pcx, pcy, pw, ph, inner);
   } else if (shape === 'kite') {
-    drawCharge(st, coat.principal, pcx, top + areaH * (base ? 0.5 : 0.42), iw * 0.86, areaH * (base ? 0.88 : 0.7), fitPoly);
+    drawCharge(st, coat.principal, pcx, pcy, iw * 0.86, areaH * (base ? 0.88 : 0.7), inner);
   } else {
-    drawCharge(st, coat.principal, pcx, top + areaH * 0.5, availW * 0.86, areaH * 0.86);
+    drawCharge(st, coat.principal, pcx, pcy, availW * 0.86, areaH * 0.86);
   }
 
   // Charges in the chief, the cantons and the base.
   if (chief) {
-    const cx0 = coat.canton ? ix0 + cw : ix0;
-    const cx1 = coat.canton2 ? ix1 - cw : ix1;
     const n = chief.count;
     const hh = (yc - iy0) * 0.78;
     const slot = (cx1 - cx0) / n;
@@ -678,29 +745,31 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
   }
   ctx.restore(); // inner clip
 
-  // Bordure charges and its inner edge.
+  // Bordure charges (only where they are big enough to read) and its inner edge.
   if (bord) {
     if (sep > 0) {
       ctx.lineWidth = sep;
       ctx.strokeStyle = INK;
       ctx.stroke(innerPath);
     }
-    const mid = outline(shape, W, b / 2, openFly);
-    let pts: number[];
-    if (openFly) {
-      const x0 = -W / 2 + b / 2;
-      const line = [W / 2, -50 + b / 2, x0, -50 + b / 2, x0, 50 - b / 2, W / 2, 50 - b / 2];
-      pts = along(line, false, 8, 0.5);
-    } else {
-      // Start at the bottom middle so the arrangement is symmetric.
-      const m = mid.length / 2;
-      let lo = 0;
-      for (let i = 1; i < m; i++) if (mid[i * 2 + 1]! > mid[lo * 2 + 1]! + 1e-6 || (Math.abs(mid[i * 2 + 1]! - mid[lo * 2 + 1]!) < 1e-6 && Math.abs(mid[i * 2]!) < Math.abs(mid[lo * 2]!))) lo = i;
-      const rot = mid.slice(lo * 2).concat(mid.slice(0, lo * 2));
-      pts = along(rot, true, 8, shape === 'banner' ? 0.5 : 0);
-    }
     const s = b * 0.78;
-    for (let i = 0; i < pts.length; i += 2) drawCharge(st, bord.charge, pts[i]!, pts[i + 1]!, s, s);
+    if (s * st.ppu >= 8) {
+      const mid = outline(shape, W, b / 2, openFly);
+      let pts: number[];
+      if (openFly) {
+        const x0 = -W / 2 + b / 2;
+        const line = [W / 2, -50 + b / 2, x0, -50 + b / 2, x0, 50 - b / 2, W / 2, 50 - b / 2];
+        pts = along(line, false, 8, 0.5);
+      } else {
+        // Start at the bottom middle so the arrangement is symmetric.
+        const m = mid.length / 2;
+        let lo = 0;
+        for (let i = 1; i < m; i++) if (mid[i * 2 + 1]! > mid[lo * 2 + 1]! + 1e-6 || (Math.abs(mid[i * 2 + 1]! - mid[lo * 2 + 1]!) < 1e-6 && Math.abs(mid[i * 2]!) < Math.abs(mid[lo * 2]!))) lo = i;
+        const rot = mid.slice(lo * 2).concat(mid.slice(0, lo * 2));
+        pts = along(rot, true, 8, shape === 'banner' ? 0.5 : 0);
+      }
+      for (let i = 0; i < pts.length; i += 2) drawCharge(st, bord.charge, pts[i]!, pts[i + 1]!, s, s);
+    }
   }
 
   if (opts.finish !== false) finish(st, shape, outerPath);
@@ -715,10 +784,11 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
     if (lod >= 1) {
       const gilt = toPath(outline(shape, W, rim / st.ppu * 0.9, false));
       ctx.lineWidth = Math.max(0.6, rim * 0.35) / st.ppu;
-      ctx.globalAlpha = 0.75;
+      const a0 = ctx.globalAlpha;
+      ctx.globalAlpha = a0 * 0.75;
       ctx.strokeStyle = sheen(ctx, 'or', -W / 2, -50, W / 2, 50);
       ctx.stroke(gilt);
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = a0;
     }
   }
   if (shape === 'heater' && coat.crest > 0 && opts.crest !== false) {
@@ -728,14 +798,6 @@ export function drawCoat(ctx: CanvasRenderingContext2D, coat: Coat, cx: number, 
     drawCharge(st, c, 0, -50 - h / 2 + 4, W * 0.66, h);
   }
   ctx.restore();
-}
-
-function regionDiaper(st: St, clip: Path2D, t: Tincture, x0: number, y0: number, x1: number, y1: number): void {
-  if (st.lod < 2) return;
-  st.ctx.save();
-  st.ctx.clip(clip);
-  diaper(st, t, x0, y0, x1, y1);
-  st.ctx.restore();
 }
 
 /** Painted finish: a gentle sheen, a soft highlight, and at full detail a faint texture. */

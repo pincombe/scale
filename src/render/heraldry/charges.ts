@@ -223,7 +223,8 @@ function lion(art: Art, rank: number): void {
   const tongue = art.group(T_DETAIL);
   art.b(tongue, [-18.5, -28.7, 1.8, -23.5, -28.2, 1.7, -27.5, -29, 1.4, -29.6, -31, 1, -29.4, -33.8, 0], Math.max(1, art.bold * 0.9));
   art.curve([-17.5, -29.4, -21.5, -29.9, -25, -30.8], 0.9);
-  if (rank >= 1) circlet(art, art.group(T_GOLD), -10.5, -48, 12.5, -0.12);
+  // Crowned in the detail tincture (bold, so it reads on a distant banner).
+  if (rank >= 1) circlet(art, art.group(T_DETAIL), -10.5, -48.5, art.lod === 0 ? 17 : 13.5, -0.12);
 
   // Engraving: eye and brow, nostril, teeth line, shoulder, ribs, haunch, mane partings.
   art.curve([-20.5, -38.2, -17.5, -39.8, -14.5, -38.6], 1.5, 1);
@@ -321,7 +322,7 @@ function wyvern(art: Art, rank: number): void {
     const heart = art.group(T_GOLD, false);
     flame(art, heart, -36.5, -32.5, 0.7);
   }
-  if (rank >= 1) circlet(art, art.group(T_GOLD), -17.5, -43.2, 10.5, -0.12);
+  if (rank >= 1) circlet(art, art.group(T_DETAIL), -17.5, -43.5, art.lod === 0 ? 15 : 11, -0.12);
   art.curve([-25, -38, -22.5, -39, -20.5, -37.8], 1.4, 1);
   art.curve([-7, -6, -5, 0, -1, 5]);
   for (let i = 0; i < 5; i++) art.curve([-11 + i * 1.6, -9 + i * 4.2, -6 + i * 1.6, -8 + i * 4.2]);
@@ -491,6 +492,13 @@ function sun(art: Art, rank: number, face: boolean): void {
   if (ring) {
     ring.moveTo(disc - 3, 0);
     ring.arc(0, 0, disc - 3, 0, Math.PI * 2);
+  }
+  if (face && art.lod < 2) {
+    // Small: the face as bold marks in the detail tincture (eyes and a mouth).
+    const f = art.group(T_DETAIL, false);
+    oval(art.p(f), -7, -4, 3.2, 2.4);
+    oval(art.p(f), 7, -4, 3.2, 2.4);
+    oval(art.p(f), 0, 8, 6, 2.8);
   }
   if (face && art.lod >= 2) {
     // The sun's face (in splendour): brows, eyes, nose, a calm mouth.
@@ -669,10 +677,12 @@ function crown(art: Art, rank: number, detail: boolean): void {
     }
   }
   const gems = art.group(T_DETAIL);
-  if (detail && art.lod >= 1) {
-    oval(art.p(gems), 0, 12.8, 3.8, 3);
-    oval(art.p(gems), -18, 12, 2.9, 2.4);
-    oval(art.p(gems), 18, 12, 2.9, 2.4);
+  if (detail) {
+    // Jewels on the band (larger when small, so they survive a distant banner).
+    const k = art.lod === 0 ? 1.45 : 1;
+    oval(art.p(gems), 0, 12.8, 3.8 * k, 3 * k);
+    oval(art.p(gems), -18, 12, 2.9 * k, 2.4 * k);
+    oval(art.p(gems), 18, 12, 2.9 * k, 2.4 * k);
   }
   art.curve([-30, 7.5, 0, 12.5, 30, 7.5], 0.8);
   art.curve([-30, 15, 0, 19.5, 30, 15], 0.8);

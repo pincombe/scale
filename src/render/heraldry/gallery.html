@@ -20,10 +20,10 @@
   <body>
     <canvas id="c"></canvas>
     <script type="module">
-      import { coatOf, M1_COAT, SIGNATURE, LEVEL, CHARGE_KINDS } from './coat.ts';
+      import { coatOf, M1_COAT, SIGNATURE, LEVEL, CHARGE_KINDS, CHARGE_IDS } from './coat.ts';
       import { drawCoat, CREST_RISE, HEATER_ASPECT } from './draw.ts';
       import { heraldryFor } from './index.ts';
-      import { BannerArt, FLAG_H, FLAG_W, drawFlag, drawShieldFace } from '../crowd/banner.ts';
+      import { BannerArt, ShieldArt, FLAG_H, FLAG_W, drawFlag, drawShieldFace } from '../crowd/banner.ts';
       import { MEADOW } from '../palette.ts';
 
       const q = new URLSearchParams(location.search);
@@ -139,6 +139,65 @@
         }
       }
 
+      if (only === 'measure') {
+        // ?only=measure: changed-pixel share per purchase on the distant (1,176 px) and near banner
+        // textures, for each charge in each slot, level by level (level 0 = the charge absent).
+        const diff = (a, b) => {
+          const A = a.getContext('2d').getImageData(0, 0, a.width, a.height).data;
+          const B = b.getContext('2d').getImageData(0, 0, b.width, b.height).data;
+          let n = 0;
+          for (let i = 0; i < A.length; i += 4) {
+            if (Math.max(Math.abs(A[i] - B[i]), Math.abs(A[i + 1] - B[i + 1]), Math.abs(A[i + 2] - B[i + 2]), Math.abs(A[i + 3] - B[i + 3])) > 16) n++;
+          }
+          return n / (A.length / 4);
+        };
+        const copy = (c) => { const o = document.createElement('canvas'); o.width = c.width; o.height = c.height; o.getContext('2d').drawImage(c, 0, 0); return o; };
+        const slotNames = ['principal', 'chief', 'bordure', 'canton', 'canton2', 'base'];
+        const table = [];
+        let maxBake = 0;
+        let sumBake = 0;
+        let nBake = 0;
+        const bakes = [];
+        // Phase 1: bake everything (timed, no pixel readback in between).
+        for (const id of CHARGE_IDS) {
+          const others = CHARGE_IDS.filter((c) => c !== id);
+          for (let slot = 0; slot < 6; slot++) {
+            const order = [...others.slice(0, slot), id];
+            const seq = [];
+            for (let lv = 0; lv <= LEVEL.max + 1; lv++) {
+              const h = her(lv === 0 ? order.slice(0, -1) : order, 1, lv === 0 ? {} : { [id]: lv });
+              const art = new BannerArt();
+              art.update(heraldryFor(coatOf(h)), MEADOW);
+              const sh = new ShieldArt();
+              const t0 = performance.now();
+              sh.update(heraldryFor(coatOf(h)), MEADOW);
+              const ms = art.bakeMs + (performance.now() - t0);
+              maxBake = Math.max(maxBake, ms);
+              sumBake += ms;
+              nBake++;
+              seq.push([copy(art.tex[1][2]), copy(art.tex[0][2])]);
+            }
+            bakes.push({ id, slot, seq });
+          }
+        }
+        // Phase 2: count changed pixels between consecutive levels.
+        for (const { id, slot, seq } of bakes) {
+          const row = { id, slot: slotNames[slot], far: [], near: [] };
+          for (let i = 1; i < seq.length; i++) {
+            row.far.push(diff(seq[i - 1][0], seq[i][0]));
+            row.near.push(diff(seq[i - 1][1], seq[i][1]));
+          }
+          table.push(row);
+        }
+        maxBake = Math.round(maxBake * 100) / 100;
+        const avgBake = sumBake / nBake;
+        window.__measure = { table, maxBake, avgBake };
+        const fmtRow = (r) => r.id.padEnd(7) + r.slot.padEnd(10) + r.far.map((v) => (v * 100).toFixed(1).padStart(6)).join('');
+        const lines = ['charge slot      far % changed per purchase: L1 .. L' + (LEVEL.max + 1) + '   (banners + shield bake: avg ' + avgBake.toFixed(2) + ' ms, max ' + maxBake.toFixed(2) + ' ms)', ...table.map(fmtRow)];
+        console.log(lines.join('\n'));
+        rows.push({ h: lines.length * 15 + 20, label: '', draw(ctx, x, y) { ctx.font = '12px monospace'; ctx.fillStyle = '#222'; lines.forEach((l, i) => ctx.fillText(l, 10, y + 14 + i * 15)); } });
+      }
+
       const orders = [
         ['M1 (no charges)', her([])],
         ['lion', her(['lion'])],
@@ -147,17 +206,19 @@
         ['lion, sun, tower, stag', her(['lion', 'sun', 'tower', 'stag'])],
         ['lion, sun, tower, stag, crown', her(['lion', 'sun', 'tower', 'stag', 'crown'])],
         ['all six', her(['lion', 'sun', 'tower', 'stag', 'crown', 'wyvern'])],
-        ['lion L2 (armed and langued)', her(['lion'], 2)],
-        ['lion L3 (crowned)', her(['lion'], 3)],
-        ['lion L4 (semé of crosslets)', her(['lion'], 4)],
-        ['lion L5 (double-queued)', her(['lion'], 5)],
-        ['lion L6 (diapered)', her(['lion'], 6)],
+        ['lion L2 (per pale)', her(['lion'], 2)],
+        ['lion L3 (semé of crosslets, crowned, armed and langued)', her(['lion'], 3)],
+        ['lion L4 (quarterly)', her(['lion'], 4)],
+        ['lion L5 (per saltire, double-queued)', her(['lion'], 5)],
+        ['lion L6 (gyronny of eight)', her(['lion'], 6)],
         ['wyvern L1, crown L3 (coronet crest)', her(['wyvern', 'crown'], 1, { crown: 3 })],
         ['sun, wyvern high', her(['sun', 'wyvern'], 6)],
         ['stag, tower, lion high', her(['stag', 'tower', 'lion'], 6)],
         ['tower, crown, sun, lion high', her(['tower', 'crown', 'sun', 'lion'], 6)],
         ['crown L6, stag, sun, wyvern, lion (royal crest)', her(['crown', 'stag', 'sun', 'wyvern', 'lion'], 5, { crown: 6 })],
         ['all six high (L6)', her(['wyvern', 'lion', 'sun', 'crown', 'stag', 'tower'], 6)],
+        ['lion L8 (gyronny of sixteen)', her(['lion'], 8)],
+        ['sun L2, lion L3, tower L2', her(['sun', 'lion', 'tower'], 2, { lion: 3 })],
       ];
 
       if (only === 'bigcoat') {
@@ -188,10 +249,13 @@
           art.update(H, MEADOW);
           const t0 = performance.now();
           const sh = document.createElement('canvas');
-          sh.width = 120;
-          sh.height = 216;
+          sh.width = 180;
+          sh.height = 324;
           const sx = sh.getContext('2d');
-          drawShieldFace(sx, H, 60, 23 * 4 + 4 * 1.008 * 4, 42 * 1.008 * 4);
+          const shield = new ShieldArt();
+          shield.update(H, MEADOW);
+          sx.setTransform(6, 0, 0, 6, 90, 138);
+          shield.draw(sx, 6, 0);
           const heroMs = performance.now() - t0;
           timings.push([label, art.bakeMs, heroMs]);
           const flagsOnly = only === 'flags';

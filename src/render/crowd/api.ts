@@ -25,6 +25,14 @@ export interface CrowdView {
    * false brings the crowd back as state says (the new tier's colossus-hero and its troops).
    */
   setFused?(fused: boolean): void;
+  /**
+   * M2 zoom hand-off: where the hero stands at rest in the current tier, the spot the colossus
+   * becomes the hero at (world m, the feet): x = the dragon's rest front edge (dragon.bounds().x)
+   * minus heroStandOff(dragon size) (render/crowd/formation.ts), y = 0.12 (just below the ground
+   * line), drawn HERO_SCALE = 1.1 x a knight in the idle guard pose. Valid right after
+   * setFused(false) (the hero snaps there with no march-in). Optional (null stand-ins).
+   */
+  heroRest?(out: Vec2): Vec2;
 }
 
 /** A coat of arms (M1: placeholder red field, gold sword; M2 adds the full `coat`). */
@@ -40,4 +48,9 @@ export interface Heraldry {
    * shield paint it with drawCoat and the three fields above are summaries (plumes, trims).
    */
   coat?: Coat;
+  /**
+   * M2: play the purchase flourish (a gold light sweeping the cloth and the hero's shield) when
+   * this description replaces a different coat. Unset for loads, resyncs and tier changes.
+   */
+  flourish?: boolean;
 }

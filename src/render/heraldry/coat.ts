@@ -5,15 +5,21 @@
 //   0 charges  the M1 coat: gules, a sword or.
 //   1          the principal on its signature field.
 //   2          + a chief of #2 (its field and charge; its lower edge in #2's line of partition).
-//   3          + a bordure of #3, charged with eight #3s (large sizes only).
+//   3          + a bordure of #3 (charged with eight #3s where they are big enough to read).
 //   4          + a canton of #4 over the dexter end of the chief.
 //   5          + a sinister canton of #5 (the chief is now tierced: #4 | #2 | #5).
 //   6          + a base of #6 (its upper edge in #6's line), charged with a #6.
-// Levels ornament each charge wherever it stands (see LEVEL): a contrasting tincture on claws,
-// tongue, antlers or windows; a crown or signature flourish; the principal's field is strewn (semé)
-// with its signature motif; a chief or base holds three; its field is diapered. Crown levels set a
-// coronet, then a royal crown, atop the shield. Every charge has a signature pairing that keeps the rule of tincture
-// (metal on colour, colour on metal), so every region is legal and every save's coat its own.
+//
+// Levels (LEVEL): every level of every charge changes what the army's most distant banner shows,
+// big areas first. A charge's ground (its region's field) divides as it levels: per pale (its
+// field and a second tincture), then quarterly, then gyronny of 8, 12 and 16; a bordure turns
+// compony, its segments multiplying every level. L2 per pale; L3 the ground strewn (semé) with the
+// charge's motif, claws, tongue, antlers, windows or jewels in a contrasting tincture and a first
+// flourish (a crown, a pennon, flaming rays); L4 quarterly, a chief or base holding three; L5 per
+// saltire and a second flourish (a double tail, fire, a castle, a royal crown); L6-L8 gyronny of
+// 8, 12 (with a damask, close up) and 16. Crown levels also set a coronet, then a royal crown, atop a shield. Every region
+// keeps the rule of tincture (metal on colour, colour on metal): each charge's pairing is fixed and
+// its second tincture is of the same kind as its field.
 import type { ChargeId, HeraldryState } from '../../core/types';
 
 export type Tincture = 'or' | 'argent' | 'gules' | 'azure' | 'vert' | 'purpure' | 'sable';
@@ -34,6 +40,8 @@ export function isMetal(t: Tincture): boolean {
 export interface Signature {
   /** The field the charge is borne on (its region's tincture). */
   field: Tincture;
+  /** The second tincture its ground divides into (same kind as `field`: both colours or both metals). */
+  field2: Tincture;
   /** The charge's own tincture (always contrasts with `field` by the rule of tincture). */
   charge: Tincture;
   /** Claws and tongue, antlers, windows, jewels, hilt, the sun's face. */
@@ -46,34 +54,55 @@ export interface Signature {
 
 /** Signature pairings. Six distinct fields, so two regions never share a tincture in M2. */
 export const SIGNATURE: Readonly<Record<ChargeKind, Signature>> = {
-  sword: { field: 'gules', charge: 'or', detail: 'argent', line: 'plain', motif: 'crosslet' },
-  lion: { field: 'gules', charge: 'or', detail: 'azure', line: 'indented', motif: 'crosslet' },
-  sun: { field: 'azure', charge: 'or', detail: 'gules', line: 'wavy', motif: 'mullet' },
-  wyvern: { field: 'or', charge: 'sable', detail: 'gules', line: 'dancetty', motif: 'goutte' },
-  stag: { field: 'vert', charge: 'argent', detail: 'or', line: 'engrailed', motif: 'trefoil' },
-  tower: { field: 'sable', charge: 'argent', detail: 'or', line: 'embattled', motif: 'billet' },
-  crown: { field: 'purpure', charge: 'or', detail: 'gules', line: 'plain', motif: 'fleur' },
-  eagle: { field: 'argent', charge: 'gules', detail: 'or', line: 'plain', motif: 'crosslet' },
-  moon: { field: 'azure', charge: 'argent', detail: 'or', line: 'wavy', motif: 'mullet' },
+  sword: { field: 'gules', field2: 'azure', charge: 'or', detail: 'argent', line: 'plain', motif: 'crosslet' },
+  lion: { field: 'gules', field2: 'azure', charge: 'or', detail: 'azure', line: 'indented', motif: 'crosslet' },
+  sun: { field: 'azure', field2: 'gules', charge: 'or', detail: 'gules', line: 'wavy', motif: 'mullet' },
+  wyvern: { field: 'or', field2: 'argent', charge: 'sable', detail: 'gules', line: 'dancetty', motif: 'goutte' },
+  stag: { field: 'vert', field2: 'azure', charge: 'argent', detail: 'or', line: 'engrailed', motif: 'trefoil' },
+  tower: { field: 'sable', field2: 'gules', charge: 'argent', detail: 'or', line: 'embattled', motif: 'billet' },
+  crown: { field: 'purpure', field2: 'azure', charge: 'or', detail: 'gules', line: 'plain', motif: 'fleur' },
+  eagle: { field: 'argent', field2: 'or', charge: 'gules', detail: 'or', line: 'plain', motif: 'crosslet' },
+  moon: { field: 'azure', field2: 'sable', charge: 'argent', detail: 'or', line: 'wavy', motif: 'mullet' },
 };
 
 /** Level thresholds (per charge) for its ornaments. */
 export const LEVEL = {
-  /** Claws and tongue (antlers, windows, jewels...) in the detail tincture. */
-  detail: 2,
-  /** Rank 1: crowned lion / wyvern / eagle, gorged stag, the sun's flaming rays, a pennon on the tower, a crown of fleurons. */
+  /** Its ground divides per pale (a bordure turns compony). */
+  pale: 2,
+  /** Claws and tongue (antlers, windows, jewels...) in the detail tincture, the first flourish,
+   *  and its ground strewn (semé) with its motif. */
+  detail: 3,
   rank1: 3,
-  /** The principal's field is strewn with its motif (semé); a chief or base holds three. */
-  semy: 4,
+  semy: 3,
+  /** Its ground divides quarterly; a chief or base holds three. */
+  quarterly: 4,
   triple: 4,
-  /** Rank 2: double-queued lion, the wyvern breathes fire, a royal stag, the sun's glory, a castle, an arched royal crown. */
+  /** The second flourish; its ground divides per saltire. */
   rank2: 5,
-  /** The charge's field is diapered (damask). */
-  diaper: 6,
-  /** Crown levels for a coronet (1), then a royal crown (2), atop the shield. */
+  saltire: 5,
+  /** Gyronny of 8, 12 (with the damask, close up), 16. */
+  gyronny: 6,
+  diaper: 7,
+  /** The last level that changes the coat; later levels only play the flourish. */
+  max: 8,
+  /** Crown levels for a coronet (1), then a royal crown (2), atop a shield. */
   crest1: 3,
   crest2: 6,
 } as const;
+
+/** A region's ground: its field, how it divides, what it is strewn with. */
+export interface Ground {
+  field: Tincture;
+  field2: Tincture;
+  /**
+   * 0 plain, 1 per pale, 2 quarterly, 3 per saltire, n >= 8 gyronny of n (8, 12, 16). On a
+   * bordure: compony of n segments (0 = plain).
+   */
+  division: number;
+  semy: Motif | null;
+  semyTincture: Tincture;
+  diaper: boolean;
+}
 
 export interface CoatCharge {
   kind: ChargeKind;
@@ -85,25 +114,26 @@ export interface CoatCharge {
 }
 
 export interface CoatRegion {
+  /** The region's field (= ground.field). */
   field: Tincture;
+  ground: Ground;
   charge: CoatCharge;
   /** How many charges it holds (a chief or base: 1 or 3; a bordure: 8; a canton: 1). */
   count: number;
   /** Edge line (chief: its lower edge; base: its upper edge; others plain). */
   line: Line;
-  diaper: boolean;
 }
 
 export interface Coat {
   /** Stable identity of the visual: equal keys draw identically (compare to skip re-bakes). */
   key: string;
-  /** The main field (the principal's region). */
+  /** Identity of what survives the smallest level of detail (a distant banner). */
+  farKey: string;
+  /** The main field (= main.field). */
   field: Tincture;
-  diaper: boolean;
+  /** The principal's ground. */
+  main: Ground;
   principal: CoatCharge;
-  /** The main field strewn with this motif (null = none), in `semyTincture`. */
-  semy: Motif | null;
-  semyTincture: Tincture;
   chief: CoatRegion | null;
   bordure: CoatRegion | null;
   /** Dexter canton (over the dexter end of the chief). */
@@ -111,7 +141,7 @@ export interface Coat {
   /** Sinister canton (over the sinister end of the chief). */
   canton2: CoatRegion | null;
   base: CoatRegion | null;
-  /** Crown atop the shield (heater only): 0 none, 1 coronet, 2 royal crown. */
+  /** Crown atop a heater shield: 0 none, 1 coronet, 2 royal crown. */
   crest: 0 | 1 | 2;
 }
 
@@ -125,8 +155,35 @@ function chargeAt(kind: ChargeKind, level: number): CoatCharge {
   };
 }
 
-function region(kind: ChargeKind, level: number, count: number, line: Line): CoatRegion {
-  return { field: SIGNATURE[kind].field, charge: chargeAt(kind, level), count, line, diaper: level >= LEVEL.diaper };
+/** The division a ground reaches at a level (see Ground.division). */
+export function divisionAt(level: number): number {
+  if (level < LEVEL.pale) return 0;
+  if (level < LEVEL.quarterly) return 1;
+  if (level < LEVEL.saltire) return 2;
+  if (level < LEVEL.gyronny) return 3;
+  return level === LEVEL.gyronny ? 8 : level === LEVEL.gyronny + 1 ? 12 : 16;
+}
+
+/** Compony segments a bordure reaches at a level: more every level up to LEVEL.max. */
+export function componyAt(level: number): number {
+  return level < LEVEL.pale ? 0 : 8 + 2 * (Math.min(level, LEVEL.max) - LEVEL.pale);
+}
+
+function ground(kind: ChargeKind, level: number, bordure = false): Ground {
+  const s = SIGNATURE[kind];
+  return {
+    field: s.field,
+    field2: s.field2,
+    division: bordure ? componyAt(level) : divisionAt(level),
+    semy: !bordure && level >= LEVEL.semy ? s.motif : null,
+    semyTincture: s.charge,
+    diaper: level >= LEVEL.diaper,
+  };
+}
+
+function region(kind: ChargeKind, level: number, count: number, line: Line, bordure = false): CoatRegion {
+  const g = ground(kind, level, bordure);
+  return { field: g.field, ground: g, charge: chargeAt(kind, level), count, line };
 }
 
 /**
@@ -149,11 +206,10 @@ export function coatOf(h: HeraldryState): Coat {
   if (ids.length === 0) {
     return keyed({
       key: '',
+      farKey: '',
       field: 'gules',
-      diaper: false,
+      main: ground('sword', 1),
       principal: chargeAt('sword', 1),
-      semy: null,
-      semyTincture: 'or',
       chief: null,
       bordure: null,
       canton: null,
@@ -172,14 +228,12 @@ export function coatOf(h: HeraldryState): Coat {
   const c6 = at(5);
   return keyed({
     key: '',
+    farKey: '',
     field: SIGNATURE[p].field,
-    diaper: pl >= LEVEL.diaper,
+    main: ground(p, pl),
     principal: chargeAt(p, pl),
-    // The semé takes the principal's own tincture: it lies on the principal's field.
-    semy: pl >= LEVEL.semy ? SIGNATURE[p].motif : null,
-    semyTincture: SIGNATURE[p].charge,
     chief: c2 ? region(c2, lv(1), lv(1) >= LEVEL.triple ? 3 : 1, SIGNATURE[c2].line) : null,
-    bordure: c3 ? region(c3, lv(2), 8, 'plain') : null,
+    bordure: c3 ? region(c3, lv(2), 8, 'plain', true) : null,
     canton: c4 ? region(c4, lv(3), 1, 'plain') : null,
     canton2: c5 ? region(c5, lv(4), 1, 'plain') : null,
     base: c6 ? region(c6, lv(5), lv(5) >= LEVEL.triple ? 3 : 1, SIGNATURE[c6].line) : null,
@@ -191,22 +245,31 @@ function chargeKey(c: CoatCharge): string {
   return c.kind + '.' + c.tincture + '.' + (c.detail ?? '-') + '.' + c.rank;
 }
 
-function regionKey(r: CoatRegion | null): string {
-  return r ? r.field + ':' + chargeKey(r.charge) + ':' + r.count + ':' + r.line + ':' + (r.diaper ? 1 : 0) : '_';
+function groundKey(g: Ground, far: boolean): string {
+  return g.field + '/' + g.field2 + '/' + g.division + '/' + (g.semy ?? '-') + (far ? '' : g.diaper ? '*' : '');
+}
+
+function regionKey(r: CoatRegion | null, far: boolean, bordure = false): string {
+  if (!r) return '_';
+  // A distant banner paints a bordure plain or compony: its charges are too small to draw.
+  if (far && bordure) return groundKey(r.ground, true);
+  return groundKey(r.ground, far) + ':' + chargeKey(r.charge) + ':' + r.count + (far ? '' : ':' + r.line);
 }
 
 function keyed(c: Coat): Coat {
-  c.key = [
-    c.field + (c.diaper ? '*' : ''),
-    chargeKey(c.principal),
-    c.semy ? c.semy + ':' + c.semyTincture : '-',
-    regionKey(c.chief),
-    regionKey(c.bordure),
-    regionKey(c.canton),
-    regionKey(c.canton2),
-    regionKey(c.base),
-    c.crest,
-  ].join('|');
+  const parts = (far: boolean): string =>
+    [
+      groundKey(c.main, far),
+      chargeKey(c.principal),
+      regionKey(c.chief, far),
+      regionKey(c.bordure, far, true),
+      regionKey(c.canton, far),
+      regionKey(c.canton2, far),
+      regionKey(c.base, far),
+      far ? '' : c.crest,
+    ].join('|');
+  c.key = parts(false);
+  c.farKey = parts(true);
   return c;
 }
 

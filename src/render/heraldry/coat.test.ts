@@ -9,6 +9,11 @@ function her(order: ChargeId[], levels: Partial<Record<ChargeId, number>> = {}):
   return { levels: l, order: [...order] };
 }
 
+/** The n-th charge other than id (canonical order). */
+function other(id: ChargeId, n: number): ChargeId {
+  return CHARGE_IDS.filter((c) => c !== id)[n]!;
+}
+
 function regions(c: Coat): CoatRegion[] {
   return [c.chief, c.bordure, c.canton, c.canton2, c.base].filter((r): r is CoatRegion => r !== null);
 }
@@ -91,26 +96,67 @@ describe('coatOf', () => {
   });
 
   it('levels add ornament step by step (each threshold is a new coat)', () => {
-    const keys: string[] = [];
-    for (let lv = 1; lv <= LEVEL.diaper; lv++) keys.push(coatOf(her(['lion'], { lion: lv })).key);
-    expect(new Set(keys).size).toBe(keys.length);
-    const hi = coatOf(her(['lion'], { lion: LEVEL.diaper }));
+    const hi = coatOf(her(['lion'], { lion: LEVEL.max }));
     expect(hi.principal.detail).toBe('azure');
     expect(hi.principal.rank).toBe(2);
-    expect(hi.semy).toBe('crosslet');
-    expect(hi.semyTincture).toBe('or');
-    expect(hi.diaper).toBe(true);
+    expect(hi.main.semy).toBe('crosslet');
+    expect(hi.main.semyTincture).toBe('or');
+    expect(hi.main.diaper).toBe(true);
+    expect(hi.main.division).toBe(16);
     const lo = coatOf(her(['lion']));
     expect(lo.principal.detail).toBeNull();
     expect(lo.principal.rank).toBe(0);
-    expect(lo.semy).toBeNull();
-    expect(lo.diaper).toBe(false);
+    expect(lo.main.semy).toBeNull();
+    expect(lo.main.diaper).toBe(false);
+    expect(lo.main.division).toBe(0);
+  });
+
+  it('the ladder puts a big change first: level 2 divides the ground per pale', () => {
+    expect(coatOf(her(['sun'], { sun: 2 })).main.division).toBe(1);
+    expect(coatOf(her(['sun'], { sun: 2 })).main.field2).toBe(SIGNATURE.sun.field2);
+    expect(coatOf(her(['lion', 'tower', 'sun'], { sun: 2 })).bordure?.ground.division).toBe(8);
+  });
+
+  it('every level of every charge, in every slot, changes the coat and what a distant banner shows', () => {
+    const slots: ((id: ChargeId) => ChargeId[])[] = [
+      (id) => [id],
+      (id) => [other(id, 0), id],
+      (id) => [other(id, 0), other(id, 1), id],
+      (id) => [other(id, 0), other(id, 1), other(id, 2), id],
+      (id) => [other(id, 0), other(id, 1), other(id, 2), other(id, 3), id],
+      (id) => [other(id, 0), other(id, 1), other(id, 2), other(id, 3), other(id, 4), id],
+    ];
+    for (const id of CHARGE_IDS) {
+      for (const slot of slots) {
+        const order = slot(id);
+        let prev = coatOf(her(order.slice(0, -1)));
+        for (let lv = 1; lv <= LEVEL.max; lv++) {
+          const c = coatOf(her(order, { [id]: lv }));
+          expect(c.key, `${order.join(',')} ${id} L${lv}`).not.toBe(prev.key);
+          expect(c.farKey, `${order.join(',')} ${id} L${lv} (far)`).not.toBe(prev.farKey);
+          prev = c;
+        }
+        // Past the ladder nothing changes (only the flourish plays).
+        expect(coatOf(her(order, { [id]: LEVEL.max + 1 })).key).toBe(prev.key);
+      }
+    }
+  });
+
+  it('divided grounds keep the rule of tincture (both halves of one kind, under the charge)', () => {
+    for (const k of CHARGE_KINDS) {
+      const s = SIGNATURE[k];
+      expect(isMetal(s.field2)).toBe(isMetal(s.field));
+      expect(s.field2).not.toBe(s.field);
+      expect(isMetal(s.charge)).not.toBe(isMetal(s.field2));
+    }
   });
 
   it('a levelled chief holds three; region charges rank up too', () => {
     const c = coatOf(her(['lion', 'sun'], { sun: LEVEL.triple }));
     expect(c.chief?.count).toBe(3);
     expect(c.chief?.charge.rank).toBe(1);
+    expect(c.chief?.ground.division).toBe(2);
+    expect(coatOf(her(['lion'], { lion: LEVEL.saltire })).main.division).toBe(3);
     expect(coatOf(her(['lion', 'sun'])).chief?.count).toBe(1);
   });
 
