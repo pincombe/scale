@@ -1,20 +1,24 @@
 // Dragon layer (slot 1) + DragonView (scene.dragon): the procedural rig brought to life.
 //
 //   species.ts   parameter sets (the meadow newt) + per-individual variation from the seed
-//   head.ts      head geometry (skull, jaw, teeth, horns, gills, frill) in head units
-//   rig.ts       spine chain + dynamics, leg IK and stepping, wings, heads; pure math
-//   choreo.ts    phases and idle micro-behaviors -> pose channels
-//   weakspot.ts  which weak spot is live (loose scale / throat / tail base) and where
-//   paint.ts     rim-lit silhouette, eyes, glows, weak spot
-//   effects.ts   fire, smoke, embers, ash, dust
-//   tuning.ts    named tuning constants (hit radii, weak-spot shifting)
+//   wyvern.ts    the craggy mountain wyvern (tier 1): wing-arms, rock plates, a crown, a club
+//   bosses.ts    the tier bosses as data: morph overrides, dressings, tempo, entrance/exit styles
+//   head.ts      head geometry (skull, jaw, teeth, horns, gills, frill, crown) in head units
+//   rig.ts       spine chain + dynamics, leg IK, stepping and run cycle, wings and wing-arms, rock
+//                plates, heads; pure math
+//   choreo.ts    phases and idle micro-behaviors -> pose channels (moves.ts: species/boss styles)
+//   weakspot.ts  which weak spot is live (loose scale or plate / throat / tail) and where
+//   paint.ts     rim-lit silhouette, eyes, glows, weak spot (parts.ts: wing-arms, plates, dressings)
+//   effects.ts   fire, smoke, embers, ash, dust, snow
+//   tuning.ts    named tuning constants (hit radii, weak-spot shifting, caches, landing shake)
 //   lab.html     dev-only species lab (not in the build): /src/render/dragon/lab.html
 //
-// State is the truth: the individual is rebuilt whenever state.dragon.id changes, the pose is a
-// function of the phase and its progress (phaseT + alpha * TICK_DT), and events only add one-shot
-// reactions (flinches, flashes, particles). The rig works in body lengths (u); world meters are
+// State is the truth: the individual is rebuilt whenever state.dragon's id, size, species or boss
+// changes (so debug edits to the live state take effect), the pose is a function of the phase and
+// its progress (phaseT + alpha * TICK_DT), and events only add one-shot reactions (flinches,
+// flashes, particles). The rig works in body lengths (u); world meters are
 // x = CLASH_X + rig.placeX(x_u) * L, y = y_u * L, with L = state.dragon.size (placeX applies the
-// swipe's turn-around mirror and world shift; identity otherwise).
+// swipe's and the exit's turn-around mirror and world shift; identity otherwise).
 import type { Scene } from '../../app/scene';
 import type { Layer, View } from '../types';
 import type { DragonView } from './api';
@@ -25,12 +29,19 @@ import { CLASH_X } from '../world';
 import { TICK_DT } from '../../core/formulas';
 import { ColorRamp, mixHex } from '../../lib/color';
 import { buildIndividual, speciesOf, type Morph } from './species';
-import { BODY_N, C_AIR, C_TONGUE, DragonRig, type SpineSample } from './rig';
+import { BODY_N, C_AIR, C_TONGUE, DragonRig, LEG_FN, type SpineSample } from './rig';
 import { Choreo, type ChoreoEnv } from './choreo';
 import { createPaintState, paintDragon, type PaintRes } from './paint';
-import { buildDragonFx, emitFire, type DragonFx } from './effects';
+import { DressLayout } from './parts';
+import { BoundedCache } from './cache';
+import { buildDragonFx, emitFire, groundBlast, type DragonFx } from './effects';
 import {
   BODY_HIT_PAD_PX,
+  LAND_SHAKE,
+  LAND_SHAKE_BOSS,
+  LAND_SHAKE_GROW,
+  LAND_SHAKE_SIZE,
+  RES_CACHE_MAX,
   RIDGE_SPOT_MIN_PX,
   TORSO_SPOT_MIN_PX,
   WEAK_DRAW_FRAC,
@@ -39,7 +50,7 @@ import {
   WEAK_HIT_SCALE,
   WEAK_SHIFT_ON_CRIT,
 } from './tuning';
-import { SWIPE_CURL, WEAK_SCALE, WEAK_TAIL, WeakSpot, swipeSpotFor, weakLiveFor, weakModeFor } from './weakspot';
+import { WEAK_SCALE, WEAK_TAIL, WeakSpot, swipeSpotFor, weakLiveFor, weakModeFor } from './weakspot';
 import { makeCanvas, context2d } from '../atlas';
 
 export interface DragonRender {
@@ -130,15 +141,20 @@ export function createDragon(scene: Scene): DragonRender {
   const rig = new DragonRig();
   const choreo = new Choreo();
   const st = createPaintState();
-  const resCache = new Map<Palette, PaintRes>();
+  const dress = new DressLayout();
+  // Palette resources and particle specs, keyed by palette name and bounded (RES_CACHE_MAX).
+  const resCache = new BoundedCache<PaintRes>(RES_CACHE_MAX);
+  const fxCache = new BoundedCache<DragonFx>(RES_CACHE_MAX);
   let fx: DragonFx | null = null;
-  let fxPalette: Palette | null = null;
+  let fxKey = '';
   let starId = -1;
   let scaleCanvas: HTMLCanvasElement | null = null;
 
   // Identity / phase tracking.
   let curId = -1;
   let curSize = 0;
+  let curSpecies = '';
+  let curBoss: string | null = null;
   let over: Partial<Morph> | undefined;
   let needSnap = true;
   let lastPhase: DragonPhase | '' = '';
@@ -155,6 +171,7 @@ export function createDragon(scene: Scene): DragonRender {
   let prevAir = 0;
   let slamDone = false;
   let lastDissolve = 1;
+  let lastBurn = 0;
   // Swipe shockwave: a dust wave rolling out through the ranks from where the tail lands.
   let waveT = -1;
   let waveX0 = 0;
@@ -185,6 +202,11 @@ export function createDragon(scene: Scene): DragonRender {
     lunge: 0,
     aimX: -2,
     aimY: 0,
+    dur: 1,
+    enterH: 2,
+    exitDist: 3,
+    exitH: 2,
+    slamX: 0,
   };
 
   const tmp: Vec2 = { x: 0, y: 0 };
@@ -199,25 +221,29 @@ export function createDragon(scene: Scene): DragonRender {
 
   const ensureIndividual = (): void => {
     const d = scene.game.state.dragon;
-    if (d.id === curId && d.size === curSize) return;
+    const boss = d.boss ?? null;
+    if (d.id === curId && d.size === curSize && d.species === curSpecies && boss === curBoss) return;
     curId = d.id;
     curSize = d.size;
-    const ind = buildIndividual(speciesOf(d.species), d.seed, d.size, over);
+    curSpecies = d.species;
+    curBoss = boss;
+    const ind = buildIndividual(speciesOf(d.species), d.seed, d.size, over, boss);
     rig.setup(ind);
-    rig.tempo = tempoFor(d.size);
+    rig.tempo = tempoFor(d.size) * (ind.boss ? ind.boss.tempo : 1);
     choreo.reset(d.seed);
+    dress.layout(rig);
+    const dr = ind.dress;
+    st.dress = dr.moss > 0 || dr.scars > 0 || dr.torn > 0 ? dress : null;
     weak.reset();
     weak.snap(d.phase, d.attack, d.phaseDur > 0 ? d.phaseT / d.phaseDur : 1);
     hot = 0;
     slamDone = false;
     lastDissolve = 1;
+    lastBurn = 0;
     needSnap = true;
     lastPhase = '';
     seenEvents = phaseEvents;
-    for (const r of resCache.values()) r.eye = ind.eye;
-    eyeDirty = true;
   };
-  let eyeDirty = true;
 
   const L = (): number => scene.game.state.dragon.size;
   // World <-> rig units, through the turn-around mirror and world shift (rig.placeX).
@@ -237,16 +263,20 @@ export function createDragon(scene: Scene): DragonRender {
   // ---- palette resources ----
 
   const ensureRes = (p: Palette): PaintRes => {
-    let r = resCache.get(p);
     const { atlas, sprites } = scene;
     if (!scaleCanvas) {
       scaleCanvas = makeCanvas(64, 64);
       paintScale(context2d(scaleCanvas), 64, 64);
       starId = atlas.register('dragon.star', 32, 32, paintStar);
     }
-    if (!r) {
+    const scale: HTMLCanvasElement = scaleCanvas;
+    // (get first: the builder closure is only made on a miss, never per frame)
+    const r = resCache.get(p.name) ?? resCache.getOrBuild(p.name, (): PaintRes => {
       const eye = rig.ind ? rig.ind.eye : p.accent.gold;
-      r = {
+      // Clearly whiter and brighter than any sky behind it (else it reads as holes in the
+      // silhouette), just touched by the rim light's color.
+      const snow = mixHex('#f6f8ff', p.rim, 0.16);
+      return {
         silhouette: p.silhouette,
         far: mixHex(p.silhouette, p.haze, 0.17),
         rim: p.rim,
@@ -259,24 +289,28 @@ export function createDragon(scene: Scene): DragonRender {
         glowEye: atlas.canvas(atlas.tint(sprites.glow, eye, 0.5)),
         glowDark: atlas.canvas(atlas.tint(sprites.glow, p.silhouette)),
         glowEmber: atlas.canvas(atlas.tint(sprites.glow, p.accent.ember, 0.5)),
-        scale: scaleCanvas,
+        scale,
         star: atlas.canvas(atlas.tint(starId, p.accent.gold, 0.7)),
         eye,
         haze: p.haze,
         pouch: mixHex('#ffe3a8', p.accent.fire, 0.35),
         cyan: WEAK_CYAN,
         farRamp: new ColorRamp([mixHex(p.silhouette, p.haze, 0.17), mixHex(p.silhouette, p.haze, 0.42)], 16),
+        membrane: new ColorRamp([p.silhouette, mixHex(p.silhouette, p.haze, 0.22)], 16),
+        moss: mixHex(p.silhouette, '#5a6a2c', 0.34),
+        scar: mixHex(p.silhouette, p.rim, 0.42),
+        snow,
+        snowFar: mixHex(snow, p.haze, 0.3),
       };
-      resCache.set(p, r);
-    }
-    if (eyeDirty && rig.ind) {
+    });
+    // The eye glow follows the individual (atlas tints are cached, so this is cheap).
+    if (rig.ind && r.eye !== rig.ind.eye) {
       r.eye = rig.ind.eye;
       r.glowEye = atlas.canvas(atlas.tint(sprites.glow, rig.ind.eye, 0.5));
-      eyeDirty = false;
     }
-    if (!fx || fxPalette !== p) {
-      fx = buildDragonFx(atlas, sprites, p, atlas.tint(starId, p.accent.gold, 0.6));
-      fxPalette = p;
+    if (!fx || fxKey !== p.name) {
+      fx = fxCache.getOrBuild(p.name, () => buildDragonFx(atlas, sprites, p, atlas.tint(starId, p.accent.gold, 0.6)));
+      fxKey = p.name;
     }
     return r;
   };
@@ -311,7 +345,7 @@ export function createDragon(scene: Scene): DragonRender {
 
   /**
    * The weak spot clicks can hit right now, straight from state (not from last frame's fades):
-   * during a breath windup only the throat, during a swipe windup only the tail base.
+   * during a breath windup only the throat, during a swipe windup only the tail.
    */
   const liveWeak = (out: Vec2): Vec2 | null => {
     const d = scene.game.state.dragon;
@@ -336,6 +370,15 @@ export function createDragon(scene: Scene): DragonRender {
 
   scene.game.on('strike', (e) => {
     ensureIndividual();
+    if (e.auto) {
+      // Rally's auto-strikes (~8/s) carry no impact point (x = y = 0): a light shiver somewhere on
+      // the body, no squint or head kick, so a volley of them never jitters the dragon.
+      hot = Math.max(hot, 0.28);
+      view.impactPoint(tmp);
+      const q = toU(tmp.x, tmp.y, tmp);
+      rig.impulse(q.x, q.y, 0.3, -0.06, 0.28);
+      return;
+    }
     const crit = e.crit;
     hot = Math.max(hot, crit ? 1 : 0.62);
     const p = toU(e.x, e.y, tmp);
@@ -378,26 +421,46 @@ export function createDragon(scene: Scene): DragonRender {
   const onPhaseStart = (phase: DragonPhase): void => {
     const l = L();
     const cam = scene.camera;
-    if (phase === 'enter') {
-      // Start past the right edge of both the current and the upcoming framing.
-      const dir = scene.director;
-      const half = cam.stageW * 0.5;
+    const dir = scene.director;
+    const half = cam.stageW * 0.5;
+    if (phase === 'enter' || phase === 'leave') {
+      // Past the right edge of both the current and the upcoming framing.
       const edgeNow = cam.x + half / cam.zoomEff;
       const edgeNext = dir.target.x + half / Math.max(1e-6, dir.target.zoom);
       const edge = Math.max(edgeNow, edgeNext);
-      env.enterDist = Math.max(1.4, (edge - CLASH_X) / l + 0.12);
+      // The top of the stage (world y, up is negative) in the current and the upcoming framing.
+      const topNow = cam.y - (cam.viewH * 0.5) / cam.zoomEff;
+      const topNext = -((dir.groundFrac || 0.76) * cam.viewH) / Math.max(1e-6, dir.target.zoom);
+      const top = Math.min(topNow, topNext);
+      if (phase === 'enter') {
+        env.enterDist = Math.max(1.4, (edge - CLASH_X) / l + 0.12);
+        // A glider comes in from the upper right: from about the top of the frame.
+        env.enterH = Math.max(0.6, (-top / l) * 0.85);
+      } else {
+        // Turned around it spans the mirrored rest pose: clear the edge with all of it.
+        env.exitDist = Math.max(1.6, (edge - CLASH_X) / l + (rig.restMaxX - rig.restMinX) + 0.2);
+        env.exitH = Math.max(0.8, -top / l + 0.35);
+      }
     }
     if (phase === 'swipe' || phase === 'windup') {
-      // Lunge so the lashing tail (turned around: hip mirrored about the middle, tail out front)
-      // reaches into the army's front ranks.
       const front = (scene.crowd.frontX() - 0.2 - CLASH_X) / l;
-      const hipMirrored = 2 * rig.midX - rig.x[rig.iH]!;
-      const tipReach = hipMirrored - rig.tailLen * 0.95;
-      env.lunge = Math.max(0, Math.min(1.4, tipReach - front));
+      if (rig.ind.swipe === 'slam') {
+        // Over the back, the club reaches about this far forward: hop in until that's the front line.
+        const reachX = rig.x[rig.iH]! - rig.tailLen * 0.6;
+        env.slamX = front;
+        env.lunge = Math.max(0, Math.min(1.2, reachX - front));
+      } else {
+        // Lunge so the lashing tail (turned around: hip mirrored about the middle, tail out front)
+        // reaches into the army's front ranks.
+        const hipMirrored = 2 * rig.midX - rig.x[rig.iH]!;
+        const tipReach = hipMirrored - rig.tailLen * 0.95;
+        env.lunge = Math.max(0, Math.min(1.4, tipReach - front));
+      }
       slamDone = false;
     }
     if (phase === 'dying') {
       lastDissolve = 1;
+      lastBurn = 0;
       deathAcc = 0;
     }
   };
@@ -409,6 +472,8 @@ export function createDragon(scene: Scene): DragonRender {
       ensureIndividual();
       const d = scene.game.state.dragon;
       if (d.phase === 'dying' && rig.dissolve < 0.85) return null;
+      // Gone (flown or walked off stage): nothing to hit.
+      if (d.phase === 'leave' && d.phaseDur > 0 && d.phaseT / d.phaseDur > 0.9) return null;
       const p = toU(wx, wy, tmp);
       const w = liveWeak(tmp2);
       if (w) {
@@ -427,7 +492,7 @@ export function createDragon(scene: Scene): DragonRender {
       ensureIndividual();
       const r = Math.random();
       if (r < 0.2 && rig.legOn[0]) {
-        // Front leg, where swords reach.
+        // Front leg (a wyvern's wing-arm), where swords reach.
         const t = 0.2 + Math.random() * 0.7;
         const x = rig.kneeX[0]! + (rig.ankX[0]! - rig.kneeX[0]!) * t;
         const y = rig.kneeY[0]! + (rig.ankY[0]! - rig.kneeY[0]!) * t;
@@ -514,6 +579,7 @@ export function createDragon(scene: Scene): DragonRender {
     env.t = t;
     env.dt = dt;
     env.time = v.time;
+    env.dur = d.phaseDur;
 
     // What to look at: the cursor when it's over the stage, else the hero.
     const ptr = scene.input.pointer;
@@ -555,6 +621,7 @@ export function createDragon(scene: Scene): DragonRender {
     const f = fx!;
     const zoom = cam.zoomEff;
     const px = 1 / zoom; // meters per CSS px
+    const snowy = rig.ind.species.behavior.snow;
 
     // Weak spot: the loose scale, or the throat / tail base during windups (weakspot.ts).
     const prevIdx = weak.idx;
@@ -575,7 +642,7 @@ export function createDragon(scene: Scene): DragonRender {
     st.weakA = weakAng.a;
     st.weakR = baseR;
     st.weakMode = weak.mode;
-    st.weakOnHead = weak.mode === WEAK_TAIL && weak.swipeSpot !== SWIPE_CURL ? 1 : 0;
+    st.weakOnHead = weak.mode === WEAK_TAIL && weak.onHead(rig) ? 1 : 0;
     if (weak.prevFade > 0.01) {
       weak.pos(rig, sp, tmp2, weakAng, weak.prevMode, weak.prevIdx);
       st.weak2On = weak.vis * weak.prevFade;
@@ -636,10 +703,15 @@ export function createDragon(scene: Scene): DragonRender {
       world.burst(f.puffDark, tmp2.x, tmp2.y, 1, -Math.PI / 2 - 0.4, Math.max(l * rig.headLen * 0.4, 6 * px));
     }
 
-    // Landing dust (the flutter-in touchdown and the pounce).
+    // Landing dust (the flutter-in touchdown and the pounce); a glider's landing is a shockwave.
     const air = rig.ch[C_AIR]!;
-    if (prevAir > 0.5 && air < 0.5) dustAtFeet(1);
+    if (prevAir > 0.5 && air < 0.5) {
+      if (d.phase === 'enter' && rig.armWing) landingBlast(l, px);
+      else dustAtFeet(1);
+    }
     prevAir = air;
+    // A flier's shadow spreads and fades with its height.
+    st.lift = rig.armWing && air > 0.5 ? Math.max(0, rig.restAy - rig.y[rig.iS]!) : 0;
 
     // Swipe: the tail slaps down in front mid-flip (or on landing at the latest), and a dust
     // shockwave rolls out through the front ranks, near to far, as the crowd goes flying.
@@ -648,13 +720,17 @@ export function createDragon(scene: Scene): DragonRender {
       const mid = rig.iS + (BODY_N >> 1);
       const tipX = rig.placeX(rig.x[tip]!);
       const down = rig.y[tip]! > -0.06 && tipX < rig.placeX(rig.x[mid]!);
-      if (down || k > 0.3) {
+      if (down || k > (rig.ind.swipe === 'slam' ? 0.5 : 0.3)) {
         slamDone = true;
         toWorld(rig.x[tip]!, 0, tmp2);
         const s = Math.max(l * 0.07, 9 * px);
         world.burst(f.dust, tmp2.x, 0, 16, -Math.PI / 2, s * 1.2);
         world.burst(f.clod, tmp2.x, -s * 0.2, 10, f.clod.angle, s * 0.6);
-        cam.addTrauma(0.14 + 0.3 * Math.min(1, l / 25));
+        if (snowy > 0) {
+          world.burst(f.snow, tmp2.x, 0, 12, -Math.PI / 2, s * 1.1);
+          world.burst(f.flake, tmp2.x, -s * 0.2, 10, -Math.PI / 2, s * 0.9);
+        }
+        cam.addTrauma(0.14 + 0.3 * Math.min(1, l / 25) + (rig.ind.swipe === 'slam' ? 0.06 : 0));
         // A gust carries the impact a little past the tail tip into the ranks.
         waveX0 = tmp2.x;
         waveX1 = tmp2.x - Math.max(0.8, 0.35 * l);
@@ -690,7 +766,7 @@ export function createDragon(scene: Scene): DragonRender {
       const s = Math.max(l * 0.06, 9 * px) * (1 - 0.35 * u);
       for (let q = 0; q < n; q++) {
         const jx = wx + (Math.random() - 0.5) * s * 2;
-        world.burst(f.dust, jx, 0, 1, -Math.PI / 2 - 0.5, s * 1.3);
+        world.burst(snowy > 0 && q % 2 === 1 ? f.snow : f.dust, jx, 0, 1, -Math.PI / 2 - 0.5, s * 1.3);
         if (q % 2 === 0) world.burst(f.streak, jx, -Math.random() * s * 1.2, 1, Math.PI, s * 0.8);
         if (q % 3 === 0) world.burst(f.clod, jx, 0, 1, f.clod.angle, s * 0.45);
       }
@@ -698,13 +774,15 @@ export function createDragon(scene: Scene): DragonRender {
     }
     lastK = k;
 
-    // Heavy footsteps for big dragons (never on frozen frames: the landing already happened).
+    // Heavy footsteps for big dragons (never on frozen frames: the landing already happened); a
+    // boss's tread shakes the ground harder.
     if (l >= 5 && dt > 0) {
       for (let q = 0; q < 4; q++) {
         if (!rig.landed[q]) continue;
         toWorld(rig.footX[q]!, 0, tmp2);
         world.burst(f.dust, tmp2.x, 0, 4, -Math.PI / 2, Math.max(l * 0.03, 6 * px));
-        cam.addTrauma(0.05 * Math.min(1, l / 30));
+        if (snowy > 0) world.burst(f.snow, tmp2.x, 0, 3, -Math.PI / 2, Math.max(l * 0.03, 6 * px));
+        cam.addTrauma(0.05 * Math.min(1, l / 30) * (1 + 1.4 * rig.ind.grand));
       }
     }
 
@@ -716,7 +794,7 @@ export function createDragon(scene: Scene): DragonRender {
         const cut = rig.indexOfS(front);
         rig.spineAt(cut, sp);
         const w = sp.back + sp.belly;
-        deathAcc += dt * (90 + 240 * w);
+        deathAcc += dt * (90 + 240 * w) * (1 + rig.ind.grand);
         const n = Math.min(12, Math.floor(deathAcc));
         deathAcc -= n;
         for (let q = 0; q < n; q++) {
@@ -744,9 +822,30 @@ export function createDragon(scene: Scene): DragonRender {
         }
       }
       lastDissolve = front;
+      // Wing-arm membranes burn away (the fingers shrink to the wrists) as the front nears the shoulders.
+      if (rig.armWing) {
+        const sh = rig.s[Math.round(rig.iS + rig.legAt[LEG_FN]! * BODY_N)]!;
+        const burn = 1 - clamp01((front - sh) / 0.35);
+        rig.wingBurn = burn;
+        if (burn > lastBurn + 0.02) {
+          for (let a = 0; a < 2; a++) {
+            const pts = rig.armPose[a]!.pts;
+            const F = rig.fingers;
+            for (let q = 0; q < F; q++) {
+              toWorld(pts[6 + q * 2]!, pts[7 + q * 2]!, tmp2);
+              world.burst(q % 2 === 0 ? f.ember : f.ash, tmp2.x, tmp2.y, 2, -Math.PI / 2, Math.max(l * 0.1, 8 * px));
+            }
+          }
+          lastBurn = burn;
+        }
+      }
     }
-    if (d.phase !== 'dying') rig.dissolve = 1;
-    st.alpha = d.phase === 'dying' ? 1 - sstep(0.985, 1, k) : 1;
+    if (d.phase !== 'dying') {
+      rig.dissolve = 1;
+      rig.wingBurn = 0;
+    }
+    // Dying: the last embers fade. Leaving: it fades once it's off stage (and stays gone).
+    st.alpha = d.phase === 'dying' ? 1 - sstep(0.985, 1, k) : d.phase === 'leave' ? 1 - sstep(0.86, 0.98, k) : 1;
 
     st.hot = hot;
     st.tongue = rig.ch[C_TONGUE]!;
@@ -768,6 +867,31 @@ export function createDragon(scene: Scene): DragonRender {
       toWorld(rig.footX[q]!, 0, tmp2);
       scene.particles.world.burst(fx.dust, tmp2.x, 0, 3, -Math.PI / 2, Math.max(l * 0.05, 6 * px) * scale);
     }
+  };
+
+  /**
+   * A flier's touchdown: a shockwave of dust (and snow) rolling out both ways under it, flakes and
+   * snow shaken off its back, and a camera shake scaled by its size (a boss's lands harder).
+   */
+  const landingBlast = (l: number, px: number): void => {
+    const fxs = fx;
+    if (!fxs) return;
+    const world = scene.particles.world;
+    const snowy = rig.ind.species.behavior.snow;
+    const grand = rig.ind.grand;
+    toWorld(rig.x[rig.iS + (BODY_N >> 1)]!, 0, tmp2);
+    const s = Math.max(l * 0.075, 9 * px);
+    groundBlast(world, fxs, tmp2.x, l * 0.35, s, 44 + Math.round(24 * grand), snowy);
+    dustAtFeet(1.5);
+    if (snowy > 0) {
+      // Snow shaken loose from the plates (a boss's mantle sheds a flurry).
+      for (let p = 0; p < rig.plateN; p += grand > 0 ? 1 : 2) {
+        rig.platePeak(p, sp);
+        toWorld(sp.x, sp.y, tmp2);
+        world.burst(fxs.flake, tmp2.x, tmp2.y, grand > 0 ? 5 : 2, -Math.PI / 2, Math.max(l * 0.03, 6 * px));
+      }
+    }
+    scene.camera.addTrauma(LAND_SHAKE + LAND_SHAKE_GROW * Math.min(1, l / LAND_SHAKE_SIZE) + LAND_SHAKE_BOSS * grand);
   };
 
   const draw = (ctx: CanvasRenderingContext2D, v: View): void => {
@@ -850,6 +974,7 @@ export function createDragon(scene: Scene): DragonRender {
   if (dbg.enabled) (window as unknown as { __dragon: unknown }).__dragon = { rig, choreo, st, env };
   dbg.section('Dragon rig');
   dbg.watch('rig', () => `${perfShow.toFixed(0)} us/frame  ${rig.pxPerU.toFixed(0)} px/L  m${rig.ind ? rig.ind.maturity.toFixed(2) : '-'}`);
+  dbg.watch('species', () => (rig.ind ? `${rig.ind.species.id}${rig.ind.boss ? ' / ' + rig.ind.boss.id : ''}` : '-'));
   dbg.toggle('show bones', () => showBones, (v) => (showBones = v));
   dbg.toggle('three heads', () => over?.heads === 3, (v) => {
     over = v ? { heads: 3 } : undefined;

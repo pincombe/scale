@@ -7,6 +7,7 @@ import type { Rect, Vec2 } from '../../lib/vec';
 import { Camera } from '../camera';
 import { CLASH_X } from '../world';
 import { createDragon } from './index';
+import { CameraDirector, framing } from '../director';
 import { WEAK_HIT_MIN_PX } from './tuning';
 
 interface FakeDragon {
@@ -19,10 +20,11 @@ interface FakeDragon {
   phaseT: number;
   phaseDur: number;
   attack: DragonAttack;
+  boss?: string | null;
 }
 
-function setup(size: number, seed: number, zoom = 100) {
-  const dragon: FakeDragon = { id: 1, index: 0, species: 'newt', size, seed, phase: 'idle', phaseT: 0, phaseDur: 5, attack: 'breath' };
+function setup(size: number, seed: number, zoom = 100, species = 'newt', boss: string | null = null) {
+  const dragon: FakeDragon = { id: 1, index: 0, species, size, seed, phase: 'idle', phaseT: 0, phaseDur: 5, attack: 'breath', boss };
   const camera = new Camera();
   camera.setViewport(1440, 900);
   camera.zoom = zoom;
@@ -205,6 +207,91 @@ describe('DragonView weak spot rules', () => {
         const edge = WEAK_HIT_MIN_PX / 100;
         expect(view.hitTest(w.x + edge * 0.95, w.y)).toBe('weak');
       }
+    }
+  });
+});
+
+describe('wyvern and bosses (DragonView)', () => {
+  it('a fledgling at the Mountain base framing: the middle is a normal hit, the weak spot a crit', () => {
+    // Knights are 1.8 m at 29% of a 900 px stage: 145 px/m; the first wyverns are ~0.8 m.
+    for (let seed = 1; seed < 40; seed++) {
+      const { view, setPhase } = setup(0.8, seed * 104729, 145, 'wyvern');
+      for (const [ph, at] of [['idle', 'breath'], ['windup', 'breath'], ['windup', 'swipe'], ['breath', 'breath']] as const) {
+        setPhase(ph, at, 0.5);
+        const b = view.bounds(r());
+        expect(view.hitTest(b.x + b.w * 0.42, b.y + b.h * 0.7)).toBe('body');
+        const w = view.weakSpot(v())!;
+        expect(view.hitTest(w.x, w.y)).toBe('weak');
+        expect(view.weakRadius!() * 145).toBeGreaterThanOrEqual(WEAK_HIT_MIN_PX - 1e-6);
+      }
+    }
+  });
+
+  it('windup targets stay >= 2 hit radii from every loose plate it can show, at the director framing', () => {
+    // The in-tier director's own framing for this dragon, on a big, a mid and a small stage.
+    const director = new CameraDirector({} as never);
+    for (const [stageW, stageH] of [[1100, 900], [900, 720], [700, 560]] as const) {
+      for (const size of [0.8, 1.5, 3, 12, 40, 60]) {
+        for (let seed = 1; seed < 16; seed++) {
+          const probe = setup(size, seed * 7919, 100, 'wyvern');
+          const f = director.frame(stageW, stageH, probe.view.bounds(r()), { x: -3, y: -1.9, w: 2.7, h: 1.9 }, framing());
+          const zoomPerM = f.zoom;
+          const { view, setPhase } = setup(size, seed * 7919, zoomPerM, 'wyvern');
+          setPhase('windup', 'swipe', 0.5);
+          const target = view.weakSpot(v())!;
+          expect(view.hitTest(target.x, target.y)).toBe('weak');
+          setPhase('idle');
+          const scale = view.weakSpot(v())!;
+          const px = Math.hypot(target.x - scale.x, target.y - scale.y) * zoomPerM;
+          expect(px).toBeGreaterThanOrEqual(2 * WEAK_HIT_MIN_PX);
+          // Mashing the loose plate during the windup never staggers.
+          setPhase('windup', 'swipe', 0.5);
+          expect(view.hitTest(scale.x, scale.y)).not.toBe('weak');
+          // Same for the breath windup's throat.
+          setPhase('windup', 'breath', 0.5);
+          const throat = view.weakSpot(v())!;
+          expect(Math.hypot(throat.x - scale.x, throat.y - scale.y) * zoomPerM).toBeGreaterThanOrEqual(2 * WEAK_HIT_MIN_PX);
+        }
+      }
+    }
+  });
+
+  it('breath windup: the throat; no weak spot while leaving, and nothing to hit once it is gone', () => {
+    const { view, setPhase } = setup(12, 5, 30, 'wyvern');
+    setPhase('windup', 'breath', 0.3);
+    const throat = view.weakSpot(v())!;
+    const head = view.headPoint(v());
+    expect(Math.hypot(throat.x - head.x, throat.y - head.y)).toBeLessThan(12 * 0.2);
+    setPhase('leave', 'breath', 0.3);
+    expect(view.weakSpot(v())).toBeNull();
+    setPhase('leave', 'breath', 0.97);
+    const b = view.bounds(r());
+    for (let i = 0; i < 40; i++) expect(view.hitTest(b.x + b.w * (i / 40), b.y + b.h * 0.5)).toBeNull();
+  });
+
+  it('rebuilds when species or boss change on the live state; unknown species look like the newt', () => {
+    const { view, dragon } = setup(20, 8, 30);
+    const newt = view.bounds(r());
+    dragon.species = 'wyvern';
+    const wyv = view.bounds(r());
+    expect(wyv).not.toEqual(newt);
+    dragon.boss = 'grimmaw';
+    const grim = view.bounds(r());
+    expect(grim).not.toEqual(wyv);
+    dragon.boss = null;
+    expect(view.bounds(r())).toEqual(wyv);
+    dragon.species = 'no-such-species';
+    expect(view.bounds(r())).toEqual(newt);
+  });
+
+  it('bosses keep the weak-spot rules: off-center, hittable, forgiving', () => {
+    for (const [species, boss] of [['newt', 'elderNewt'], ['wyvern', 'grimmaw']] as const) {
+      const { view, setPhase } = setup(40, 3, 600 / 40, species, boss);
+      setPhase('idle');
+      const w = view.weakSpot(v())!;
+      expect(view.hitTest(w.x, w.y)).toBe('weak');
+      const b = view.bounds(r());
+      expect(view.hitTest(b.x + b.w * 0.42, b.y + b.h * 0.7)).not.toBe('weak');
     }
   });
 });

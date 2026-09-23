@@ -1,8 +1,8 @@
 // Dragon particle effects on the shared world pool: fire breath, smoke, nostril puffs, embers and
-// ash from the dissolving corpse, dust from landings, slams and big footsteps.
-// Specs are built once per palette; emitters allocate nothing.
+// ash from the dissolving corpse, dust (and, for mountain species, snow) from landings, slams and
+// big footsteps. Specs are built once per palette; emitters allocate nothing.
 import type { ParticleSpec, ParticleSystem } from '../particles';
-import { CURVE_FADE, CURVE_FLASH, CURVE_LINEAR, CURVE_PULSE, particleSpec } from '../particles';
+import { CURVE_FADE, CURVE_FLASH, CURVE_HOLD, CURVE_LINEAR, CURVE_PULSE, particleSpec } from '../particles';
 import type { SpriteAtlas, BuiltinSprites } from '../atlas';
 import type { Palette } from '../palette';
 import { mixHex } from '../../lib/color';
@@ -21,6 +21,10 @@ export interface DragonFx {
   dust: ParticleSpec;
   spark: ParticleSpec;
   star: ParticleSpec;
+  /** Powder snow thrown up by landings and stamps (the palette's light tints it). */
+  snow: ParticleSpec;
+  /** Glittering flakes tossed high, drifting down. */
+  flake: ParticleSpec;
 }
 
 export function buildDragonFx(atlas: SpriteAtlas, sprites: BuiltinSprites, p: Palette, starSprite: number): DragonFx {
@@ -29,6 +33,7 @@ export function buildDragonFx(atlas: SpriteAtlas, sprites: BuiltinSprites, p: Pa
   const coreRamp = atlas.ramp(sprites.glow, ['#ffffff', '#ffe9a8', '#ffb347', p.accent.fire], 6, 0.6);
   const emberRamp = atlas.ramp(sprites.ember, ['#ffffff', '#ffe07a', p.accent.fire, p.accent.ember, '#6a1a08'], 6, 0.6);
   const dustColor = mixHex(p.haze, p.ground, 0.45);
+  const snowColor = mixHex('#f3f5ff', p.rim, 0.28);
   return {
     // A bright gust racing along the ground with the swipe's shockwave.
     streak: particleSpec({
@@ -250,7 +255,61 @@ export function buildDragonFx(atlas: SpriteAtlas, sprites: BuiltinSprites, p: Pa
       curve: CURVE_FADE,
       spinVar: 6,
     }),
+    snow: particleSpec({
+      sprite: atlas.tint(sprites.dust, snowColor),
+      ground: true,
+      life: 1.4,
+      lifeVar: 0.35,
+      speed: 2.4,
+      speedVar: 0.5,
+      angle: -Math.PI / 2,
+      spread: 1.3,
+      drag: 2.6,
+      gravity: 0.3,
+      size: 0.55,
+      sizeEnd: 2,
+      sizeVar: 0.4,
+      alpha: 0.62,
+      curve: CURVE_FADE,
+      rotVar: Math.PI,
+      spinVar: 0.8,
+    }),
+    flake: particleSpec({
+      sprite: atlas.tint(sprites.ember, snowColor, 0.3),
+      life: 1.8,
+      lifeVar: 0.4,
+      speed: 3.2,
+      speedVar: 0.6,
+      angle: -Math.PI / 2,
+      spread: 1.1,
+      drag: 2.4,
+      gravity: 1,
+      size: 0.075,
+      sizeEnd: 0.05,
+      sizeVar: 0.5,
+      alpha: 0.95,
+      curve: CURVE_HOLD,
+      spinVar: 3,
+    }),
   };
+}
+
+/**
+ * A shockwave rolling out both ways along the ground from x (a landing): dust, and powder snow
+ * when `snow` > 0, plus glittering flakes tossed up. `s` scales speeds and sizes (m).
+ */
+export function groundBlast(ps: ParticleSystem, fx: DragonFx, x: number, halfW: number, s: number, count: number, snow: number): void {
+  for (let n = 0; n < count; n++) {
+    const side = (n & 1) === 1 ? 1 : -1;
+    const x0 = x + side * halfW * ps.rand();
+    const sp = s * (5 + 9 * ps.rand());
+    const spec = snow > 0 && n % 3 !== 0 ? fx.snow : fx.dust;
+    const i = ps.spawn(spec, x0, -s * 0.1 * ps.rand(), side * sp, -sp * (0.06 + 0.22 * ps.rand()));
+    ps.size0[i] *= s * 1.3;
+    ps.size1[i] *= s * 1.5;
+    ps.grav[i] *= s;
+  }
+  if (snow > 0) ps.burst(fx.flake, x, -s * 0.3, Math.ceil(count * 0.4 * snow), -Math.PI / 2, s * 1.3);
 }
 
 /**

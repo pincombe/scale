@@ -15,10 +15,23 @@
 //   from the shoulder outward keep the segment lengths and give the trailing, whippy motion.
 //   Impulses (flinches) are just velocity kicks.
 // - Skin: per-node back/belly widths from a profile (+ swell modifiers) give the outline offsets.
-// - Legs: two-bone IK to feet that stay planted and step (diagonal gait) when displaced.
-// - Wings: arm + finger fan with a membrane; flap/buzz/spread channels.
+// - Legs: two-bone IK to feet that stay planted and step (diagonal gait) when displaced; a
+//   procedural run cycle (C_RUN) for walks and scurries too fast to step; airborne legs dangle,
+//   tuck back for flight or reach down for a landing (C_TUCK).
+// - Wings: arm + finger fan with a membrane; flap/buzz/spread channels. Two layouts:
+//   back wings (the newt: a small wing on the withers) or wing-arms (the wyvern: the wings ARE the
+//   forelegs). Wing-arms live in the front leg slots: shoulder -> elbow -> wrist is a planted
+//   two-bone IK leg (the elbow juts up), blended by angle toward a spread/flapping wing pose
+//   (C_WSPREAD lifts the wrist off the ground); the fingers fold back along the forearm when
+//   grounded and fan out as the wing opens.
+// - Back: an optional row of craggy rock plates (near and far), laid out once per individual.
 // - Heads: a rigid head frame per neck end, with a damped pitch spring and a look target.
+// - Ground: at y = groundY (u, default 0): the targets, the spine, the chin and planted feet stay
+//   above it. Airborne phases lift the root (C_Y) and set C_AIR; moves that travel far (flight
+//   paths, walks) set `carry` so the root offset moves the body rigidly instead of through the
+//   springs (which would trail a fast path).
 import { HeadShape } from './head';
+import { Rng } from '../../lib/rng';
 import type { Individual } from './species';
 
 export const MAX_NODES = 48;
@@ -27,6 +40,9 @@ export const BODY_N = 8;
 export const TAIL_N = 18;
 export const MAX_HEADS = 3;
 export const MAX_FINGERS = 4;
+export const MAX_PLATES = 16;
+/** Vertices of a rock club's outline. */
+export const CLUB_N = 9;
 
 // ---- pose channels (indices into rig.ch / rig.target) ----
 export const C_X = 0; // root offset x (u)
@@ -66,7 +82,9 @@ export const C_DROOP = 33; // 0..1 limp (wings, gills and tail sag)
 export const C_SPIN = 34; // whole-body spin about the body's center (rad)
 export const C_FACE = 35; // facing: 1 = normal (toward the army), -1 = turned around (mirror about midX)
 export const C_SHIFT = 36; // world-space x offset of the whole dragon (u), applied outside the pose
-export const NCH = 37;
+export const C_TUCK = 37; // airborne legs: 0 dangle, 1 tucked back (flight), -1 reaching down (landing)
+export const C_RUN = 38; // 0..1 procedural run cycle (rig.runHz, rig.runStride)
+export const NCH = 39;
 
 /** Smoothing rate per channel (1/s; 0 = follow the target exactly). */
 const RATE = new Float32Array(NCH);
@@ -93,6 +111,8 @@ RATE[C_SWAY] = 4;
 RATE[C_SPIN] = 0;
 RATE[C_FACE] = 30;
 RATE[C_SHIFT] = 30;
+RATE[C_TUCK] = 7;
+RATE[C_RUN] = 8;
 
 /** Scratch result of sampling the spine at a fractional node index. */
 export interface SpineSample {
@@ -282,6 +302,8 @@ export class DragonRig {
   stepDist = 0.1;
   stepTime = 0.15;
   private readonly ikOut = new Float64Array(4);
+  /** Last run-cycle swing value per leg (footfall detection). */
+  private readonly runSw = new Float64Array(4);
 
   // ---- wings ----
   wingOn = false;
@@ -294,6 +316,56 @@ export class DragonRig {
   /** Wing angle of the near wing this frame (rad) and the buzz blur half-angle. */
   wingAngle = 0;
   buzzSpread = 0;
+
+  // ---- wing-arms (the wings are the forelegs: front leg slots LEG_FN / LEG_FF) ----
+  /** True when the forelegs are wing-arms (then wingOn is false: no back wings). */
+  armWing = false;
+  /** Wing-arm poses (near, far): shoulder, elbow, wrist, finger tips, trailing root (x/y interleaved). */
+  readonly armPose: readonly [WingPose, WingPose] = [
+    { n: 0, pts: new Float32Array(2 * (MAX_FINGERS + 4)) },
+    { n: 0, pts: new Float32Array(2 * (MAX_FINGERS + 4)) },
+  ];
+  /** How far each wing-arm is lifted into its wing pose this frame (0 planted .. 1 spread). */
+  readonly armLift = new Float64Array(2);
+  /** Membrane burn (dying): 0 whole .. 1 burnt away (the fingers shrink toward the wrist). */
+  wingBurn = 0;
+
+  // ---- gaits ----
+  /** Run cycle phase (rad), frequency (Hz) and stride (fraction of each leg's reach). */
+  runPhase = 0;
+  runHz = 2;
+  runStride = 0.4;
+
+  // ---- ground ----
+  /** Ground level (u, +y down). 0 = the stage ground. */
+  groundY = 0;
+  /**
+   * Carry (set per frame by moves that travel far: flight paths, walks): the root offset
+   * (C_X, C_Y) moves the whole body rigidly, a moving frame, instead of through the springs, which
+   * then only animate the pose within it (no lag and no dangling behind a fast path).
+   */
+  carry = false;
+  private rootX = 0;
+  private rootY = 0;
+
+  // ---- rock plates (laid out per individual in setup) ----
+  plateN = 0;
+  /** Near row then far row: center (fractional main-chain node index), half-width (nodes), height (u), lean, jag shape. */
+  readonly plateI = new Float32Array(MAX_PLATES * 2);
+  readonly plateW = new Float32Array(MAX_PLATES * 2);
+  readonly plateH = new Float32Array(MAX_PLATES * 2);
+  readonly plateLean = new Float32Array(MAX_PLATES * 2);
+  readonly plateJ1 = new Float32Array(MAX_PLATES * 2);
+  readonly plateJ2 = new Float32Array(MAX_PLATES * 2);
+  readonly plateJ3 = new Float32Array(MAX_PLATES * 2);
+  /** Far-row plates are stored after the near row: [plateN, plateN + plateFarN). */
+  plateFarN = 0;
+  /** Tallest plate over each main-chain node (u), for the hit test. */
+  readonly nodePlate = new Float32Array(MAX_NODES);
+
+  // ---- rock club outline (per individual): angle offset and radius factor per vertex ----
+  readonly clubA = new Float32Array(CLUB_N);
+  readonly clubR2 = new Float32Array(CLUB_N);
 
   private readonly sp: SpineSample = { x: 0, y: 0, nx: 0, ny: -1, back: 0, belly: 0 };
   private readonly sp2: SpineSample = { x: 0, y: 0, nx: 0, ny: -1, back: 0, belly: 0 };
@@ -317,6 +389,7 @@ export class DragonRig {
     this.derive(k);
     this.restPose();
     this.fitGround(k);
+    this.layoutRock(k);
     this.measureBounds();
     // Shift so the rest pose's front edge is x = 0 and snap everything to rest.
     const shift = -this.restMinX;
@@ -496,23 +569,25 @@ export class DragonRig {
     this.restAy = -(this.belly0[iS]! + ind.clearance * scale);
     this.crouchDepth = Math.max(ind.clearance * scale, 0.02) + 0.35 * this.belly0[iS]!;
 
-    // Legs.
+    // Legs. Wing-arms take the front slots (their bones: humerus = upper, forearm = lower).
     const pairs = Math.max(1, Math.min(2, ind.legPairs));
+    const armWing = ind.wingWalk > 0.5 && ind.wingSpan > 0.005;
+    this.armWing = armWing;
     this.legCount = 0;
     for (let k = 0; k < 4; k++) {
       const front = k < 2;
-      const on = pairs === 2 || !front;
+      const on = pairs === 2 || !front || armWing;
       this.legOn[k] = on ? 1 : 0;
       if (on) this.legCount++;
       this.legAt[k] = front ? ind.frontLegAt : ind.backLegAt;
       this.legFar[k] = k === LEG_FF || k === LEG_BF ? 1 : 0;
       this.legBend[k] = front ? -1 : 1;
-      this.legR[k] = ind.legWidth * scale * (front ? 1 : 1.12);
+      this.legR[k] = front && armWing ? ind.armWidth * scale : ind.legWidth * scale * (front ? 1 : 1.12);
     }
     // Leg lengths from the rest hip height (computed in restPose via legReach()).
 
-    // Wings.
-    this.wingOn = ind.wingSpan > 0.005;
+    // Wings (back wings; wing-arms use the same finger set).
+    this.wingOn = !armWing && ind.wingSpan > 0.005;
     this.wingAt = ind.wingAt;
     const span = ind.wingSpan * scale;
     this.wingArm = span * 0.42;
@@ -536,6 +611,16 @@ export class DragonRig {
       const hipY = this.hipY[k]!;
       const rA = this.legR[k]! * 0.55;
       const h = Math.max(0.01, -hipY - rA);
+      if (this.armWing && k < 2) {
+        // Wing-arm: a short humerus up and back to the elbow, a long forearm down to the wrist,
+        // planted a little behind the shoulder (the folded arm is a tall peak over the shoulder).
+        const reach = h * ind.armBend;
+        this.legA[k] = reach * ind.armSplit;
+        this.legB[k] = reach * (1 - ind.armSplit);
+        this.legFoot[k] = reach * 0.09;
+        this.legHome[k] = (this.legFar[k] ? 0.03 : 0.14) * h;
+        continue;
+      }
       const reach = h * ind.legBend;
       this.legA[k] = reach * ind.legSplit;
       this.legB[k] = reach * (1 - ind.legSplit);
@@ -560,8 +645,8 @@ export class DragonRig {
     out[C_TCURL] = ind.tailCurl;
     out[C_TRAISE] = ind.tailDroop;
     out[C_TSTIFF] = 1;
-    // Little wings held half-open like a baby dragon's; big ones fold.
-    out[C_WSPREAD] = 0.6 - 0.35 * ind.maturity;
+    // Little wings held half-open like a baby dragon's; big ones fold. Wing-arms stand on their wrists.
+    out[C_WSPREAD] = this.armWing ? 0 : 0.6 - 0.35 * ind.maturity;
     out[C_WLIFT] = -0.28 + 0.2 * ind.maturity;
     out[C_LOOKX] = -1;
     out[C_LOOKY] = -0.1;
@@ -595,6 +680,7 @@ export class DragonRig {
       this.solveLeg(k);
     }
     this.poseWings(0);
+    this.poseArms();
   }
 
   /** Raise/lower the rest anchor so the lowest belly point clears the ground by `clearance`. */
@@ -634,6 +720,11 @@ export class DragonRig {
     const ind = this.ind;
     const tipR = Math.max(this.spadeLen * 0.7, this.clubR * 1.7);
     inc(this.x[n - 1]! + tipR, this.y[n - 1]! - tipR);
+    // Rock plates (their peaks).
+    for (let p = 0; p < this.plateN + this.plateFarN; p++) {
+      this.platePeak(p, this.sp);
+      inc(this.sp.x, this.sp.y);
+    }
     // Heads (upper outline, jaw, horn tips, gill tips).
     const hs = this.head;
     for (let hh = 0; hh < this.heads; hh++) {
@@ -646,6 +737,7 @@ export class DragonRig {
       for (let i = 0; i < hs.upperN; i++) pt(hs.upper[i * 2]!, hs.upper[i * 2 + 1]!);
       for (let i = 0; i < hs.jawN; i++) pt(hs.jaw[i * 2]!, hs.jaw[i * 2 + 1]!);
       for (let k = 0; k < hs.hornN; k++) pt(hs.horns[k * 10 + 4]!, hs.horns[k * 10 + 5]!);
+      for (let k = 0; k < hs.crownN; k++) pt(hs.crown[k * 6 + 2]!, hs.crown[k * 6 + 3]!);
       for (let k = 0; k < hs.gillN; k++) {
         const g = k * 5;
         const ga = hs.gills[g + 2]!;
@@ -659,11 +751,18 @@ export class DragonRig {
       inc(this.footX[k]! - this.legFoot[k]!, 0);
       inc(this.hipX[k]!, this.hipY[k]!);
       inc(this.kneeX[k]! + this.legR[k]!, this.kneeY[k]!);
+      if (this.armWing && k < 2) inc(this.kneeX[k]!, this.kneeY[k]! - this.legR[k]! * 1.6);
     }
     // Wings at rest.
     if (this.wingOn) {
       const w = this.wingPose;
       for (let i = 0; i < w.n; i++) inc(w.pts[i * 2]!, w.pts[i * 2 + 1]!);
+    }
+    if (this.armWing) {
+      for (let a = 0; a < 2; a++) {
+        const w = this.armPose[a]!;
+        for (let i = 0; i < w.n; i++) inc(w.pts[i * 2]!, w.pts[i * 2 + 1]!);
+      }
     }
     this.restMinX = x0;
     this.restMinY = y0;
@@ -673,6 +772,8 @@ export class DragonRig {
 
   /** Jump the dynamic state to the targets (no velocity), plant the feet. */
   snap(): void {
+    this.rootX = this.ch[C_X]!;
+    this.rootY = this.ch[C_Y]!;
     for (let i = 0; i < this.total; i++) {
       this.x[i] = this.tx[i]!;
       this.y[i] = this.ty[i]!;
@@ -692,14 +793,15 @@ export class DragonRig {
     for (let k = 0; k < 4; k++) {
       if (!this.legOn[k]) continue;
       this.hipAt(k);
-      const air = this.ch[C_AIR]! > 0.5;
+      const air = this.ch[C_AIR]! > 0.5 || (this.armWing && k < 2 && this.ch[C_WSPREAD]! >= 0.5);
       this.footX[k] = this.hipX[k]! + this.legHome[k]!;
-      this.footY[k] = air ? this.hipY[k]! + (this.legA[k]! + this.legB[k]!) * 0.8 : 0;
+      this.footY[k] = air ? this.hipY[k]! + (this.legA[k]! + this.legB[k]!) * 0.8 : this.groundY;
       this.stepU[k] = -1;
       this.legAir[k] = air ? 1 : 0;
       this.solveLeg(k);
     }
     this.poseWings(0);
+    this.poseArms();
   }
 
   // ------------------------------------------------------------------------------------------
@@ -725,13 +827,35 @@ export class DragonRig {
     if (this.swayPhase > 1e4) this.swayPhase -= 1e4 - (1e4 % (Math.PI * 2));
     if (this.flapPhase > 1e4) this.flapPhase -= 1e4 - (1e4 % (Math.PI * 2));
     if (this.buzzPhase > 1e4) this.buzzPhase -= 1e4 - (1e4 % (Math.PI * 2));
+    this.runPhase += dt * this.runHz * Math.PI * 2;
+    if (this.runPhase > 1e4) this.runPhase -= 1e4 - (1e4 % (Math.PI * 2));
 
     this.solveTargets();
+    if (this.carry) this.carryBody();
+    this.rootX = ch[C_X]!;
+    this.rootY = ch[C_Y]!;
     this.simulate(dt);
     this.frames();
     this.updateHeads(dt);
     this.updateLegs(dt);
     this.poseWings(dt);
+    this.poseArms();
+  }
+
+  /** Move the body (and airborne feet) with this frame's change of the root offset. */
+  private carryBody(): void {
+    const dx = this.ch[C_X]! - this.rootX;
+    const dy = this.ch[C_Y]! - this.rootY;
+    if (dx === 0 && dy === 0) return;
+    for (let i = 0; i < this.total; i++) {
+      this.x[i] = this.x[i]! + dx;
+      this.y[i] = this.y[i]! + dy;
+    }
+    for (let k = 0; k < 4; k++) {
+      if (!this.legOn[k] || !this.legAir[k]) continue;
+      this.footX[k] = this.footX[k]! + dx;
+      this.footY[k] = this.footY[k]! + dy;
+    }
   }
 
   /** Channels -> target node positions (forward kinematics, pitch, tail IK, ground). */
@@ -813,8 +937,9 @@ export class DragonRig {
     const w = ch[C_TIK]!;
     if (w > 0.001) this.tailIK(w, ch[C_TIKX]!, ch[C_TIKY]!);
     // Keep the targets out of the ground (the tail lies on it rather than through it).
+    const g = this.groundY;
     for (let i = iS; i < n; i++) {
-      const lim = -this.belly0[i]!;
+      const lim = g - this.belly0[i]!;
       if (ty[i]! > lim) ty[i] = lim;
     }
   }
@@ -952,14 +1077,15 @@ export class DragonRig {
       }
     }
     const iS = this.iS;
+    const g = this.groundY;
     for (let i = iS; i < this.n; i++) {
-      const lim = -this.belly[i]! * 0.9;
+      const lim = g - this.belly[i]! * 0.9;
       if (y[i]! > lim) y[i] = lim;
     }
     // Heads: keep the chin above the ground.
     for (let h = 0; h < this.heads; h++) {
       const i = this.headNode[h]!;
-      const lim = -this.headLen * 0.28;
+      const lim = g - this.headLen * 0.28;
       if (y[i]! > lim) y[i] = lim;
     }
   }
@@ -1095,11 +1221,21 @@ export class DragonRig {
   private hipAt(k: number): void {
     this.spineAtBody(this.legAt[k]!, this.sp);
     const far = this.legFar[k]!;
+    if (this.armWing && k < 2) {
+      // The wing-arm's shoulder sits high on the chest (the wing root), not under the belly.
+      this.hipX[k] = this.sp.x + this.sp.nx * this.sp.back * 0.3 + (far ? 0.012 : 0);
+      this.hipY[k] = this.sp.y + this.sp.ny * this.sp.back * 0.3 - (far ? 0.01 : 0);
+      return;
+    }
     this.hipX[k] = this.sp.x - this.sp.nx * this.sp.belly * 0.42 + (far ? 0.012 : 0);
     this.hipY[k] = this.sp.y - this.sp.ny * this.sp.belly * 0.42 - (far ? 0.01 : 0);
   }
 
   private solveLeg(k: number): void {
+    if (this.armWing && k < 2) {
+      this.solveArm(k);
+      return;
+    }
     const rA = this.legR[k]! * 0.55;
     ik2(this.hipX[k]!, this.hipY[k]!, this.footX[k]!, this.footY[k]! - rA, this.legA[k]!, this.legB[k]!, this.legBend[k]!, this.ikOut);
     this.kneeX[k] = this.ikOut[0]!;
@@ -1111,19 +1247,97 @@ export class DragonRig {
     if (this.kneeY[k]! > -kr) this.kneeY[k] = -kr;
   }
 
+  /**
+   * A wing-arm: two-bone IK to the planted wrist (the elbow juts up and back), then blended by angle
+   * toward the spread wing pose as the arm lifts (armLift). The folded arm is nearly closed, so when
+   * the chest dips too low for it the wrist slides along the ground instead of the IK flipping.
+   */
+  private solveArm(k: number): void {
+    const hx = this.hipX[k]!;
+    const hy = this.hipY[k]!;
+    const a = this.legA[k]!;
+    const b = this.legB[k]!;
+    let tx = this.footX[k]!;
+    // The wrist rests on its knuckle pad (drawn at 0.78 of the arm radius).
+    const ty = this.footY[k]! - this.legR[k]! * 0.8;
+    const minD = Math.abs(b - a) * 1.04;
+    const dy = ty - hy;
+    let dx = tx - hx;
+    if (dx * dx + dy * dy < minD * minD) {
+      const need = Math.sqrt(Math.max(0, minD * minD - dy * dy));
+      dx = dx >= 0 ? need : -need;
+      tx = hx + dx;
+    }
+    ik2(hx, hy, tx, ty, a, b, this.legBend[k]!, this.ikOut);
+    let ex = this.ikOut[0]!;
+    let ey = this.ikOut[1]!;
+    let wx = this.ikOut[2]!;
+    let wy = this.ikOut[3]!;
+    const lift = clamp01(this.ch[C_WSPREAD]!);
+    const slot = k === LEG_FF ? 1 : 0;
+    this.armLift[slot] = lift;
+    if (lift > 0.001) {
+      // Spread pose, relative to the body line at the shoulder (tangent toward the tail).
+      this.spineAtBody(this.legAt[k]!, this.sp);
+      const bodyA = Math.atan2(this.sp.nx, -this.sp.ny);
+      const ch = this.ch;
+      const amp = ch[C_WFLAP]!;
+      const ph = this.flapPhase;
+      const flap = amp * Math.sin(ph);
+      const lf = ch[C_WLIFT]! + ch[C_DROOP]! * 0.45 - (slot ? 0.12 : 0);
+      const hS = bodyA - 1.95 + lf + flap;
+      const fS = hS + 1.2 + amp * 0.55 * Math.sin(ph - 0.9) + ch[C_DROOP]! * 0.4;
+      const hI = Math.atan2(ey - hy, ex - hx);
+      const fI = Math.atan2(wy - ey, wx - ex);
+      const h = hI + wrapPi(hS - hI) * lift;
+      // The forearm swings back and up past the flank (never forward through the chest).
+      const f = fI + (wrapPi(fS - fI + 2.2) - 2.2) * lift;
+      ex = hx + Math.cos(h) * a;
+      ey = hy + Math.sin(h) * a;
+      wx = ex + Math.cos(f) * b;
+      wy = ey + Math.sin(f) * b;
+    }
+    this.kneeX[k] = ex;
+    this.kneeY[k] = ey;
+    this.ankX[k] = wx;
+    this.ankY[k] = wy;
+  }
+
   private updateLegs(dt: number): void {
     const air = this.ch[C_AIR]! > 0.5;
     const bodyVx = this.vx[this.iS]!;
     const stepTime = this.stepTime / Math.max(0.3, this.tempo);
+    const g = this.groundY;
+    const run = this.ch[C_RUN]!;
     for (let k = 0; k < 4; k++) {
       this.landed[k] = 0;
       if (!this.legOn[k]) continue;
       this.hipAt(k);
       const reach = this.legA[k]! + this.legB[k]!;
-      if (air) {
-        // Dangling: feet hang under the hips, trailing a little.
-        const tx = this.hipX[k]! + this.legHome[k]! * 0.3 + 0.25 * reach;
-        const ty = this.hipY[k]! + reach * 0.72;
+      const arm = this.armWing && k < 2;
+      // A wing-arm lifted into its wing pose is off the ground like an airborne leg.
+      const armUp = arm && this.ch[C_WSPREAD]! >= 0.5;
+      if (air || armUp) {
+        let tx: number;
+        let ty: number;
+        if (!air) {
+          // Standing with the wing raised: the wrist hovers over the spot it will plant on.
+          tx = this.hipX[k]! + this.legHome[k]!;
+          ty = g;
+        } else if (arm || this.ch[C_TUCK]! === 0) {
+          // Dangling: feet hang under the hips, trailing a little.
+          tx = this.hipX[k]! + this.legHome[k]! * 0.3 + 0.25 * reach;
+          ty = this.hipY[k]! + reach * 0.72;
+        } else {
+          // Tucked back for flight (C_TUCK > 0) or reaching down for a landing (< 0).
+          const tk = this.ch[C_TUCK]!;
+          const bk = tk > 0 ? tk : 0;
+          const fw = tk < 0 ? -tk : 0;
+          const dxD = this.legHome[k]! * 0.3 + 0.25 * reach;
+          const dyD = reach * 0.72;
+          tx = this.hipX[k]! + dxD + (0.62 * reach - dxD) * bk + (this.legHome[k]! * 0.5 - 0.2 * reach - dxD) * fw;
+          ty = this.hipY[k]! + dyD + (0.3 * reach - dyD) * bk + (0.93 * reach - dyD) * fw;
+        }
         const f = 1 - Math.exp(-18 * dt);
         this.footX[k] = this.footX[k]! + (tx - this.footX[k]!) * f;
         this.footY[k] = this.footY[k]! + (ty - this.footY[k]!) * f;
@@ -1132,10 +1346,30 @@ export class DragonRig {
       } else if (this.legAir[k]) {
         // Touchdown: plant where it is, then step home if needed.
         this.legAir[k] = 0;
-        this.stepU[k] = 0;
-        this.stepX0[k] = this.footX[k]!;
-        this.stepY0[k] = Math.min(0, this.footY[k]!);
-        this.stepX1[k] = this.hipX[k]! + this.legHome[k]!;
+        const home = this.hipX[k]! + this.legHome[k]!;
+        if (arm && Math.abs(this.footX[k]! - home) < this.stepDist * 0.4 && this.footY[k]! > g - reach * 0.08) {
+          // A wing-arm folding down onto the spot it hovered over: planted, no extra step.
+          this.stepU[k] = -1;
+          this.footY[k] = g;
+          this.landed[k] = 1;
+        } else {
+          this.stepU[k] = 0;
+          this.stepX0[k] = this.footX[k]!;
+          this.stepY0[k] = Math.min(g, this.footY[k]!);
+          this.stepX1[k] = home;
+        }
+      } else if (run > 0.001) {
+        // Run cycle: feet swing around their homes (diagonal pairs together), lifted on the swing.
+        const ph = this.runPhase + (k === LEG_FN || k === LEG_BF ? 0 : Math.PI) + (arm ? 0.5 : 0);
+        const sw = Math.sin(ph);
+        const cx = this.hipX[k]! + this.legHome[k]! + this.runStride * reach * Math.cos(ph);
+        const cy = g - (sw > 0 ? sw * reach * 0.3 : 0);
+        const w = run > 0.999 ? 1 : run;
+        this.footX[k] = this.footX[k]! + (cx - this.footX[k]!) * w;
+        this.footY[k] = this.footY[k]! + (cy - this.footY[k]!) * w;
+        if (sw <= 0 && this.runSw[k]! > 0) this.landed[k] = 1;
+        this.runSw[k] = sw;
+        this.stepU[k] = -1;
       } else if (this.stepU[k]! >= 0) {
         let u = this.stepU[k]! + dt / stepTime;
         // Re-aim the landing so fast bodies don't leave the feet behind.
@@ -1144,14 +1378,20 @@ export class DragonRig {
         if (u >= 1) {
           u = -1;
           this.footX[k] = this.stepX1[k]!;
-          this.footY[k] = 0;
+          this.footY[k] = g;
           this.landed[k] = 1;
         } else {
           const e = u * u * (3 - 2 * u);
           this.footX[k] = this.stepX0[k]! + (this.stepX1[k]! - this.stepX0[k]!) * e;
-          this.footY[k] = this.stepY0[k]! * (1 - e) - Math.sin(Math.PI * u) * reach * 0.32;
+          this.footY[k] = (this.stepY0[k]! - g) * (1 - e) + g - Math.sin(Math.PI * u) * reach * 0.32;
         }
         this.stepU[k] = u;
+      } else if (this.footY[k]! < g - 1e-4) {
+        // Left in the air by the run cycle: step down (home) instead of hovering there.
+        this.stepU[k] = 0;
+        this.stepX0[k] = this.footX[k]!;
+        this.stepY0[k] = this.footY[k]!;
+        this.stepX1[k] = this.hipX[k]! + this.legHome[k]!;
       } else {
         const home = this.hipX[k]! + this.legHome[k]!;
         const err = this.footX[k]! - home;
@@ -1173,13 +1413,142 @@ export class DragonRig {
           if (!blocked || Math.abs(err) > lim * 2.2) {
             this.stepU[k] = 0;
             this.stepX0[k] = this.footX[k]!;
-            this.stepY0[k] = 0;
+            this.stepY0[k] = g;
             this.stepX1[k] = home + bodyVx * stepTime * 0.5;
           }
         }
       }
       this.solveLeg(k);
     }
+  }
+
+  // ---- wing-arms ----
+
+  /** Finger tips and membrane outline of both wing-arms from the solved arm bones (allocation-free). */
+  private poseArms(): void {
+    if (!this.armWing) return;
+    const ch = this.ch;
+    const amp = ch[C_WFLAP]!;
+    const ph = this.flapPhase;
+    // Fold a little on the upstroke; the finger tips whip behind the stroke.
+    const upstroke = amp * Math.max(0, -Math.sin(ph));
+    const whip = amp * 0.35 * Math.sin(ph - 1.7);
+    const burn = 1 - this.wingBurn;
+    const F = this.fingers;
+    const root = this.ind.wingRoot > 0 ? this.ind.wingRoot : this.wingAt + 0.34;
+    for (let slot = 0; slot < 2; slot++) {
+      const k = slot === 0 ? LEG_FN : LEG_FF;
+      const w = this.armPose[slot]!;
+      const p = w.pts;
+      const ex = this.kneeX[k]!;
+      const ey = this.kneeY[k]!;
+      const wx = this.ankX[k]!;
+      const wy = this.ankY[k]!;
+      p[0] = this.hipX[k]!;
+      p[1] = this.hipY[k]!;
+      p[2] = ex;
+      p[3] = ey;
+      p[4] = wx;
+      p[5] = wy;
+      const fore = Math.atan2(wy - ey, wx - ex);
+      // The hand folds first and opens last: the fingers unfold once the arm is well up, and fold
+      // back along the forearm before it comes down.
+      const open = smooth((this.armLift[slot]! - 0.4) / 0.55);
+      for (let f = 0; f < F; f++) {
+        // Folded: the hand lies back along the forearm (the tips reach up past the elbow).
+        const fold = Math.PI + 0.12 + 0.16 * f;
+        const u = F > 1 ? f / (F - 1) : 0;
+        const spread = (0.3 + 1.55 * u) * (1 - 0.3 * upstroke) + whip * (0.5 + 0.5 * u);
+        const a = fore + fold + (spread - fold) * open;
+        const len = this.fingerLen[f]! * (0.9 + 0.1 * open) * burn;
+        p[6 + f * 2] = wx + Math.cos(a) * len;
+        // A sagging wing rests its tips on the ground rather than through it.
+        const ty = wy + Math.sin(a) * len;
+        p[7 + f * 2] = ty > this.groundY - 0.004 ? this.groundY - 0.004 : ty;
+      }
+      // The trailing edge meets the body behind the hip when open (a little higher on the far side);
+      // folded, the slack membrane hangs to the hind knee: a dark web between arm and leg.
+      this.spineAtBody(root, this.sp2);
+      const o = this.sp2.back * (0.35 + slot * 0.2);
+      const sx = this.sp2.x + this.sp2.nx * o;
+      const sy = this.sp2.y + this.sp2.ny * o;
+      const kl = slot === 0 ? LEG_BN : LEG_BF;
+      const fx = this.legOn[kl] ? this.kneeX[kl]! : sx;
+      const fy = this.legOn[kl] ? this.kneeY[kl]! : sy;
+      p[6 + F * 2] = fx + (sx - fx) * open;
+      p[7 + F * 2] = fy + (sy - fy) * open;
+      w.n = F + 4;
+    }
+  }
+
+  // ---- rock ----
+
+  /** Lay out the rock plates and the rock club (the individual's own seeded stream). */
+  private layoutRock(scale: number): void {
+    const ind = this.ind;
+    this.plateN = 0;
+    this.plateFarN = 0;
+    this.nodePlate.fill(0);
+    const N = Math.min(MAX_PLATES, ind.plateCount | 0);
+    const H = ind.plates * scale;
+    if (N > 0 && H > 1e-6) {
+      const rng = new Rng((ind.seed ^ 0x9a7e5c1d) >>> 0);
+      const s0 = ind.plateFrom;
+      const span = Math.max(0.02, ind.plateTo - s0);
+      const step = span / N;
+      const jag = ind.plateJag;
+      // Near row, then a far row staggered between them (drawn behind the body, hazier).
+      for (let row = 0; row < 2; row++) {
+        const count = row === 0 ? N : N - 1;
+        for (let q = 0; q < count; q++) {
+          const i = row === 0 ? q : N + q;
+          const t = (q + (row === 0 ? 0.5 : 1)) / N;
+          const sc = s0 + span * t + (rng.float() - 0.5) * step * 0.35;
+          const hw = step * (row === 0 ? 0.85 : 0.7) * (0.85 + 0.35 * rng.float());
+          // Tallest over the middle of the back, smaller toward the neck and the tail.
+          const prof = 0.45 + 0.55 * Math.sin(Math.PI * Math.min(1, Math.pow(t, 0.8)));
+          const h = H * prof * (0.75 + 0.45 * rng.float()) * (row === 0 ? 1 : 0.8);
+          const c = this.indexOfS(sc);
+          this.plateI[i] = c;
+          this.plateW[i] = Math.max(0.15, (this.indexOfS(sc + hw) - this.indexOfS(sc - hw)) * 0.5);
+          this.plateH[i] = h;
+          this.plateLean[i] = 0.25 + 0.4 * rng.float();
+          this.plateJ1[i] = 0.35 + 0.3 * rng.float();
+          this.plateJ2[i] = jag * (0.15 + 0.35 * rng.float());
+          this.plateJ3[i] = 0.55 + 0.35 * rng.float();
+          if (row === 0) {
+            const a = Math.max(0, Math.floor(c - this.plateW[i]!));
+            const b = Math.min(this.n - 1, Math.ceil(c + this.plateW[i]!));
+            for (let n = a; n <= b; n++) if (this.nodePlate[n]! < h * 0.85) this.nodePlate[n] = h * 0.85;
+          }
+        }
+      }
+      this.plateN = N;
+      this.plateFarN = N - 1;
+    }
+    if (ind.clubJag > 0.01) {
+      // An irregular lump of rock with a few jutting crags.
+      const rng = new Rng((ind.seed ^ 0xc10b0b1) >>> 0);
+      for (let v = 0; v < CLUB_N; v++) {
+        this.clubA[v] = (v / CLUB_N) * Math.PI * 2 + (rng.float() - 0.5) * 0.4;
+        const crag = v % 3 === 1 ? 0.3 + 0.35 * rng.float() : 0;
+        this.clubR2[v] = (0.8 + 0.3 * rng.float()) * (1 - 0.12 * ind.clubJag) + crag * ind.clubJag;
+      }
+    }
+  }
+
+  /** Peak of plate p (u) on the live spine: its base in the back, lifted and leaning toward the tail. */
+  platePeak(p: number, out: SpineSample): SpineSample {
+    this.spineAt(this.plateI[p]!, out);
+    const h = this.plateH[p]!;
+    const lean = this.plateLean[p]!;
+    const b = out.back * 0.85 + h;
+    // Tangent toward the tail = (-ny, nx).
+    const x = out.x + out.nx * b - out.ny * lean * h;
+    const y = out.y + out.ny * b + out.nx * lean * h;
+    out.x = x;
+    out.y = y;
+    return out;
   }
 
   // ---- wings ----
@@ -1373,7 +1742,12 @@ export class DragonRig {
       this.wingPoints(this.wingAngle - 0.1, 1, this.wingHit);
       if (this.inWing(this.wingHit, px, py, pad)) return true;
     }
-    // Legs: capsules.
+    // Wing-arms: the membranes (near and far) count as body: big, forgiving targets.
+    if (this.armWing && this.dissolve >= this.s[Math.round(this.iS + this.legAt[0]! * BODY_N)]!) {
+      if (this.inWing(this.armPose[0], px, py, pad)) return true;
+      if (this.inWing(this.armPose[1], px, py, pad)) return true;
+    }
+    // Legs (and wing-arm bones): capsules.
     for (let k = 0; k < 4; k++) {
       if (!this.legOn[k] || this.dissolve < this.s[this.iS]! + 0.1) continue;
       const r = this.legR[k]! + pad;
@@ -1424,7 +1798,7 @@ export class DragonRig {
     const ny = this.ny[i]! + (this.ny[j]! - this.ny[i]!) * t;
     const side = ox * nx + oy * ny;
     let r = side >= 0 ? this.back[i]! + (this.back[j]! - this.back[i]!) * t : this.belly[i]! + (this.belly[j]! - this.belly[i]!) * t;
-    if (side >= 0) r += this.crestHeightAt(i);
+    if (side >= 0) r += this.crestHeightAt(i) + this.nodePlate[i]!;
     r += pad;
     return ox * ox + oy * oy <= r * r;
   }

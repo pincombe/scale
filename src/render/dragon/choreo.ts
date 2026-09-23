@@ -3,10 +3,26 @@
 //
 // Every frame starts from the rest pose, layers the always-on life (breathing, tail sway, blinks,
 // looking around), then the phase's choreography. The rig smooths every channel, so phase
-// changes and interruptions (death mid-swipe) never pop.
+// changes and interruptions (death mid-swipe) never pop. Species and bosses pick their entrance,
+// exit, breath and swipe styles (Individual.enter/leave/breath/swipe); the styles beyond the
+// newt's own live in ./moves.ts.
 import type { DragonAttack, DragonPhase } from '../../core';
 import { Rng } from '../../lib/rng';
 import type { BehaviorTuning } from './species';
+import {
+  breathRear,
+  dyingWinged,
+  enterGlide,
+  enterWalk,
+  leaveFly,
+  leaveScuttle,
+  leaveWalk,
+  staggerWings,
+  stretchWings,
+  swipeSlam,
+  windupRear,
+  windupSlam,
+} from './moves';
 import {
   C_AIR,
   C_ANGER,
@@ -63,11 +79,20 @@ export interface ChoreoEnv {
   lunge: number;
   aimX: number;
   aimY: number;
+  /** Phase duration (s). */
+  dur: number;
+  /** Glide-in: start height above the ground (u). */
+  enterH: number;
+  /** Leave: distance to off stage right (u) and, for fliers, the climb (u). */
+  exitDist: number;
+  exitH: number;
+  /** Tail slam: where the club lands (rig x, u, before the lunge shift). */
+  slamX: number;
 }
 
 type ActKey = keyof BehaviorTuning['acts'];
 type Act = 'rest' | ActKey;
-const ACTS: readonly ActKey[] = ['look', 'sniff', 'buzz', 'yawn', 'wag'];
+const ACTS: readonly ActKey[] = ['look', 'sniff', 'buzz', 'yawn', 'wag', 'stretch'];
 
 function sstep(a: number, b: number, x: number): number {
   const t = x <= a ? 0 : x >= b ? 1 : (x - a) / (b - a);
@@ -130,6 +155,7 @@ export class Choreo {
     const ind = rig.ind;
     const beh = ind.species.behavior;
     rig.restChannels(tg);
+    rig.carry = false;
     const dt = e.dt;
     const tempo = rig.tempo;
 
@@ -137,8 +163,9 @@ export class Choreo {
     this.breathPh += dt * beh.breathHz * Math.PI * 2 * tempo * 1.3;
     if (this.breathPh > 1e4) this.breathPh -= 6283.185307179586;
     const br = Math.sin(this.breathPh);
-    tg[C_CHEST] = 0.1 * br;
-    tg[C_Y] = -0.005 * br;
+    const deep = 1 + 0.6 * ind.grand;
+    tg[C_CHEST] = 0.1 * br * deep;
+    tg[C_Y] = -0.005 * br * deep;
     tg[C_NRAISE] += 0.035 * Math.sin(this.breathPh - 0.6);
     tg[C_HPITCH] += 0.025 * Math.sin(this.breathPh - 1);
     tg[C_SWAY] = beh.swayAmp;
@@ -169,23 +196,37 @@ export class Choreo {
         this.idle(rig, e);
         break;
       case 'enter':
-        this.enter(rig, e);
+        if (ind.enter === 'glide') enterGlide(rig, e);
+        else if (ind.enter === 'walk') enterWalk(rig, e);
+        else this.enter(rig, e);
         break;
       case 'windup':
-        if (e.attack === 'breath') this.windupBreath(rig, e);
+        if (e.attack === 'breath') {
+          if (ind.breath === 'rear') windupRear(rig, e);
+          else this.windupBreath(rig, e);
+        } else if (ind.swipe === 'slam') windupSlam(rig, e);
         else this.windupSwipe(rig, e);
         break;
       case 'breath':
-        this.breath(rig, e);
+        if (ind.breath === 'rear') breathRear(rig, e);
+        else this.breath(rig, e);
         break;
       case 'swipe':
-        this.swipe(rig, e);
+        if (ind.swipe === 'slam') swipeSlam(rig, e);
+        else this.swipe(rig, e);
         break;
       case 'stagger':
         this.stagger(rig, e);
+        if (rig.armWing) staggerWings(rig, e);
         break;
       case 'dying':
-        this.dying(rig, e);
+        if (rig.armWing) dyingWinged(rig, e);
+        else this.dying(rig, e);
+        break;
+      case 'leave':
+        if (ind.leave === 'fly') leaveFly(rig, e);
+        else if (ind.leave === 'walk') leaveWalk(rig, e);
+        else leaveScuttle(rig, e);
         break;
     }
 
@@ -279,6 +320,9 @@ export class Choreo {
       case 'wag':
         this.actDur = 1.2 + this.rng.float() * 0.8;
         break;
+      case 'stretch':
+        this.actDur = 2.2 + this.rng.float() * 0.6;
+        break;
       default:
         this.actDur = 1;
     }
@@ -342,6 +386,9 @@ export class Choreo {
         tg[C_HPITCH] += 0.05;
         break;
       }
+      case 'stretch':
+        stretchWings(rig, u);
+        break;
       default:
         break;
     }
@@ -536,8 +583,9 @@ export class Choreo {
     const tg = rig.target;
     const ind = rig.ind;
     const k = e.k;
-    const roar = sstep(0, 0.1, k) * (1 - sstep(0.28, 0.42, k));
-    const fold = sstep(0.24, 0.62, k);
+    const g = ind.grand;
+    const roar = sstep(0, 0.1, k) * (1 - sstep(0.28 + 0.1 * g, 0.42 + 0.1 * g, k));
+    const fold = sstep(0.24 + 0.1 * g, 0.62 + 0.08 * g, k);
     tg[C_JAW] = Math.max(roar, 0.3 * fold);
     tg[C_NRAISE] = ind.neckRaise + 0.45 * roar - 0.75 * fold;
     tg[C_NCURL] = ind.neckCurl + 0.2 * roar;
@@ -557,6 +605,6 @@ export class Choreo {
     tg[C_LOOK] = 0;
     tg[C_ANGER] = roar;
     tg[C_TSTIFF] = 0.7;
-    rig.dissolve = 1 - sstep(0.4, 0.97, k);
+    rig.dissolve = 1 - sstep(0.4 + 0.06 * g, 0.97, k);
   }
 }

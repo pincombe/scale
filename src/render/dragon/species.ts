@@ -4,14 +4,16 @@
 // proportions, posture and optional features. A feature is "off" when its amount is 0, so a
 // species is just two Morphs (its youngest and its biggest individuals) plus behavior tuning:
 //
-//   species  = { young, old, sizeLo, sizeHi, jitter, behavior }
+//   species  = { young, old, sizeLo, sizeHi, jitter, variants, weakSpots, behavior }
 //   maturity = where state.dragon.size sits in [sizeLo, sizeHi] on a log scale (0..1)
-//   morph    = lerp(young, old, maturity), then per-individual jitter seeded by state.dragon.seed
+//   morph    = lerp(young, old, maturity), then per-individual jitter and variants seeded by
+//              state.dragon.seed, then a boss's overrides (./bosses.ts), then mutation overrides
 //
 // So within a tier the dragons grow up as they grow: the meadow newt starts as a chubby,
 // big-eyed newt with axolotl gills and a soft crest, and ends as a horned, spiky-backed wyrm
-// that still has comically small wings. New tiers add a SpeciesDef here (register it in
-// SPECIES); mutations override single fields (e.g. heads: 3) through buildIndividual's `over`.
+// that still has comically small wings; the mountain wyvern (./wyvern.ts) starts as a gangly
+// fledgling and ends as a walking crag. New tiers add a SpeciesDef (register it in SPECIES);
+// mutations override single fields (e.g. heads: 3) through buildIndividual's `over`.
 //
 // Units: lengths are relative (the rig normalizes the rest pose so snout-to-tail = 1 body
 // length). Head features are fractions of the head length. Angles are radians; in the rig's
@@ -19,6 +21,8 @@
 // part toward -y.
 import { Rng } from '../../lib/rng';
 import { clamp01, lerp } from '../../lib/math';
+import { NO_DRESS, bossOf, type BossDef, type BossDress } from './bosses';
+import { WYVERN } from './wyvern';
 
 export interface Morph {
   // ---- spine lengths (relative) ----
@@ -115,9 +119,49 @@ export interface Morph {
   tailClub: number;
   // ---- extra ----
   heads: number;
+  // ---- M2: wing-arms (wyverns walk on their wing-wrists), rock, crowns, battle damage ----
+  /** 1 = the wings are the forelegs (wing-arms that plant their wrists; legPairs then counts the hind legs). */
+  wingWalk: number;
+  /** Wing-arm reach as a multiple of the shoulder height (> 1: the elbow juts up when folded). */
+  armBend: number;
+  /** Upper-arm share of the wing-arm reach (bats and pterosaurs: short humerus, long forearm). */
+  armSplit: number;
+  /** Wing-arm bone radius at the shoulder (relative length units). */
+  armWidth: number;
+  /** Where the membrane's trailing edge meets the body (0 shoulder .. 1 hip); 0 = wingAt + 0.34. */
+  wingRoot: number;
+  /** Craggy rock plates along the back: height (length units), 0 = none. */
+  plates: number;
+  plateCount: number;
+  /** Plate row extent along the spine (0 = head end .. 1 = tail tip). */
+  plateFrom: number;
+  plateTo: number;
+  /** 0 = neat plates .. 1 = broken, jagged crags. */
+  plateJag: number;
+  /** A crown of stony spikes along the back of the skull: count (0 = none) and length (head units). */
+  crownN: number;
+  crownLen: number;
+  /** Tail club style: 0 = round with spikes .. 1 = a craggy lump of rock. */
+  clubJag: number;
+  /** Horns snapped off: 0 = whole .. 1 = stumps (a jagged break). */
+  hornBreak: number;
+  /** Gnarled, knotted horns: 0 = smooth .. 1 = very gnarled. */
+  hornGnarl: number;
 }
 
 export type MorphKey = keyof Morph;
+
+/** How a species arrives: buzzing in low over the grass, gliding in on spread wings, or walking. */
+export type EnterStyle = 'flutter' | 'glide' | 'walk';
+/** How it retreats off stage right: scurrying away, taking to the air, or walking off. */
+export type LeaveStyle = 'scuttle' | 'fly' | 'walk';
+/**
+ * Its tail attack. 'lash': a quick turnaround, the tail sweeping low through the front ranks.
+ * 'slam': the coiled tail whips over the back and smashes down on the front line.
+ */
+export type SwipeStyle = 'lash' | 'slam';
+/** Its fire breath: 'lunge' leans in low over its forelegs; 'rear' rears up on its hind legs, wings spread. */
+export type BreathStyle = 'lunge' | 'rear';
 
 /** Behavior tuning: how a species moves, independent of its shape. */
 export interface BehaviorTuning {
@@ -129,14 +173,28 @@ export interface BehaviorTuning {
   /** Seconds between blinks. */
   blinkMin: number;
   blinkMax: number;
-  /** Relative weights of the idle micro-behaviors. */
-  acts: { look: number; sniff: number; buzz: number; yawn: number; wag: number };
-  /** How it arrives: 'flutter' = buzzes in low over the grass and lands. */
-  enter: 'flutter';
-  /** How it swipes: 'slam' = kicks its rear up and slams the tail over its head onto the front line. */
-  swipe: 'slam';
+  /** Relative weights of the idle micro-behaviors ('stretch': a wing display). */
+  acts: { look: number; sniff: number; buzz: number; yawn: number; wag: number; stretch: number };
+  enter: EnterStyle;
+  leave: LeaveStyle;
+  swipe: SwipeStyle;
+  breath: BreathStyle;
+  /** Kicks up snow (as well as dust) when it lands and stamps: a mountain creature. */
+  snow: number;
   /** Eye glow colors an individual picks from. */
   eyes: readonly string[];
+}
+
+/** A loose-scale candidate: where on the body it may sit (the rig resolves it on the live pose). */
+export interface WeakSpotSpec {
+  /** Body fraction (0 shoulder .. 1 hip; < 0 up the neck, > 1 down the tail) + a random extra. */
+  at: number;
+  atVar: number;
+  /** -1 belly edge .. +1 back edge, + a random extra. */
+  side: number;
+  sideVar: number;
+  /** 'elbow': the near wing-arm's elbow joint instead of a body point. */
+  on?: 'body' | 'elbow';
 }
 
 export interface SpeciesDef {
@@ -148,11 +206,44 @@ export interface SpeciesDef {
   old: Morph;
   /** Per-individual variation: +- fraction of each value (relative). */
   jitter: Partial<Record<MorphKey, number>>;
+  /** Seeded alternatives: each applies its `set` to an individual with probability p. */
+  variants?: readonly { p: number; set: Partial<Morph> }[];
+  /**
+   * Loose-scale candidates, ordered by how far they sit from the torso's middle: small on-screen
+   * dragons only use the first two (index.ts decides), so those must be well off-center.
+   */
+  weakSpots: readonly WeakSpotSpec[];
+  /** Swipe-windup target on the tail: this far along it (0 root .. 1 tip). */
+  swipeSpotT: number;
+  /**
+   * Small on screen, move the swipe target to the head (nape, then brow): for species whose loose
+   * scale sits on the tail there (the newt), so mashing it can't stagger. Off: always the tail.
+   */
+  swipeHeadTiers: boolean;
   behavior: BehaviorTuning;
 }
 
 /** Integer-valued fields (rounded after morph + jitter). */
-const INTEGER_KEYS: readonly MorphKey[] = ['hornPairs', 'gillCount', 'legPairs', 'toes', 'wingFingers', 'crestSpikes', 'heads'];
+const INTEGER_KEYS: readonly MorphKey[] = ['hornPairs', 'gillCount', 'legPairs', 'toes', 'wingFingers', 'crestSpikes', 'heads', 'plateCount', 'crownN', 'wingWalk'];
+
+/** The M2 fields, all off: species without wing-arms, rock or crowns spread this in. */
+export const NO_M2_FEATURES = {
+  wingWalk: 0,
+  armBend: 0,
+  armSplit: 0,
+  armWidth: 0,
+  wingRoot: 0,
+  plates: 0,
+  plateCount: 0,
+  plateFrom: 0,
+  plateTo: 0,
+  plateJag: 0,
+  crownN: 0,
+  crownLen: 0,
+  clubJag: 0,
+  hornBreak: 0,
+  hornGnarl: 0,
+} as const satisfies Partial<Morph>;
 
 // ---------------------------------------------------------------------------------------------
 // The meadow newt (tier 0). Young: 0.5 m, a chubby big-eyed newt with gills, a soft wavy crest,
@@ -218,6 +309,7 @@ const NEWT_YOUNG: Morph = {
   tailSpade: 0,
   tailClub: 0,
   heads: 1,
+  ...NO_M2_FEATURES,
 };
 
 const NEWT_OLD: Morph = {
@@ -278,6 +370,7 @@ const NEWT_OLD: Morph = {
   tailSpade: 0.06,
   tailClub: 0,
   heads: 1,
+  ...NO_M2_FEATURES,
 };
 
 export const NEWT: SpeciesDef = {
@@ -307,21 +400,34 @@ export const NEWT: SpeciesDef = {
     crestSpikes: 0.2,
     tailFin: 0.3,
   },
+  // Loose scales near the silhouette's edge, away from the middle of the body (a click on the middle
+  // is a normal hit; the glowing scale is the crit): tail root, along the tail, withers, back ridge.
+  weakSpots: [
+    { at: 1.4, atVar: 0.12, side: 0.55, sideVar: 0.25 },
+    { at: 1.75, atVar: 0.25, side: 0.35, sideVar: 0.3 },
+    { at: 0.1, atVar: 0.12, side: 0.62, sideVar: 0.25 },
+    { at: 0.42, atVar: 0.2, side: 0.78, sideVar: 0.17 },
+  ],
+  swipeSpotT: 0.8,
+  swipeHeadTiers: true,
   behavior: {
     breathHz: 0.42,
     swayAmp: 0.16,
     swayHz: 0.45,
     blinkMin: 1.8,
     blinkMax: 5,
-    acts: { look: 3, sniff: 2.2, buzz: 1.4, yawn: 0.5, wag: 1 },
+    acts: { look: 3, sniff: 2.2, buzz: 1.4, yawn: 0.5, wag: 1, stretch: 0 },
     enter: 'flutter',
-    swipe: 'slam',
+    leave: 'scuttle',
+    swipe: 'lash',
+    breath: 'lunge',
+    snow: 0,
     eyes: ['#ffd35a', '#ffc04a', '#ffe38a', '#ffa640', '#ffd35a'],
   },
 };
 
 /** Registered species by DragonState.species key. Unknown keys fall back to the newt. */
-export const SPECIES: Readonly<Record<string, SpeciesDef>> = { newt: NEWT };
+export const SPECIES: Readonly<Record<string, SpeciesDef>> = { newt: NEWT, wyvern: WYVERN };
 
 export function speciesOf(id: string): SpeciesDef {
   return SPECIES[id] ?? NEWT;
@@ -339,12 +445,22 @@ export interface Individual extends Morph {
   eye: string;
   /**
    * Loose-scale candidates: `at` is a body fraction (0 shoulder .. 1 hip; < 0 reaches up the
-   * neck, > 1 down the tail), `side` runs -1 (belly edge) .. +1 (back edge). All sit off the
-   * body's center of mass (withers, tail root, tail, ridge) so a crit takes aim.
+   * neck, > 1 down the tail), `side` runs -1 (belly edge) .. +1 (back edge); `on` 1 = the near
+   * wing-arm's elbow instead. All sit off the body's center of mass so a crit takes aim.
    */
-  weakSpots: readonly { at: number; side: number }[];
+  weakSpots: readonly { at: number; side: number; on: number }[];
   /** Per-individual phase offsets so neighbors never move in lockstep. */
   phase: number;
+  /** The boss this individual is dressed as, or null. */
+  boss: BossDef | null;
+  /** Boss dressings (moss, scars, cataracts, snow, torn wings); all 0 for ordinary dragons. */
+  dress: BossDress;
+  /** 0 ordinary .. 1 a boss: slower, grander acting. */
+  grand: number;
+  enter: EnterStyle;
+  leave: LeaveStyle;
+  swipe: SwipeStyle;
+  breath: BreathStyle;
 }
 
 /** Where a size sits on the species' growth curve (log scale), 0..1. */
@@ -354,10 +470,11 @@ export function maturityOf(species: SpeciesDef, size: number): number {
 }
 
 /**
- * Resolve an individual from species + seed + size. Deterministic for the same inputs.
- * `over` overrides fields after jitter (mutations, debug), e.g. { heads: 3 }.
+ * Resolve an individual from species + seed + size (+ boss id). Deterministic for the same inputs.
+ * `over` overrides fields last (mutations, debug), e.g. { heads: 3 }. An unknown boss id is an
+ * ordinary dragon.
  */
-export function buildIndividual(species: SpeciesDef, seed: number, size: number, over?: Partial<Morph>): Individual {
+export function buildIndividual(species: SpeciesDef, seed: number, size: number, over?: Partial<Morph>, bossId?: string | null): Individual {
   const rng = new Rng(seed ^ 0x5eed_d7a6);
   const m = maturityOf(species, size);
   const out = {} as Record<MorphKey, number>;
@@ -374,6 +491,16 @@ export function buildIndividual(species: SpeciesDef, seed: number, size: number,
     if (k === 'neckLen' || k === 'tailLen' || k === 'legBend') v *= lanky;
     out[k] = v;
   }
+  // Seeded alternatives (a club or a spade...). Drawn from their own stream so the main one (and
+  // every species without variants) is untouched.
+  if (species.variants) {
+    const vr = new Rng(seed ^ 0x7a61_a47);
+    for (const v of species.variants) {
+      if (vr.float() < v.p) for (const k of Object.keys(v.set) as MorphKey[]) out[k] = v.set[k]!;
+    }
+  }
+  const boss = bossOf(bossId);
+  if (boss) for (const k of Object.keys(boss.over) as MorphKey[]) out[k] = boss.over[k]!;
   if (over) for (const k of Object.keys(over) as MorphKey[]) out[k] = over[k]!;
   for (const k of INTEGER_KEYS) out[k] = Math.max(0, Math.round(out[k]));
   out.legPairs = Math.min(2, Math.max(1, out.legPairs));
@@ -385,25 +512,41 @@ export function buildIndividual(species: SpeciesDef, seed: number, size: number,
   out.backShare = Math.min(0.6, Math.max(0.25, out.backShare));
   out.crestSharp = clamp01(out.crestSharp);
   out.buzz = clamp01(out.buzz);
+  out.wingWalk = Math.min(1, out.wingWalk);
+  out.plateCount = Math.min(16, out.plateCount);
+  out.crownN = Math.min(10, out.crownN);
+  out.plateJag = clamp01(out.plateJag);
+  out.clubJag = clamp01(out.clubJag);
+  out.hornBreak = clamp01(out.hornBreak);
+  out.hornGnarl = clamp01(out.hornGnarl);
 
-  // Weak spots: loose scales near the silhouette's edge, away from the middle of the body (a click
-  // on the middle is a normal hit; the glowing scale is the crit). Ordered by how far they sit from
-  // the torso's middle: small on-screen dragons only use the tail ones (index.ts decides).
-  const spots: { at: number; side: number }[] = [];
-  spots.push({ at: 1.4 + rng.float() * 0.12, side: 0.55 + rng.float() * 0.25 }); // tail root
-  spots.push({ at: 1.75 + rng.float() * 0.25, side: 0.35 + rng.float() * 0.3 }); // along the tail
-  spots.push({ at: 0.1 + rng.float() * 0.12, side: 0.62 + rng.float() * 0.25 }); // withers
-  spots.push({ at: 0.42 + rng.float() * 0.2, side: 0.78 + rng.float() * 0.17 }); // back ridge
+  // Weak spots: loose scales (plates) near the silhouette's edge, away from the middle of the body,
+  // ordered by how far they sit from the torso's middle (small on-screen dragons use the first two).
+  const spots: { at: number; side: number; on: number }[] = [];
+  for (const w of species.weakSpots) {
+    const at = w.at + rng.float() * w.atVar;
+    const side = w.side + rng.float() * w.sideVar;
+    spots.push({ at, side, on: w.on === 'elbow' ? 1 : 0 });
+  }
 
   const b = species.behavior;
+  const eye = b.eyes[rng.int(b.eyes.length)]!;
+  const phase = rng.float() * 1000;
   return {
     ...(out as unknown as Morph),
     species,
     seed: seed >>> 0,
     size,
     maturity: m,
-    eye: b.eyes[rng.int(b.eyes.length)]!,
+    eye: boss ? boss.eye : eye,
     weakSpots: spots,
-    phase: rng.float() * 1000,
+    phase,
+    boss,
+    dress: boss ? boss.dress : NO_DRESS,
+    grand: boss ? 1 : 0,
+    enter: boss?.enter ?? b.enter,
+    leave: boss?.leave ?? b.leave,
+    swipe: b.swipe,
+    breath: b.breath,
   };
 }

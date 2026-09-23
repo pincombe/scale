@@ -34,3 +34,17 @@ export const WEAK_SHIFT_ON_CRIT = 0.35;
  */
 export const SWIPE_CURL_MIN_PX = 250;
 export const SWIPE_NAPE_MIN_PX = 72;
+
+/**
+ * Palette resources (tinted sprites, colors, particle specs) are cached by palette name, at most
+ * this many (the zoom switches palettes; the cache never grows without bound).
+ */
+export const RES_CACHE_MAX = 3;
+/**
+ * Camera shake on a flier's landing: base + growth with size (reaches full at LAND_SHAKE_SIZE m),
+ * plus a boss's extra. Modeled on the tail slam (0.14 + 0.3) and the big footsteps (0.05).
+ */
+export const LAND_SHAKE = 0.12;
+export const LAND_SHAKE_GROW = 0.3;
+export const LAND_SHAKE_SIZE = 30;
+export const LAND_SHAKE_BOSS = 0.15;

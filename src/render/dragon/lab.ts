@@ -5,11 +5,15 @@
 // render infra + this folder, so other folders' edits don't hot-reload it.
 //
 // Params: mode=sizes|phases  sizes=0.5,2,10,40  size=2  phase=idle  attack=breath  seed=7
+//   species=newt|wyvern  boss=elderNewt|grimmaw  palette=meadow|mountain
+//   dur.enter=2.6 dur.leave=2 dur.dying=3 (phase lengths; core's are size-scaled, bosses may differ)
 //   cols=2  frac=0.6 (dragon width / cell width)  t=0.5 (pre-roll the phase to this progress, then
 //   pause)  speed=1  bones  heads=3  pause  knight=0 (hide the scale knight)
 //   fx=0.2 fy=0.5 (focus point as fractions of the rest bounds; zoom = frac of the bounds width)
 //   phases=breath,swipe,windup-breath,windup-swipe (mode=phases: only these)
 //   mode=seq&seq=windup-swipe,swipe,idle  (cycle a phase sequence; ts=2.3 pre-rolls seconds, then pauses)
+//   mode=strip&seq=windup-swipe,swipe&ks=0.1,0.3,0.5  (one cell per k: the sequence played through,
+//     the last phase stopped at progress k, then paused: a choreography contact sheet)
 //   reach  (draw breathReachX as a cyan line and tailPoint as a magenta dot)
 //   tz=145  (the director's target zoom in px/m: selects size-dependent tiers as the game would)
 //   over=whiskers:0.8,frill:0.35,tailClub:0.03,tailSpade:0,legPairs:1  (morph overrides)
@@ -21,7 +25,7 @@ import type { DragonAttack, DragonPhase, GameEvent } from '../../core';
 import { Camera } from '../camera';
 import { SpriteAtlas, registerBuiltinSprites, makeCanvas, context2d } from '../atlas';
 import { ParticleSystem } from '../particles';
-import { MEADOW } from '../palette';
+import { MEADOW, MOUNTAIN } from '../palette';
 import { createDragon } from './index';
 
 const P = new URLSearchParams(location.search);
@@ -32,7 +36,13 @@ const num = (k: string, d: number): number => {
 };
 
 const DUR: Record<DragonPhase, number> = { enter: 1.6, idle: 5, windup: 1.2, breath: 1.5, swipe: 0.9, stagger: 1.4, dying: 1.6, leave: 1.6 };
-const palette = MEADOW;
+for (const ph of Object.keys(DUR) as DragonPhase[]) {
+  const v = Number(P.get('dur.' + ph));
+  if (Number.isFinite(v) && v > 0) DUR[ph] = v;
+}
+const palette = P.get('palette') === 'mountain' ? MOUNTAIN : MEADOW;
+const speciesId = P.get('species') ?? 'newt';
+const bossId = P.get('boss');
 const atlas = new SpriteAtlas();
 const sprites = registerBuiltinSprites(atlas);
 const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -44,6 +54,8 @@ interface CellSpec {
   label: string;
   /** Optional phase sequence the cell cycles through (mode=seq). */
   seq?: [DragonPhase, DragonAttack][];
+  /** mode=strip: stop the sequence's last phase at this progress. */
+  stopK?: number;
 }
 
 function parsePhase(key: string): [DragonPhase, DragonAttack] {
@@ -67,6 +79,7 @@ if (mode === 'phases') {
     ['swipe', 'swipe'],
     ['stagger', 'breath'],
     ['dying', 'breath'],
+    ['leave', 'breath'],
   ];
   const only = P.get('phases')?.split(',');
   for (const [ph, at] of list) {
@@ -78,20 +91,26 @@ if (mode === 'phases') {
   const seq = (P.get('seq') ?? 'idle,windup-breath,breath,idle,windup-swipe,swipe').split(',').map(parsePhase);
   const sizes = (P.get('sizes') ?? P.get('size') ?? '2').split(',').map(Number);
   for (const s of sizes) specs.push({ size: s, phase: seq[0]![0], attack: seq[0]![1], label: `${s} m sequence`, seq });
+} else if (mode === 'strip') {
+  const seq = (P.get('seq') ?? 'swipe').split(',').map(parsePhase);
+  const ks = (P.get('ks') ?? '0.1,0.25,0.4,0.55,0.7,0.85').split(',').map(Number);
+  const size = num('size', 2);
+  const last = seq[seq.length - 1]!;
+  for (const k of ks) specs.push({ size, phase: seq[0]![0], attack: seq[0]![1], label: `${last[0]}${last[0] === 'windup' ? ':' + last[1] : ''} k=${k} ${size} m`, seq, stopK: k });
 } else {
   const sizes = (P.get('sizes') ?? '0.5,2,10,40').split(',').map(Number);
   const ph = (P.get('phase') ?? 'idle') as DragonPhase;
   const at = (P.get('attack') ?? 'breath') as DragonAttack;
   for (const s of sizes) specs.push({ size: s, phase: ph, attack: at, label: `${s} m ${ph}` });
 }
-const cols = num('cols', mode === 'phases' ? 4 : mode === 'seq' ? 1 : 2);
+const cols = num('cols', mode === 'phases' || mode === 'strip' ? 4 : mode === 'seq' ? 1 : 2);
 const rows = Math.ceil(specs.length / cols);
 // A fixed design size (not the window's), so captures are stable in any pane: vw=1440 vh=900.
 const VW = num('vw', 1440);
 const VH = num('vh', 900);
 const W = Math.floor((VW - (cols - 1) * 2) / cols);
 const H = Math.floor((VH - (rows - 1) * 2) / rows);
-const frac = num('frac', mode === 'phases' ? 0.5 : 0.6);
+const frac = num('frac', mode === 'phases' || mode === 'strip' ? 0.5 : 0.6);
 const grid = document.getElementById('grid')!;
 grid.style.gridTemplateColumns = `repeat(${cols}, ${W}px)`;
 
@@ -104,7 +123,7 @@ class Cell {
   readonly handlers = new Map<string, Handler[]>();
   readonly world = new ParticleSystem(2048, atlas, 'world');
   readonly pointer = { x: -1, y: -1 };
-  readonly dragon: { id: number; index: number; species: string; name: string; epithet: string; size: number; seed: number; phase: DragonPhase; phaseT: number; phaseDur: number; attack: DragonAttack; hp: unknown; maxHp: unknown };
+  readonly dragon: { id: number; index: number; species: string; name: string; epithet: string; size: number; seed: number; phase: DragonPhase; phaseT: number; phaseDur: number; attack: DragonAttack; hp: unknown; maxHp: unknown; boss: string | null };
   readonly state: { dragon: Cell['dragon']; flags: Record<string, boolean> };
   readonly render: ReturnType<typeof createDragon>;
   readonly view: View;
@@ -128,7 +147,7 @@ class Cell {
     this.dragon = {
       id: 1,
       index: 0,
-      species: 'newt',
+      species: speciesId,
       name: 'Lab',
       epithet: 'the Tested',
       size: spec.size,
@@ -139,6 +158,7 @@ class Cell {
       attack: spec.attack,
       hp: null,
       maxHp: null,
+      boss: bossId,
     };
     this.state = { dragon: this.dragon, flags: {} };
     this.camera.setViewport(W, H);
@@ -236,7 +256,7 @@ class Cell {
     const byWidth = (W * frac) / Math.max(b.w, 0.9);
     const byHeight = (H * 0.62) / Math.max(-b.y, 0.5);
     cam.zoom = P.has('fx') ? byWidth : Math.min(byWidth, byHeight);
-    cam.x = P.has('fx') ? b.x + b.w * num('fx', 0.5) : b.x + b.w * 0.5 - (mode === 'phases' ? b.w * 0.25 : b.w * 0.08);
+    cam.x = P.has('fx') ? b.x + b.w * num('fx', 0.5) : b.x + b.w * 0.5 - (mode === 'phases' || mode === 'strip' ? b.w * 0.25 : b.w * 0.08);
     cam.y = P.has('fy') ? b.y + b.h * num('fy', 0.5) : -((0.78 - 0.5) * H) / cam.zoom;
     cam.update(dt > 0 ? dt : 1 / 60);
     const v = this.view;
@@ -346,6 +366,18 @@ if (overParam) {
 }
 
 let paused = P.has('pause');
+if (mode === 'strip') {
+  // Contact sheet: each cell plays its sequence through and stops its last phase at its k.
+  for (const c of cells) {
+    const seq = c.spec.seq!;
+    let s = 0;
+    for (let i = 0; i < seq.length - 1; i++) s += seq[i]![0] === 'idle' ? 1.5 : DUR[seq[i]![0]];
+    s += (c.spec.stopK ?? 0.5) * DUR[seq[seq.length - 1]![0]];
+    const n = Math.round(s * 60);
+    for (let i = 0; i < n; i++) c.frame(1 / 60, (i + 1) / 60);
+  }
+  paused = true;
+}
 let time = 0;
 let stepOnce = false;
 const speed = num('speed', 1);

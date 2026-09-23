@@ -25,7 +25,7 @@ function allFinite(rig: DragonRig): boolean {
 }
 
 function env(phase: DragonPhase, attack: DragonAttack, k: number, t: number, time: number): ChoreoEnv {
-  return { phase, attack, k, t, dt: 1 / 60, time, lookX: -1.5, lookY: -0.3, lookPull: 0.6, enterDist: 6, lunge: 0.6, aimX: -1.2, aimY: 0 };
+  return { phase, attack, k, t, dt: 1 / 60, time, lookX: -1.5, lookY: -0.3, lookPull: 0.6, enterDist: 6, lunge: 0.6, aimX: -1.2, aimY: 0, dur: 1.2, enterH: 3, exitDist: 4, exitH: 3, slamX: -0.1 };
 }
 
 describe('species', () => {

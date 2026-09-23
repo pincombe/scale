@@ -6,9 +6,11 @@
 // place in the silhouette color, so only the lit outer edge shows as a crisp rim whose width is
 // in screen px (it stays thin and sharp at any zoom). Far-side limbs are painted first in a
 // slightly hazier tone for depth. Draws in rig units (u) through ctx transforms.
-import { MOUTH_Y, type HeadShape } from './head';
-import { C_ANGER, C_DIZZY, C_DROOP, C_FACE, C_GLOW, C_SHIFT, C_THROAT, MAX_FINGERS, MAX_NODES, NECK_N, type DragonRig, type WingPose } from './rig';
+import { HORN_PTS, MOUTH_Y, type HeadShape } from './head';
+import { C_ANGER, C_DIZZY, C_DROOP, C_FACE, C_GLOW, C_SHIFT, C_THROAT, LEG_FN, MAX_FINGERS, MAX_NODES, NECK_N, type DragonRig, type WingPose } from './rig';
 import { mixHex, type ColorRamp } from '../../lib/color';
+import { capsule } from './shapes';
+import { armBonesPath, armMembranePath, beardPath, faceScarPath, mossPath, platesPath, rockClubPath, scarsPath, snowPath, type DressLayout } from './parts';
 
 const TAU = Math.PI * 2;
 
@@ -38,6 +40,13 @@ export interface PaintRes {
   cyan: string;
   /** Far-side tone by bigness 0..1 (hazier for huge dragons: aerial perspective). */
   farRamp: ColorRamp;
+  /** Wing-arm membrane by how far the wing is open: dark folded, faintly translucent spread wide. */
+  membrane: ColorRamp;
+  /** Boss dressings: moss and lichen, old scars, snow (near and far). */
+  moss: string;
+  scar: string;
+  snow: string;
+  snowFar: string;
 }
 
 /** Per-frame paint inputs computed in update (the painter itself never advances state). */
@@ -85,6 +94,10 @@ export interface PaintState {
   hazeGrad: CanvasGradient | null;
   hazeFor: unknown;
   hazeRes: PaintRes | null;
+  /** Height of the body above the ground (u) while flying: the contact shadow shrinks and fades. */
+  lift: number;
+  /** The boss dressings' per-individual layout (null: none). */
+  dress: DressLayout | null;
 }
 
 export function createPaintState(): PaintState {
@@ -120,6 +133,8 @@ export function createPaintState(): PaintState {
     hazeGrad: null,
     hazeFor: null,
     hazeRes: null,
+    lift: 0,
+    dress: null,
   };
 }
 
@@ -314,7 +329,9 @@ function tailTipPath(ctx: CanvasRenderingContext2D, rig: DragonRig): void {
     ctx.quadraticCurveTo(tx + dx * s * 0.2 - nx * s * 0.45, ty + dy * s * 0.2 - ny * s * 0.45, tx - dx * s * 0.75 - nx * s * 0.62, ty - dy * s * 0.75 - ny * s * 0.62);
     ctx.closePath();
   }
-  if (rig.clubR > 1e-4) {
+  if (rig.clubR > 1e-4 && ind.clubJag > 0.01) {
+    rockClubPath(ctx, rig, tx, ty, dx, dy, rig.clubR * 0.95);
+  } else if (rig.clubR > 1e-4) {
     const r = rig.clubR;
     ctx.moveTo(tx + r, ty);
     ctx.arc(tx, ty, r, 0, TAU);
@@ -328,28 +345,6 @@ function tailTipPath(ctx: CanvasRenderingContext2D, rig: DragonRig): void {
       ctx.closePath();
     }
   }
-}
-
-/** Tapered capsule from (x0, y0, r0) to (x1, y1, r1), clockwise. */
-function capsule(ctx: CanvasRenderingContext2D, x0: number, y0: number, r0: number, x1: number, y1: number, r1: number): void {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-  const d = Math.sqrt(dx * dx + dy * dy);
-  if (d < 1e-9 || d <= Math.abs(r0 - r1)) {
-    const r = r0 > r1 ? r0 : r1;
-    const cx = r0 > r1 ? x0 : x1;
-    const cy = r0 > r1 ? y0 : y1;
-    ctx.moveTo(cx + r, cy);
-    ctx.arc(cx, cy, r, 0, TAU);
-    return;
-  }
-  const a = Math.atan2(dy, dx);
-  const phi = Math.asin((r0 - r1) / d);
-  const h = Math.PI * 0.5 + phi;
-  ctx.moveTo(x0 + Math.cos(a + h) * r0, y0 + Math.sin(a + h) * r0);
-  ctx.arc(x0, y0, r0, a + h, a - h + TAU, false);
-  ctx.arc(x1, y1, r1, a - h, a + h, false);
-  ctx.closePath();
 }
 
 /** One leg: thigh, shin and a foot of toes (pads when young, claws when old). */
@@ -451,13 +446,30 @@ function headPaths(ctx: CanvasRenderingContext2D, rig: DragonRig, h: number, st:
   }
   ctx.beginPath();
   closedCurve(ctx, hs.upperN);
-  // Horns share the fill.
-  for (let k = 0; k < hs.hornN; k++) {
-    const o = k * 10;
-    const H = hs.horns;
-    ctx.moveTo(H[o]!, H[o + 1]!);
-    ctx.quadraticCurveTo(H[o + 2]!, H[o + 3]!, H[o + 4]!, H[o + 5]!);
-    ctx.quadraticCurveTo(H[o + 6]!, H[o + 7]!, H[o + 8]!, H[o + 9]!);
+  // Horns share the fill (smooth, or gnarled and snapped), and the crown of stony spikes.
+  if (hs.gnarled) {
+    const P = hs.hornPoly;
+    for (let k = 0; k < hs.hornN; k++) {
+      const o = k * HORN_PTS * 2;
+      ctx.moveTo(P[o]!, P[o + 1]!);
+      for (let i = 1; i < HORN_PTS; i++) ctx.lineTo(P[o + i * 2]!, P[o + i * 2 + 1]!);
+      ctx.closePath();
+    }
+  } else {
+    for (let k = 0; k < hs.hornN; k++) {
+      const o = k * 10;
+      const H = hs.horns;
+      ctx.moveTo(H[o]!, H[o + 1]!);
+      ctx.quadraticCurveTo(H[o + 2]!, H[o + 3]!, H[o + 4]!, H[o + 5]!);
+      ctx.quadraticCurveTo(H[o + 6]!, H[o + 7]!, H[o + 8]!, H[o + 9]!);
+      ctx.closePath();
+    }
+  }
+  for (let k = 0; k < hs.crownN; k++) {
+    const c = hs.crown;
+    ctx.moveTo(c[k * 6]!, c[k * 6 + 1]!);
+    ctx.lineTo(c[k * 6 + 2]!, c[k * 6 + 3]!);
+    ctx.lineTo(c[k * 6 + 4]!, c[k * 6 + 5]!);
     ctx.closePath();
   }
   ctx.fill();
@@ -509,6 +521,8 @@ function headPaths(ctx: CanvasRenderingContext2D, rig: DragonRig, h: number, st:
       ctx.closePath();
     }
   }
+  // Lichen beard hanging from the jaw (the Elder Newt).
+  if (h === 0 && st.dress !== null && st.dress.beardN > 0) beardPath(ctx, hs, st.dress, rig.ind.jaw, st.time, rig.ch[C_DROOP]!, c, s);
   ctx.fill();
 
   // Gills: feathery stalks that lag behind head motion.
@@ -698,7 +712,20 @@ function scaleRows(ctx: CanvasRenderingContext2D, rig: DragonRig): void {
 
 // ---- parts in the two silhouette passes ----
 
-function nearParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState, alpha: number, ghostAlpha: number, detail: boolean): void {
+/**
+ * The near side's silhouette parts. `memb` (the body pass only) fills wing-arm membranes with
+ * their faint translucency, then `fill` is restored for the bones; rim passes pass null.
+ */
+function nearParts(
+  ctx: CanvasRenderingContext2D,
+  rig: DragonRig,
+  st: PaintState,
+  alpha: number,
+  ghostAlpha: number,
+  detail: boolean,
+  memb: ColorRamp | null,
+  fill: string | CanvasGradient,
+): void {
   const cut = rig.dissolve;
   // Tail fin and spade.
   ctx.beginPath();
@@ -712,6 +739,17 @@ function nearParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState
   ctx.beginPath();
   crestPath(ctx, rig, detail);
   ctx.fill();
+  // Rock plates and moss (their bases sink into the back: the body covers them).
+  if (rig.plateN > 0) {
+    ctx.beginPath();
+    platesPath(ctx, rig, false);
+    ctx.fill();
+  }
+  if (st.dress !== null && st.dress.mossN > 0) {
+    ctx.beginPath();
+    mossPath(ctx, rig, st.dress);
+    ctx.fill();
+  }
   // Body.
   ctx.beginPath();
   bodyPath(ctx, rig);
@@ -719,6 +757,7 @@ function nearParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState
   // Near legs (attached parts vanish once the burn passes them).
   for (let k = 0; k < 4; k++) {
     if (!rig.legOn[k] || rig.legFar[k]) continue;
+    if (rig.armWing && k < 2) continue;
     if (rig.s[Math.round(rig.iS + rig.legAt[k]! * 8)]! > cut) continue;
     ctx.beginPath();
     legPath(ctx, rig, k);
@@ -760,10 +799,31 @@ function nearParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState
     wingBones(ctx, rig, w, r);
     ctx.fill();
   }
+  // Near wing-arm: the membrane over the flank, then the arm and finger bones.
+  if (rig.armWing && rig.s[Math.round(rig.iS + rig.legAt[LEG_FN]! * 8)]! < cut) armWingParts(ctx, rig, st, 0, memb, fill);
+}
+
+/** A wing-arm (slot 0 near, 1 far): membrane (translucent in the body pass), then its bones. */
+function armWingParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState, slot: number, memb: ColorRamp | null, fill: string | CanvasGradient): void {
+  if (memb) ctx.fillStyle = memb.at(rig.armLift[slot]! * (1 - rig.wingBurn));
+  ctx.beginPath();
+  armMembranePath(ctx, rig, slot, st.dress, rig.ind.dress.torn);
+  ctx.fill();
+  if (memb) ctx.fillStyle = fill;
+  ctx.beginPath();
+  armBonesPath(ctx, rig, slot);
+  ctx.fill();
 }
 
 function farParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState): void {
   const cut = rig.dissolve;
+  // The far wing-arm and plate row, behind everything.
+  if (rig.armWing && rig.s[Math.round(rig.iS + rig.legAt[LEG_FN]! * 8)]! < cut) armWingParts(ctx, rig, st, 1, null, '');
+  if (rig.plateFarN > 0) {
+    ctx.beginPath();
+    platesPath(ctx, rig, true);
+    ctx.fill();
+  }
   if (rig.wingOn && rig.s[Math.round(rig.iS + rig.wingAt * 8)]! < cut) {
     rig.wingPoints(rig.wingAngle - 0.1, 1, wingScratch);
     ctx.beginPath();
@@ -772,6 +832,7 @@ function farParts(ctx: CanvasRenderingContext2D, rig: DragonRig, st: PaintState)
   }
   for (let k = 0; k < 4; k++) {
     if (!rig.legOn[k] || !rig.legFar[k]) continue;
+    if (rig.armWing && k < 2) continue;
     if (rig.s[Math.round(rig.iS + rig.legAt[k]! * 8)]! > cut) continue;
     ctx.beginPath();
     legPath(ctx, rig, k);
@@ -804,10 +865,13 @@ function drawEye(ctx: CanvasRenderingContext2D, rig: DragonRig, h: number, st: P
   const ex = hs.eyeX;
   const ey = hs.eyeY;
   const open = 1 - lid;
-  // Glow, even through a closed lid (dimmer).
+  const boost = rig.ind.dress.eyeGlow;
+  const cat = rig.ind.dress.cataract;
+  // Glow, even through a closed lid (dimmer); bosses' eyes burn brighter and wider.
   ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = st.alpha * (0.35 + 0.45 * open) * (1 - st.burn * 0.5);
-  sprite(ctx, res.glowEye, ex, ey, Math.max(eR * 7, 16 / pxPerHead));
+  // (Cataracts glow softly: a pale, milky light rather than a burning one.)
+  ctx.globalAlpha = st.alpha * (0.35 + 0.45 * open) * (1 - st.burn * 0.5) * (1 + 0.45 * boost) * (1 - 0.45 * cat);
+  sprite(ctx, res.glowEye, ex, ey, Math.max(eR * 7, 16 / pxPerHead) * (1 + 0.7 * boost));
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = st.alpha;
   if (open < 0.08) {
@@ -845,6 +909,17 @@ function drawEye(ctx: CanvasRenderingContext2D, rig: DragonRig, h: number, st: P
       else ctx.lineTo(px, py);
     }
     ctx.stroke();
+  } else if (cat > 0.01) {
+    // Cataract: a clouded pupil that no longer tracks anything, under a milky, glowing film.
+    ctx.globalAlpha = st.alpha * 0.3;
+    ctx.beginPath();
+    ctx.ellipse(ex - eR * 0.12, ey + ry * 0.08, eR * 0.46, Math.min(ry * 0.8, eR * 0.52), 0, 0, TAU);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = st.alpha * 0.4 * cat;
+    sprite(ctx, res.glowWhite, ex - eR * 0.2, ey - ry * 0.2, eR * 2.6);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = st.alpha;
   } else {
     // Slit pupil, shifted toward what it's watching (in head space).
     const a = rig.headA[h]!;
@@ -1016,14 +1091,16 @@ export function paintDragon(
     ctx.globalAlpha = 1;
   }
 
-  // ---- contact shadow (heavier under huge dragons) ----
+  // ---- contact shadow (heavier under huge dragons; spreads and fades under a flier) ----
   if (rig.dissolve > 0.3) {
-    ctx.globalAlpha = (0.5 + 0.25 * st.big) * st.alpha * Math.min(1, (rig.dissolve - 0.3) * 3);
+    const fade = st.lift > 0 ? Math.max(0, 1 - st.lift * 2.2) : 1;
+    const spread = st.lift > 0 ? 1 + Math.min(0.5, st.lift * 0.8) : 1;
+    ctx.globalAlpha = (0.5 + 0.25 * st.big) * st.alpha * Math.min(1, (rig.dissolve - 0.3) * 3) * fade;
     ctx.save();
     const mid = rig.x[rig.iS + 4]!;
-    ctx.translate(mid, 0);
+    ctx.translate(mid, rig.groundY);
     ctx.scale(1, 0.12 + 0.03 * st.big);
-    sprite(ctx, res.glowDark, 0, 0, 0.95 * (1 + 0.35 * st.big));
+    sprite(ctx, res.glowDark, 0, 0, 0.95 * (1 + 0.35 * st.big) * spread);
     ctx.restore();
     ctx.globalAlpha = 1;
   }
@@ -1055,6 +1132,13 @@ export function paintDragon(
   ctx.restore();
   ctx.fillStyle = res.farRamp.at(st.big);
   farParts(ctx, rig, st);
+  const snow = rig.ind.dress.snow;
+  if (snow > 0.01 && rig.plateFarN > 0) {
+    ctx.fillStyle = res.snowFar;
+    ctx.beginPath();
+    snowPath(ctx, rig, true, snow);
+    ctx.fill();
+  }
 
   // ---- main silhouette: a soft wide rim (light wrapping the edge), the crisp rim, then the body ----
   if (lenPx > 90) {
@@ -1062,17 +1146,46 @@ export function paintDragon(
     ctx.translate(lx * 2.4, ly * 2.4);
     ctx.globalAlpha = alpha * 0.22;
     ctx.fillStyle = rimColor;
-    nearParts(ctx, rig, st, alpha * 0.22, 0, detail);
+    nearParts(ctx, rig, st, alpha * 0.22, 0, detail, null, rimColor);
     ctx.restore();
     ctx.globalAlpha = alpha;
   }
   ctx.save();
   ctx.translate(lx, ly);
   ctx.fillStyle = rimColor;
-  nearParts(ctx, rig, st, alpha, 0, detail);
+  nearParts(ctx, rig, st, alpha, 0, detail, null, rimColor);
   ctx.restore();
   ctx.fillStyle = bodyFill;
-  nearParts(ctx, rig, st, alpha, 0.32, detail);
+  nearParts(ctx, rig, st, alpha, 0.32, detail, rig.armWing ? res.membrane : null, bodyFill);
+
+  // ---- boss dressings over the silhouette: moss, a snow mantle, old scars ----
+  const dress = st.dress;
+  if (dress !== null && dress.mossN > 0) {
+    ctx.fillStyle = res.moss;
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.beginPath();
+    mossPath(ctx, rig, dress);
+    ctx.fill();
+    ctx.globalAlpha = alpha;
+  }
+  if (snow > 0.01 && rig.plateN > 0) {
+    ctx.fillStyle = res.snow;
+    ctx.globalAlpha = alpha * 0.92;
+    ctx.beginPath();
+    snowPath(ctx, rig, false, snow);
+    ctx.fill();
+    ctx.globalAlpha = alpha;
+  }
+  if (dress !== null && dress.scarN > 0 && rig.dissolve > 0.3) {
+    ctx.strokeStyle = res.scar;
+    ctx.globalAlpha = alpha * 0.42;
+    ctx.lineWidth = Math.max(1.2 / pxPerU, 0.0028);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    scarsPath(ctx, rig, dress);
+    ctx.stroke();
+    ctx.globalAlpha = alpha;
+  }
 
   // ---- scale texture catching the light along the back (big on screen only) ----
   if (pxPerU > 420 && rig.dissolve > 0.6) {
@@ -1133,6 +1246,16 @@ export function paintDragon(
       ctx.save();
       headFrame(ctx, rig, h);
       drawEye(ctx, rig, h, st, res, pxPerHead);
+      if (h === 0 && st.dress !== null && st.dress.faceScar > 0) {
+        ctx.strokeStyle = res.scar;
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.lineWidth = Math.max(1.3 / pxPerHead, 0.018);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        faceScarPath(ctx, rig.head);
+        ctx.stroke();
+        ctx.globalAlpha = alpha;
+      }
       // Fire in the mouth / smoke-glow leaking when the jaw opens with a hot throat.
       const heat = Math.max(glow, st.fire);
       if (heat > 0.02 && rig.jaw[h]! > 0.04) {

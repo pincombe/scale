@@ -4,16 +4,19 @@
 //
 //   phase                 live weak spot
 //   windup (breath)       the glowing THROAT pouch only (the loose scale dims out and can't be hit)
-//   windup (swipe)        the raised TAIL CURL as the tail loads; on small on-screen dragons, where
-//                         the curl would sit on top of the tail-mounted loose scale, the gill-crown
-//                         NAPE (or the nasal bridge when tiny) instead (see tuning.ts SWIPE_*)
-//   everything else       the LOOSE SCALE (one of the individual's candidates; shifts now and then)
-//   enter (in flight), dying   none
+//   windup (swipe)        the TAIL as it loads, at the species' swipeSpotT along it (the newt: the
+//                         raised curl; the wyvern: high on its coiled tail). Species whose loose
+//                         scale sits on the tail when small (the newt: swipeHeadTiers) move it to
+//                         the NAPE (or the nasal bridge when tiny) there (see tuning.ts SWIPE_*);
+//                         the wyvern's plates never sit on the tail, so its target stays put
+//   everything else       the LOOSE SCALE (one of the individual's candidates; shifts now and then):
+//                         a body point, or on wing-arm species the near elbow joint
+//   enter (in flight), dying, leave   none
 //
 // The hit position switches the instant the phase changes; only the visuals cross-fade.
 import { weakSpotFor, weakSpotLive } from '../../core';
 import type { DragonAttack, DragonPhase } from '../../core';
-import type { DragonRig, SpineSample } from './rig';
+import { LEG_FN, type DragonRig, type SpineSample } from './rig';
 import { SWIPE_CURL_MIN_PX, SWIPE_NAPE_MIN_PX, WEAK_SHIFT_MAX, WEAK_SHIFT_MIN } from './tuning';
 import { MOUTH_Y } from './head';
 
@@ -25,8 +28,6 @@ export const WEAK_TAIL = 2;
 export const SWIPE_CURL = 0;
 export const SWIPE_NAPE = 1;
 export const SWIPE_BROW = 2;
-/** The raised tail curl: this far along the tail (0 root .. 1 tip), on the back edge. */
-const CURL_T = 0.8;
 
 /** Which swipe target fits a dragon this many px per body length on screen. */
 export function swipeSpotFor(pxPerU: number): number {
@@ -42,8 +43,13 @@ export function weakModeFor(phase: DragonPhase, attack: DragonAttack): number {
   return kind === 'throat' ? WEAK_THROAT : kind === 'tail' ? WEAK_TAIL : WEAK_SCALE;
 }
 
-/** Whether a weak spot can be hit in this phase at progress k (0..1): core's rule. Clicks use this, not fades. */
-export const weakLiveFor = weakSpotLive;
+/**
+ * Whether a weak spot shows (and can be hit) in this phase at progress k (0..1): core's rule, and
+ * never while the dragon leaves (it can't be damaged then). Clicks use this, not fades.
+ */
+export function weakLiveFor(phase: DragonPhase, k: number): boolean {
+  return phase !== 'leave' && weakSpotLive(phase, k);
+}
 
 /** The glowing throat (u): the gular pouch under the jaw of the main head (moves with the head). */
 export function throatPoint(rig: DragonRig, out: { x: number; y: number }): { x: number; y: number } {
@@ -79,6 +85,11 @@ export class WeakSpot {
   /** True when a click can land on it. */
   get live(): boolean {
     return this.vis > 0.3;
+  }
+
+  /** Whether the swipe-windup target sits on the head (small on screen, for species with head tiers). */
+  onHead(rig: DragonRig): boolean {
+    return this.swipeSpot !== SWIPE_CURL && rig.ind.species.swipeHeadTiers;
   }
 
   /** Move the loose scale soon (e.g. after a crit). */
@@ -138,7 +149,7 @@ export class WeakSpot {
       // The throat pouch, just under the back of the jaw (it moves with the head).
       throatPoint(rig, out);
       rig.spineAt(rig.iS * 0.3, sp);
-    } else if (mode === WEAK_TAIL && this.swipeSpot !== SWIPE_CURL) {
+    } else if (mode === WEAK_TAIL && this.onHead(rig)) {
       // Small on screen: on the head, as far from the tail-mounted loose scale as it gets.
       const hs = rig.head;
       if (this.swipeSpot === SWIPE_NAPE) rig.headToU(0, 0.02, -0.95 * rig.ind.cranium, out);
@@ -147,13 +158,29 @@ export class WeakSpot {
       angle.a = rig.headA[0]! + Math.PI;
       return out;
     } else if (mode === WEAK_TAIL) {
-      // The raised tail curl (up high in the loaded scorpion pose).
-      rig.spineAt(rig.iH + CURL_T * (rig.n - 1 - rig.iH), sp);
+      // On the loading tail, the species' spot along it (up high in the coiled pose).
+      rig.spineAt(rig.iH + rig.ind.species.swipeSpotT * (rig.n - 1 - rig.iH), sp);
       out.x = sp.x + sp.nx * sp.back * 0.8;
       out.y = sp.y + sp.ny * sp.back * 0.8;
     } else {
       const spots = rig.ind.weakSpots;
       const s = spots[idx < spots.length ? idx : 0]!;
+      if (s.on === 1 && rig.armWing) {
+        // The near wing-arm's elbow joint, a little out on its point.
+        const k = LEG_FN;
+        const ex = rig.kneeX[k]!;
+        const ey = rig.kneeY[k]!;
+        let ux = rig.hipX[k]! - ex + (rig.ankX[k]! - ex) * 0.5;
+        let uy = rig.hipY[k]! - ey + (rig.ankY[k]! - ey) * 0.5;
+        const l = Math.sqrt(ux * ux + uy * uy) || 1;
+        ux /= l;
+        uy /= l;
+        const r = rig.legR[k]! * 0.9;
+        out.x = ex - ux * r;
+        out.y = ey - uy * r;
+        angle.a = Math.atan2(rig.hipY[k]! - ey, rig.hipX[k]! - ex) + Math.PI * 0.5;
+        return out;
+      }
       rig.spineAtBody(s.at, sp);
       const o = (s.side >= 0 ? s.side * sp.back : s.side * sp.belly) * 0.82;
       out.x = sp.x + sp.nx * o;
