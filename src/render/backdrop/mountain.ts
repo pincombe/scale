@@ -21,7 +21,7 @@ import { Camera } from '../camera';
 import { context2d } from '../atlas';
 import { mixHex, rgba } from '../../lib/color';
 import { rect, vec2, type Vec2 } from '../../lib/vec';
-import { clamp01, hash2f } from '../../lib/math';
+import { clamp01, hash2f, smoothstep } from '../../lib/math';
 import { SAFE_MARGIN } from '../world';
 import { bakeClouds, bakeGlow, bakeRays, SkyBaker, type CloudBank, type CloudSpec, type SkyGlow } from './sky';
 import { RidgeCache, type Light } from './ridges';
@@ -33,7 +33,7 @@ import { MOUNTAIN } from '../palette';
 import { Snow, Wisps } from './mountainAmbient';
 import { MountainForeground } from './mountainForeground';
 import { Flock } from './ambient';
-import { WorldWyrm } from './worldWyrm';
+import { REST_BOX_H0, REST_BOX_H1, REST_BOX_X0, REST_BOX_X1, WorldWyrm } from './worldWyrm';
 import { createWyrmIdle, exhale, followPose, idlePose, resetWyrmIdle, stepWyrmIdle, WAKE_MIN_GAP, type WyrmIdleEvents } from './wyrmSchedule';
 import { applyLayer, homeFraming, layerRange, layerToScreen, layerZoom, unitF } from './layerSpace';
 import { breeze } from './wind';
@@ -141,6 +141,11 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
   let eyeArmed = true;
   let roarArmed = true;
   let shedArmed = true;
+  /** How far the resting head is sunk behind the saddle (eased), and scratch for the test. */
+  let sink = 0;
+  const dragonR = rect();
+  const headA: Vec2 = vec2();
+  const headB: Vec2 = vec2();
 
   // ---- sky
 
@@ -443,8 +448,44 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
 
   // ---- the wyrm's life
 
+  /**
+   * 0..1: how hidden the resting head should be. It is a foreshadowing element, strongest at the
+   * base framing: it sinks behind the saddle as the camera pulls back past it, and whenever a dragon
+   * (padded for wings and rearing) covers its place on screen, so its horns never read as spikes
+   * on a big dragon's back.
+   */
+  const sinkTarget = (view: View): number => {
+    const cam = view.camera;
+    const dir = scene.director;
+    const base = (dir.heroFrac * view.height) / 1.8;
+    const pulled = smoothstep(1.5, 3.2, base / Math.max(1e-6, cam.zoom));
+    // The head's resting box on screen vs the dragon's (rest bounds, padded).
+    const H = view.height;
+    layerToScreen(cam, H, SPINE.p, REST_BOX_X0, -REST_BOX_H1, headA);
+    layerToScreen(cam, H, SPINE.p, REST_BOX_X1, -REST_BOX_H0, headB);
+    scene.dragon.bounds(dragonR);
+    const pad = 0.2 * Math.max(dragonR.w, dragonR.h);
+    cam.worldToScreen(dragonR.x - pad, dragonR.y - pad * 1.5, tmp);
+    const dx0 = tmp.x;
+    const dy0 = tmp.y;
+    cam.worldToScreen(dragonR.x + dragonR.w + pad, dragonR.y + dragonR.h, tmp);
+    const ix = Math.min(headB.x, tmp.x) - Math.max(headA.x, dx0);
+    const iy = Math.min(headB.y, tmp.y) - Math.max(headA.y, dy0);
+    const area = Math.max(1, (headB.x - headA.x) * (headB.y - headA.y));
+    const cover = ix > 0 && iy > 0 ? (ix * iy) / area : 0;
+    return Math.max(pulled, smoothstep(0.03, 0.25, cover));
+  };
+
   const stepWyrm = (view: View): void => {
     const dt = view.dt;
+    // Sink or surface slowly (a sleeping head settling), never while the zoom poses it.
+    if (isDriven) sink = 0;
+    else {
+      const s = sinkTarget(view);
+      sink += (s - sink) * (1 - Math.exp(-(s > sink ? 1.6 : 0.6) * Math.max(0, dt)));
+      // Hidden: no drowsy looks (onEyeOpen would rumble for an eye nobody can see).
+      if (sink > 0.4 && idle.wakeT < 0) idle.nextWake = Math.max(idle.nextWake, idle.t + 6);
+    }
     if (isDriven) {
       target.rise = driven.rise;
       target.eye = driven.eye;
@@ -454,7 +495,7 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
       stepWyrmIdle(idle, dt, Math.random(), forceWake, ev);
       forceWake = false;
       idlePose(idle, target);
-      if (ev.exhale && cur.rise < 0.3) wyrm.breathe(1);
+      if (ev.exhale && cur.rise < 0.3 && sink < 0.5) wyrm.breathe(1);
     }
     wasDriven = isDriven;
     const prevJaw = cur.jaw;
@@ -481,7 +522,7 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
       if (!isDriven) cam.addTrauma(0.35);
     } else if (cur.jaw < 0.3) roarArmed = true;
     if (cur.jaw > 0.6 && Math.random() < dt * 3) wyrm.plume(0.4);
-    wyrm.setPose(cur, isDriven ? 0 : exhale(idle.breath));
+    wyrm.setPose(cur, isDriven ? 0 : exhale(idle.breath), sink);
     wyrm.update(dt, breeze(view.time));
   };
 
@@ -799,6 +840,7 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
       markPic = null;
       resetWyrmIdle(idle);
       cur.rise = cur.eye = cur.jaw = 0;
+      sink = 0;
       eyeArmed = roarArmed = shedArmed = true;
     },
   };

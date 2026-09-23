@@ -25,6 +25,8 @@ import { SPINE, SPINE_PLATES, spineHeight, type Plate } from './mountainRidges';
 /** Head origin at rest (layer x, height above the ground line) and reared, and the tilt. */
 export const REST_X = 3.8;
 export const REST_H = 0.84;
+/** How far the resting head sinks when it must hide (layer units): horns and all behind the saddle. */
+const SINK = 1.35;
 const REAR_X = 3.38;
 const REAR_H = 3.35;
 const REST_A = 0.05;
@@ -85,6 +87,12 @@ const NOSTRIL_X = -2.8;
 const NOSTRIL_Y = -0.36;
 const MOUTH_X = -2.95;
 const MOUTH_Y = 0.13;
+
+/** The resting head's visible part above the saddle (layer x range, heights): for keep-outs. */
+export const REST_BOX_X0 = REST_X - 1.7;
+export const REST_BOX_X1 = REST_X + 1.15;
+export const REST_BOX_H0 = 1.2;
+export const REST_BOX_H1 = REST_H + 1.5;
 
 /** Sprite boxes (head-local units). */
 const HX0 = -3.3;
@@ -627,12 +635,14 @@ export class WorldWyrm {
   // ---- pose -> transform
 
   /** Resolve the pose into the head's transform (call once per frame, in update). */
-  setPose(p: WyrmPose, breath: number): void {
+  setPose(p: WyrmPose, breath: number, sink = 0): void {
     const r = smoothstep(0, 1, clamp01(p.rise));
     this.rise = r;
     const jaw = clamp01(p.jaw);
     this.ox = REST_X + (REAR_X - REST_X) * r;
-    this.oy = -(REST_H + (REAR_H - REST_H) * r) + 0.012 * breath * (1 - r);
+    // `sink` (0..1) lowers the resting head fully behind the saddle (a big dragon in front of it,
+    // or a pulled-back camera): at rest only, so a posed rise is untouched.
+    this.oy = -(REST_H + (REAR_H - REST_H) * r) + 0.012 * breath * (1 - r) + SINK * clamp01(sink) * (1 - r);
     this.ang = REST_A + (REAR_A - REST_A) * r + ROAR_TILT * jaw * (0.3 + 0.7 * r) - 0.01 * breath * (1 - r);
     this.jawA = JAW_OPEN * jaw * (0.6 + 0.4 * r) + 0.02 * breath * (1 - r);
   }
