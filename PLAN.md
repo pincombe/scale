@@ -12,7 +12,7 @@
 |---|---|
 | Judging | ~10–20 min in one sitting, so **the first 15 minutes are the product** |
 | Win factors | **Visual wow & game feel** and **originality / clever twist** |
-| Size rule | Read loosely (transfer size < 1 MB). We ship **< 1 MB raw** anyway so it can't be disputed |
+| Size rule | Read loosely (transfer size < 1 MB). We ship **< 2 MB raw** (raised from 1 MB by the user on 2026-09-23); gzipped, that stays well under 1 MB |
 | Concept | **SCALE**: every dragon is a scale on a bigger dragon, and prestige means zooming out |
 | Art | **Painted-sky silhouettes**, 100% procedural (no image files) |
 | Tone | **Epic with a wink** |
@@ -195,7 +195,7 @@ Hit flash · hit-stop on crits · screen shake scaled to damage · sword arcs ·
 - **Game loop:** fixed-step logic (~20 Hz) with requestAnimationFrame rendering and interpolation. It catches up when the tab regains focus.
 - **Saves:** localStorage autosave every 10 s and on hide/unload, a versioned schema, and an export/import string.
 - **Performance target:** 60 fps on an Apple-silicon MacBook with 300 knights and 1,500 particles. Device pixel ratio capped at 2, object pools, and cached backgrounds.
-- **Size budget:** about 400 KB raw and about 120 KB gzipped, with a **1 MB guard in CI**.
+- **Size budget:** about 400 KB raw and about 120 KB gzipped, with a **2 MB guard in CI** (raised from 1 MB on 2026-09-23).
 - **Debug mode (`?debug`):** time scale, jump to tier, trigger zoom, and an FPS overlay. Hidden from judges.
 - **Browsers:** Chrome, Safari and Firefox. No Chrome-only canvas features.
 
@@ -231,7 +231,7 @@ After M4, the build lead iterates on your feedback until you're ready to share i
 
 ## 10. Verification
 - **Unit tests (Vitest):** formulas, big-number formatting, save migrations and offline catch-up.
-- **CI checks:** balance-sim assertions and the 1 MB size guard.
+- **CI checks:** balance-sim assertions and the 2 MB size guard.
 - **Browser playtests after every feature:** the in-app browser for screenshots, console errors and the FPS overlay.
 - **A full 15-minute "judge run"** at M3 and again at M4.
 
@@ -288,7 +288,7 @@ Mobile layouts, accounts and leaderboards, monetization, and any external or net
 |---|---|
 | 0.1 Scaffold: Vite + TypeScript (strict) + singlefile + Vitest, folder layout, npm scripts, `.claude/launch.json` | medium |
 | 0.2 Architecture skeleton: fixed-step loop, state and events, canvas renderer pipeline and camera, UI mount, `?debug` panel | max |
-| 0.3 CI: typecheck, tests, build, 1 MB size guard, Pages deploy workflow (written but not pushed yet) | medium |
+| 0.3 CI: typecheck, tests, build, size guard, Pages deploy workflow (written but not pushed yet) | medium |
 
 **M1: First Blood ★** (tracks run in parallel once 0.2 lands)
 

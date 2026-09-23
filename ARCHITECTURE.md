@@ -208,7 +208,7 @@ URL params (with `?debug`): `seed=N dragon=N footman=N archer=N gold=N speed=X p
 
 ## 13. Testing your piece in isolation
 
-`npm run dev` (or `preview_start` name `dev`), then open **your own tab** at `http://localhost:5173/?debug&...`. `npm run check` = typecheck, tests, build, 1 MB size guard.
+`npm run dev` (or `preview_start` name `dev`), then open **your own tab** at `http://localhost:5173/?debug&...`. `npm run check` = typecheck, tests, build, 2 MB size guard.
 - **Backdrop**: `?debug&layers=backdrop.back,backdrop.front`, then drive the camera with the `dragon #` slider (pull-back and parallax) or `__scale.scene.camera`.
 - **Dragon**: `?debug&dragon=8&phase=windup&attack=breath&loop&immortal`, `layers=backdrop.back,dragon,particles.world` to solo it. The phase buttons and `W`/`L` keys retrigger. `__scale.scene.director.enabled = false`, then set `camera.x/zoom` to inspect up close.
 - **Crowd**: `?debug&footman=240&archer=60&immortal`; `F`/`A` add units (march-in), `K` kills (cheer). Volleys fire every 2.5 s.

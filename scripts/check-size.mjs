@@ -1,10 +1,11 @@
-// Size guard: dist/index.html must be one self-contained file under 1 MB raw.
+// Size guard: dist/index.html must be one self-contained file under 2 MB raw (raised from 1 MB on
+// 2026-09-23 by the user; the gzipped transfer size stays well under 1 MB).
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 
 const FILE = 'dist/index.html';
-const HARD_LIMIT = 1_000_000;
-const WARN_LIMIT = 500_000;
+const HARD_LIMIT = 2_000_000;
+const WARN_LIMIT = 1_500_000;
 
 const html = readFileSync(FILE);
 const text = html.toString('utf8');

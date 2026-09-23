@@ -7,7 +7,7 @@ SCALE is an infinite idle game about knights and dragons, built for a competitio
 - The main session is the **build lead**, and its operating rules are in **KICKOFF.md**. Subagents don't need KICKOFF.md: your brief and your agent definition tell you what to do.
 
 ## Hard constraints
-- Ship one self-contained `dist/index.html` under **1 MB raw**. No runtime network requests, and no image or audio files: all art and sound is procedural.
+- Ship one self-contained `dist/index.html` under **2 MB raw**. No runtime network requests, and no image or audio files: all art and sound is procedural.
 - Desktop Chrome, Safari and Firefox. Avoid Chrome-only APIs (e.g. canvas `ctx.filter`).
 - 60 fps on an Apple-silicon MacBook with 300 knights and 1,500 particles on screen.
 - The first 15 minutes are the product: tiers 0–4 get polish first.
@@ -26,7 +26,7 @@ SCALE is an infinite idle game about knights and dragons, built for a competitio
 - `npm run typecheck`: `tsc --noEmit`
 - `npm test`: Vitest once (`npm run test:watch` to watch)
 - `npm run sim`: headless balance sim in Node (`tsx src/sim/run.ts`)
-- `npm run size`: size guard on `dist/index.html` (fails over 1 MB or on external refs)
+- `npm run size`: size guard on `dist/index.html` (fails over 2 MB or on external refs)
 - `npm run check`: typecheck, test, build and size in one go. Run before reporting.
 
 ## Conventions

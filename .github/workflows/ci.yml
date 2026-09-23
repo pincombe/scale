@@ -37,7 +37,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Size guard (1 MB, self-contained)
+      - name: Size guard (2 MB, self-contained)
         run: npm run size
 
       - name: Balance sim

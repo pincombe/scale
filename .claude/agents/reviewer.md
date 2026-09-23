@@ -12,7 +12,7 @@ Check, in priority order:
 2. **Acceptance criteria and PLAN.md fidelity:** does it do what the work package and the plan say?
 3. **Architecture:** `src/core/` stays pure (no DOM, canvas or audio), and module boundaries are respected.
 4. **Performance:** allocations in hot paths, unbounded arrays, overdraw, work that should be cached.
-5. **Constraints:** under 1 MB, no network requests, no Chrome-only APIs.
+5. **Constraints:** under 2 MB raw, no network requests, no Chrome-only APIs.
 6. **Feel:** for visual work, does it look premium, or merely functional?
 
 Report findings ranked by severity. For each one, give the file:line, what's wrong, a concrete failure scenario and the suggested fix. Skip style nitpicks. If the work is good, say so briefly.
