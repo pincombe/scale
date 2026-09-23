@@ -9,7 +9,7 @@ import type { GameState, UnitId, UpgradeDef } from '../core';
 import type { Scene } from '../app/scene';
 import { Afford } from './afford';
 import { createChampionsPage } from './champions';
-import { cinematicOf } from './cinematic';
+import { LANDING, cinematicOf } from './cinematic';
 import { el, gameButton, setClass, setShown, setText } from './dom';
 import { effectLine, roman } from './effectText';
 import { createHeraldryPage } from './heraldry';
@@ -86,6 +86,8 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
   tabBtns.heraldry.b.hidden = true;
   const select = (tab: Tab): void => {
     const changed = tab !== active;
+    // Moving on from Heraldry releases the abilities' coach after the first zoom (cinematic.ts).
+    if (changed && active === 'heraldry') cine.signal('heraldryLeft');
     active = tab;
     for (const t of TABS) {
       setClass(tabBtns[t].b, 'active', t === tab);
@@ -182,14 +184,16 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
   });
 
   // After the first zoom: the Heraldry tab opens by itself, with its coach ("Spend your Scales").
+  // The panel steps out now (under the cinematic) so it can slide back in on Heraldry at its stage
+  // of the landing (cinematic.ts LANDING), after the height and the Scales have had their moment.
   scene.game.on('zoomSwitch', () => {
-    if (scene.game.state.zoom.count !== 1) return;
+    if (scene.game.state.zoom.count !== 1 || !heraldry.visible(state())) return;
+    ui.setPanelOpen(false);
     cine.after(() => {
-      if (!heraldry.visible(state())) return;
-      ui.setPanelOpen(true);
       select('heraldry');
+      ui.setPanelOpen(true);
       heraldry.coach();
-    }, 250);
+    }, LANDING.panel);
   });
 
   // ---- refresh ----

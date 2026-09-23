@@ -9,7 +9,7 @@ import { ABILITIES, ABILITY_IDS, ABILITY_TEXT, BALANCE, sel } from '../core';
 import type { AbilityId, GameState } from '../core';
 import type { Scene } from '../app/scene';
 import { uiClick, uiDeny, uiHover } from '../audio/sfx';
-import { cinematicOf } from './cinematic';
+import { LANDING, cinematicOf } from './cinematic';
 import { el, setClass, setShown, setText } from './dom';
 import { template } from './effectText';
 import { abilityIcon } from './icons';
@@ -154,7 +154,7 @@ export function createAbilities(scene: Scene, ui: UiRoot, dock: HTMLElement): vo
   };
 
   const nextCoach = (): void => {
-    if (coaching || cine.on) return;
+    if (coaching || cine.on || coachGated) return;
     const id = coachQueue.shift();
     if (!id) return;
     const btn = byId.get(id)!;
@@ -172,9 +172,34 @@ export function createAbilities(scene: Scene, ui: UiRoot, dock: HTMLElement): vo
     if (coached.has(id)) return;
     coached.add(id);
     coachQueue.push(id);
-    // Right after a zoom the Heraldry coach speaks first; the abilities follow.
-    cine.after(nextCoach, 1800);
+    window.setTimeout(nextCoach, 1200);
   };
+
+  // ---- the zoom's landing: the dock rises at its stage (cinematic.ts LANDING); after the first
+  // zoom, "Press 1" waits for the Heraldry coach to be done with (a charge bought, Heraldry left, or
+  // LANDING.coachWait) ----
+  let held = false;
+  let coachGated = false;
+  let gateTimer = 0;
+  const openGate = (): void => {
+    if (!coachGated) return;
+    coachGated = false;
+    window.clearTimeout(gateTimer);
+    window.setTimeout(nextCoach, 600);
+  };
+  cine.listen('heraldryLeft', openGate);
+  game.on('purchase', (e) => {
+    if (e.kind === 'heraldry') openGate();
+  });
+  game.on('zoomSwitch', () => {
+    held = true;
+    const first = game.state.zoom.count === 1;
+    if (first) coachGated = true;
+    cine.after(() => {
+      held = false;
+      if (first) gateTimer = window.setTimeout(openGate, LANDING.coachWait);
+    }, LANDING.dock);
+  });
 
   // ---- events: juice ----
   game.on('abilityUse', (e) => {
@@ -213,8 +238,8 @@ export function createAbilities(scene: Scene, ui: UiRoot, dock: HTMLElement): vo
       const vis = sel.abilityVisible(s, btn.id);
       if (vis !== btn.shown) {
         if (vis) {
-          // Unlocked under the cinematic (the switch): appear once the HUD is back.
-          if (cine.on) continue;
+          // Unlocked under the cinematic (the switch): appear at the dock's stage of the landing.
+          if (cine.on || held) continue;
           reveal(btn, scene.input.hasStarted);
         } else {
           btn.shown = false;

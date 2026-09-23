@@ -16,7 +16,7 @@ import { el, setClass, setShown, setText } from './dom';
 import type { UiRoot } from './mount';
 
 /** Meadow kills before the gauge shows. */
-const GAUGE_AT = 8;
+const GAUGE_AT = 10;
 /** The caption's time on screen (ms). */
 const HINT_MS = 6500;
 /** Seconds of the boss timer that count as urgent. */
@@ -71,8 +71,8 @@ export function createGauge(scene: Scene, ui: UiRoot, parent: HTMLElement): void
     body.appendChild(glow);
     segs = [];
     lit = new Uint8Array(n);
-    // Scales taper from the tail (left) to the neck, overlapping like a snake's back; a slow
-    // slither runs along them (a per-scale delay), and each sits on a gentle S-curve.
+    // Scales taper from the tail (left) to the neck, overlapping like a snake's back, each on a
+    // gentle S-curve.
     const step = BODY_PX / n;
     for (let i = 0; i < n; i++) {
       const k = n > 1 ? i / (n - 1) : 1;
@@ -83,10 +83,9 @@ export function createGauge(scene: Scene, ui: UiRoot, parent: HTMLElement): void
       outer.style.width = w.toFixed(1) + 'px';
       outer.style.height = h.toFixed(1) + 'px';
       outer.style.marginLeft = i === 0 ? '0' : (step - w).toFixed(1) + 'px';
-      // The S-curve is a static `translate`; the slither animates `transform` on top of it.
+      // A static S-curve (no per-scale animation: 30 endless ones repaint in Safari and Firefox).
       outer.style.setProperty('translate', `0 ${(Math.sin(i * 0.5 + 0.6) * 2.2 * (0.4 + 0.6 * k)).toFixed(2)}px`);
       outer.style.zIndex = String(i + 1);
-      outer.style.animationDelay = `${(-i * 0.11).toFixed(2)}s`;
       const inner = el('span', 'wg-scale', outer);
       inner.style.setProperty('--i', String(i));
       segs.push(inner);

@@ -32,7 +32,8 @@ export function createHints(scene: Scene, ui: UiRoot): void {
 
   const show = (key: string): void => {
     const text = MICROCOPY[key];
-    if (!text || shown.has(key)) return;
+    // M1's captions teach the Meadow; later tiers have their own coaches (and the dock sits here).
+    if (!text || shown.has(key) || game.state.tier !== 0) return;
     shown.add(key);
     current = key;
     line.textContent = text;

@@ -4,14 +4,14 @@
 import './scales.css';
 import { MICROCOPY, fmt } from '../core';
 import type { Scene } from '../app/scene';
-import { cinematicOf } from './cinematic';
+import { LANDING, RETURN_MS, cinematicOf } from './cinematic';
 import { el, setText } from './dom';
 import { scaleIcon } from './icons';
 import type { UiRoot } from './mount';
 
 const HOLD_S = 0.25;
-/** After the zoom cinematic, let the HUD fade back in before the count-up (s). */
-const HOLD_AFTER_ZOOM_S = 0.9;
+/** After a zoom, the Scales count up at their stage of the landing, after the height (s). */
+const HOLD_AFTER_ZOOM_S = (RETURN_MS + LANDING.scales) / 1000;
 const COUNT_S = 0.9;
 
 export function createScales(scene: Scene, ui: UiRoot, box: HTMLElement): void {
@@ -112,13 +112,12 @@ export function createScales(scene: Scene, ui: UiRoot, box: HTMLElement): void {
     show(shown);
   });
 
-  ui.onRefresh(() => {
-    const s = game.state;
-    if (!s.flags['feature.scales'] || !row.hidden) return;
-    // Revealed: from 0 when it happens in play (the gain counts up), else just be right.
+  const reveal = (fromZero: boolean): void => {
     row.hidden = false;
     row.classList.add('enter');
-    if (scene.input.hasStarted) {
+    afterCine = false;
+    if (fromZero) {
+      // Revealed in play: from 0, so the gain counts up.
       shown = 0;
       target = 0;
       t = -1;
@@ -127,5 +126,21 @@ export function createScales(scene: Scene, ui: UiRoot, box: HTMLElement): void {
       lastShown = 0;
     } else snap();
     ui.invalidateAnchors();
+  };
+
+  let revealPending = false;
+  ui.onRefresh(() => {
+    const s = game.state;
+    if (!s.flags['feature.scales'] || !row.hidden || revealPending) return;
+    if (cine.on) {
+      // The first zoom pays the first Scales: the counter appears at its stage of the landing.
+      revealPending = true;
+      cine.after(() => {
+        revealPending = false;
+        reveal(true);
+      }, LANDING.scales);
+      return;
+    }
+    reveal(scene.input.hasStarted);
   });
 }

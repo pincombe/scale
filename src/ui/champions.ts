@@ -8,7 +8,7 @@ import { BALANCE, BUY_MAX, CHAMPION_IDS, CHAMPION_TEXT, MICROCOPY, fmt, sel } fr
 import type { ChampionId, GameState } from '../core';
 import type { Scene } from '../app/scene';
 import { Afford } from './afford';
-import { el, gameButton, setShown, setText } from './dom';
+import { el, gameButton, setClass, setShown, setText } from './dom';
 import { template } from './effectText';
 import { coinIcon } from './icons';
 import type { UiRoot } from './mount';
@@ -29,9 +29,12 @@ interface Card {
   dps: HTMLElement;
   special: HTMLElement;
   fill: HTMLElement;
+  buys: HTMLElement;
   one: LevelBtn;
   ten: LevelBtn;
   max: LevelBtn;
+  seal: HTMLElement;
+  mastered: boolean;
   shown: boolean;
   lastLevel: number;
   lastFill: number;
@@ -52,16 +55,22 @@ export function createChampionsPage(scene: Scene, _ui: UiRoot, page: HTMLElement
   const state = (): GameState => game.state;
   const empty = el('p', 'panel-empty', page);
 
-  const levelBtn = (parent: HTMLElement, id: ChampionId, amount: number): LevelBtn => {
-    const can = (): boolean =>
-      amount === BUY_MAX ? sel.championMaxAffordable(state(), id) > 0 : sel.championAffordable(state(), id, amount);
-    const b = gameButton('buy', parent, can, () => game.dispatch({ type: 'levelChampion', id, amount }));
+  /** `amount` is read at press time: the "×N" button buys N = min(10, levels left). */
+  const levelBtn = (parent: HTMLElement, id: ChampionId, amount: () => number): LevelBtn => {
+    const can = (): boolean => {
+      const n = amount();
+      return n === BUY_MAX ? sel.championMaxAffordable(state(), id) > 0 : n >= 1 && sel.championAffordable(state(), id, n);
+    };
+    const b = gameButton('buy', parent, can, () => game.dispatch({ type: 'levelChampion', id, amount: amount() }));
     const label = el('span', 'buy-label', b);
     const costRow = el('span', 'buy-cost', b);
     costRow.appendChild(coinIcon('icon-coin-xs'));
     const cost = el('span', '', costRow);
     return { b, label, cost, afford: new Afford(b) };
   };
+
+  /** The bulk button's size: 10, or the levels left before mastery. */
+  const bulk = (id: ChampionId): number => Math.min(10, sel.championLevelsLeft(state(), id));
 
   const cards: Card[] = CHAMPION_IDS.map((id) => {
     const root = el('div', 'champ', page);
@@ -84,10 +93,15 @@ export function createChampionsPage(scene: Scene, _ui: UiRoot, page: HTMLElement
     const bar = el('span', 'champ-special-bar', sp);
     const fill = el('span', 'champ-special-fill', bar);
     const buys = el('div', 'unit-buys', root);
-    const one = levelBtn(buys, id, 1);
-    const ten = levelBtn(buys, id, 10);
-    const max = levelBtn(buys, id, BUY_MAX);
-    return { id, root, level, blow, dps, special, fill, one, ten, max, shown: false, lastLevel: -1, lastFill: -1 };
+    const one = levelBtn(buys, id, () => 1);
+    const ten = levelBtn(buys, id, () => bulk(id));
+    const max = levelBtn(buys, id, () => BUY_MAX);
+    // Mastered: a gold seal where the buttons were.
+    const seal = el('div', 'champ-mastered', root);
+    seal.hidden = true;
+    el('span', 'champ-seal', seal).setAttribute('aria-hidden', 'true');
+    el('span', 'champ-mastered-text', seal, MICROCOPY.championMastered ?? 'Mastered');
+    return { id, root, level, blow, dps, special, fill, buys, one, ten, max, seal, shown: false, lastLevel: -1, lastFill: -1, mastered: false };
   });
   const byId = new Map(cards.map((c) => [c.id, c]));
 
@@ -140,8 +154,19 @@ export function createChampionsPage(scene: Scene, _ui: UiRoot, page: HTMLElement
           c.lastFill = q;
           c.fill.style.transform = `scaleX(${q / 100})`;
         }
+        const mastered = sel.championMastered(s, c.id);
+        if (mastered !== c.mastered) {
+          c.mastered = mastered;
+          setShown(c.buys, !mastered);
+          setShown(c.seal, mastered);
+          setClass(c.root, 'mastered', mastered);
+        }
+        if (mastered) continue;
         setBuy(c.one, 'Level', fmt(sel.championCost(s, c.id, 1)), sel.championAffordable(s, c.id, 1), t);
-        setBuy(c.ten, '×10', fmt(sel.championCost(s, c.id, 10)), sel.championAffordable(s, c.id, 10), t);
+        const k = bulk(c.id);
+        setShown(c.ten.b, k >= 2);
+        if (k >= 2) setBuy(c.ten, '×' + k, fmt(sel.championCost(s, c.id, k)), sel.championAffordable(s, c.id, k), t);
+        setClass(c.buys, 'two', k < 2);
         const n = sel.championMaxAffordable(s, c.id);
         setBuy(c.max, 'Max', n > 0 ? '×' + fmt(n) : '—', n > 0, t);
       }

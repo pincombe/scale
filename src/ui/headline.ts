@@ -6,7 +6,7 @@
 import './headline.css';
 import { MICROCOPY, sel } from '../core';
 import type { Scene } from '../app/scene';
-import { cinematicOf } from './cinematic';
+import { LANDING, cinematicOf } from './cinematic';
 import { el, setShown, setText } from './dom';
 import { heightText, roman } from './effectText';
 import type { UiRoot } from './mount';
@@ -22,9 +22,12 @@ export function createHeadline(scene: Scene, ui: UiRoot, box: HTMLElement, tierE
   wrap.hidden = true;
   const line = el('div', 'hud-height-line', wrap);
   const pre = document.createTextNode('');
-  const num = el('span', 'hud-height-num');
+  // The number and the words after it never part ("Your knights stand / 221 m tall,").
+  const tail = el('span', 'hud-height-tail');
+  const num = el('span', 'hud-height-num', tail);
   const post = document.createTextNode('');
-  line.append(pre, num, post);
+  tail.appendChild(post);
+  line.append(pre, tail);
   const word = el('div', 'hud-height-word', wrap);
 
   // The template splits around {height} so the number can shine on its own.
@@ -89,7 +92,7 @@ export function createHeadline(scene: Scene, ui: UiRoot, box: HTMLElement, tierE
         } else {
           setText(num, heightText(prevHeight > 0 ? prevHeight : info.height));
           const tier = s.tier;
-          cine.after(() => enter(tier, prevHeight, info.height), 150);
+          cine.after(() => enter(tier, prevHeight, info.height), LANDING.headline);
         }
       } else lastHeight = info.height;
       ui.invalidateAnchors();

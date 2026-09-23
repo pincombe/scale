@@ -445,7 +445,7 @@
   padding-top: 58px;
 }
 #ui.has-gauge.boss-fight .ui-toasts {
-  padding-top: 62px;
+  padding-top: 76px;
 }
 .ui-toast {
   position: relative;
@@ -640,17 +640,22 @@
     opacity: 0.5;
   }
 }
-/* Three or four tabs: a tighter row that still fits the 340 px panel; badges float as corner dots.
-   (#ui: `#ui button { font: inherit }` outranks class selectors, so the size needs the id too.) */
+/* One typeface and size for every tab count (`#ui button { font: inherit }` outranks class
+   selectors, so the tab's font needs the id too). */
+#ui .panel-tab {
+  font-family: var(--font-title);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+}
+/* Three or four tabs: a tighter row that still fits the 340 px panel; badges float as corner dots. */
 .panel-tabs.many {
   justify-content: space-between;
   gap: 0;
   margin: 0 -8px 0 -4px;
 }
 #ui .panel-tabs.many .panel-tab {
-  padding: 8px 5px 10px;
-  font-size: 12.5px;
-  letter-spacing: 0.08em;
+  padding: 8px 4px 10px;
 }
 .panel-tabs.many .panel-tab::after,
 .panel-tabs.many .panel-tab:not(:first-child)::after {

@@ -37,6 +37,7 @@ export function createZoomButton(scene: Scene, ui: UiRoot, dock: HTMLElement): v
   el('span', 'zb-ring', rings);
   el('span', 'zb-ring', rings);
   el('span', 'zb-ring', rings);
+  el('span', 'zb-shine', b).setAttribute('aria-hidden', 'true');
   const title = el('span', 'zb-title', b);
   const lock = el('span', 'zb-lock', title);
   lock.appendChild(lockIcon());

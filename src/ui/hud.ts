@@ -370,8 +370,9 @@ function createToasts(scene: Scene, ui: UiRoot): void {
     cine.after(() => (pending = 0), 0);
   };
   game.on('unlock', (e) => {
-    // A champion's join line is their one toast (below): no generic unlock toast on top of it.
-    if (e.kind === 'champion') return;
+    // A champion's join line is their one toast (below): no generic unlock toast on top of it. The
+    // Heraldry tab and the abilities have coaches that say it (no toast to repeat them).
+    if (e.kind === 'champion' || e.kind === 'ability' || (e.kind === 'feature' && e.id === 'heraldry')) return;
     const text = copy(`unlock.${e.kind}.${e.id}`) ?? (e.kind === 'upgrade' ? copy('unlock.upgrade') : undefined);
     say(text, e.kind === 'upgrade' ? 'upgrade' : 'unlock');
   });

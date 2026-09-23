@@ -14,6 +14,9 @@
   line-height: 1.2;
   color: #fbeed2;
 }
+.hud-height-tail {
+  white-space: nowrap;
+}
 .hud-height-num {
   display: inline-block;
   font-size: 21px;
@@ -43,6 +46,13 @@
   font-size: 14.5px;
   line-height: 1.25;
   color: var(--parchment-dim);
+  text-wrap: balance;
+  transition: opacity 0.6s var(--ease-out);
+}
+/* A boss fight: the ornate bar's wing flourishes reach into this column, and all eyes belong on
+   the boss. The joke steps aside (keeping its space, so nothing below jumps). */
+#ui.boss-fight .hud-height-word {
+  opacity: 0;
 }
 /* A new tier: the label and the headline make an entrance (after the zoom hands back). */
 .hud-left.tier-enter .hud-tier {
