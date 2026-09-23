@@ -65,7 +65,7 @@ export function tierGoldMult(tier: number): number {
   return tierNumber(tier, 'goldMult');
 }
 
-/** Unit, upgrade and champion-level costs in tier t × this (champion blows scale with it too). */
+/** Unit, upgrade and champion-level costs in tier t × this. */
 export function tierCostMult(tier: number): number {
   return tierNumber(tier, 'costMult');
 }
@@ -401,30 +401,48 @@ export function upgradeCost(id: string): Decimal | null {
 
 // ---- Champions (M2) ----
 
+/** Where a champion's level sits between level 1 (0) and mastery (1), shaped by levelCurve. */
+function championProgress(state: GameState, id: ChampionId): number {
+  const b = BALANCE.champions[id];
+  const L = Math.min(state.champions[id].level, b.maxLevel);
+  if (L <= 1 || b.maxLevel <= 1) return 0;
+  return Math.pow((L - 1) / (b.maxLevel - 1), b.levelCurve);
+}
+
+/** Share of the current dragon's max HP a champion's blow deals (0 before it joins). */
+export function championBlowShare(state: GameState, id: ChampionId): number {
+  if (state.champions[id].level <= 0) return 0;
+  const [lo, hi] = BALANCE.champions[id].blow;
+  return lo + (hi - lo) * championProgress(state, id);
+}
+
+/** Share of the current dragon's max HP a champion's special deals (0 before it joins). */
+export function championSpecialShare(state: GameState, id: ChampionId): number {
+  if (state.champions[id].level <= 0) return 0;
+  const [lo, hi] = BALANCE.champions[id].special;
+  return lo + (hi - lo) * championProgress(state, id);
+}
+
 /**
- * One ordinary blow of a champion (lands on every footman melee beat): damage × level ×
- * 2^⌊level/doubleEvery⌋ × all-damage. Like a unit: levels cost tier-scaled gold, blows don't scale
- * with the tier, so the levels a champion carries through a zoom are a head start that the new
- * tier's dragons soon outgrow. 0 before it joins. Not counting stagger or Charge! (applied when it
- * lands).
+ * One ordinary blow of a champion (lands on every footman melee beat): a share of the CURRENT
+ * dragon's max HP, so champions count the same in every tier (bosses included) and a blow never
+ * one-shots. 0 before it joins. Not counting stagger or Charge! (applied when it lands).
  */
 export function championHit(state: GameState, id: ChampionId): Decimal {
-  const L = state.champions[id].level;
-  if (L <= 0) return D(0);
-  const b = BALANCE.champions[id];
-  return D(b.damage * L * damageMult(state)).mul(Decimal.pow(2, Math.floor(L / Math.max(1, b.doubleEvery))));
+  const share = championBlowShare(state, id);
+  return share > 0 ? wholeCeil(state.dragon.maxHp.mul(share)) : D(0);
 }
 
-/** A champion's special move (every specialEvery s): specialMult × a blow. */
+/** A champion's special move (every specialEvery s): a bigger share of the dragon's max HP. */
 export function championSpecialDamage(state: GameState, id: ChampionId): Decimal {
-  return championHit(state, id).mul(BALANCE.champions[id].specialMult);
+  const share = championSpecialShare(state, id);
+  return share > 0 ? wholeCeil(state.dragon.maxHp.mul(share)) : D(0);
 }
 
-/** Average DPS of a champion: blows on the footmen's beat plus its special. */
+/** Average DPS of a champion against the current dragon: blows on the footmen's beat plus its special. */
 export function championDps(state: GameState, id: ChampionId): Decimal {
   const b = BALANCE.champions[id];
-  const hit = championHit(state, id);
-  return hit.mul(1 / unitPeriod(state, 'footman') + b.specialMult / b.specialEvery);
+  return championHit(state, id).mul(1 / unitPeriod(state, 'footman')).add(championSpecialDamage(state, id).mul(1 / b.specialEvery));
 }
 
 /** Every joined champion's DPS. */
@@ -434,20 +452,27 @@ export function championsDps(state: GameState): Decimal {
   return dps;
 }
 
-/** Gold for the next `amount` levels of a champion (0 if it hasn't joined). */
-export function championCost(state: GameState, id: ChampionId, amount = 1): Decimal {
+/** Levels a champion can still gain before mastery (0 if it hasn't joined). */
+export function championLevelsLeft(state: GameState, id: ChampionId): number {
   const L = state.champions[id].level;
-  if (L <= 0 || !(amount >= 1)) return D(0);
-  const b = BALANCE.champions[id];
-  return seriesCost(b.baseCost * tierCostMult(state.tier), b.costGrowth, L - 1, Math.floor(amount));
+  return L <= 0 ? 0 : Math.max(0, BALANCE.champions[id].maxLevel - L);
 }
 
-/** How many levels of a champion the current gold buys. */
+/** Gold for the next `amount` levels of a champion (clamped to mastery; 0 if none can be bought). */
+export function championCost(state: GameState, id: ChampionId, amount = 1): Decimal {
+  const L = state.champions[id].level;
+  const n = Math.min(Math.floor(amount), championLevelsLeft(state, id));
+  if (L <= 0 || !(n >= 1)) return D(0);
+  const b = BALANCE.champions[id];
+  return seriesCost(b.baseCost * tierCostMult(state.tier), b.costGrowth, L - 1, n);
+}
+
+/** How many levels of a champion the current gold buys (up to mastery). */
 export function championMaxAffordable(state: GameState, id: ChampionId): number {
   const L = state.champions[id].level;
-  if (L <= 0) return 0;
+  if (L <= 0 || championLevelsLeft(state, id) <= 0) return 0;
   const b = BALANCE.champions[id];
-  return seriesAffordable(state.gold, b.baseCost * tierCostMult(state.tier), b.costGrowth, L - 1);
+  return Math.min(championLevelsLeft(state, id), seriesAffordable(state.gold, b.baseCost * tierCostMult(state.tier), b.costGrowth, L - 1));
 }
 
 // ---- Abilities (M2) ----

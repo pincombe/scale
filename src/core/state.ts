@@ -30,7 +30,11 @@ export function createInitialState(seed: number): GameState {
     wyrm: { charge: 0, bossT: 0, bossDur: 0, escapes: 0, cleared: false, clearedAt: 0 },
     zoom: { stage: null, count: 0, fusion: 1, pending: null },
     heraldry: { levels: { lion: 0, sun: 0, wyvern: 0, stag: 0, tower: 0, crown: 0 }, order: [] },
-    abilities: { charge: { active: 0, cooldown: 0 }, rally: { active: 0, cooldown: 0 }, volley: { active: 0, cooldown: 0 } },
+    abilities: {
+      charge: { active: 0, cooldown: 0, cooldownDur: 0 },
+      rally: { active: 0, cooldown: 0, cooldownDur: 0 },
+      volley: { active: 0, cooldown: 0, cooldownDur: 0 },
+    },
     champions: {
       aldric: { level: 0, specialT: BALANCE.champions.aldric.specialEvery },
       brunhild: { level: 0, specialT: BALANCE.champions.brunhild.specialEvery },

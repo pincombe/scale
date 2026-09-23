@@ -103,16 +103,22 @@ export interface AbilityBalance {
 export interface ChampionBalance {
   /** Joins by itself (free, level 1) when this is met. */
   unlock: Requirement;
-  /** Damage of one blow per level (tier-0 scale), before multipliers. */
-  damage: number;
-  /** Blow damage × 2 every this many levels. */
-  doubleEvery: number;
+  /**
+   * Damage is a share of the CURRENT dragon's max HP (bosses included), so a champion counts the
+   * same in every tier and a blow never one-shots: a blow deals `blow[0]` of max HP at level 1,
+   * rising to `blow[1]` at maxLevel; a special `special[0]` → `special[1]`. Between, the share
+   * follows ((level-1)/(maxLevel-1))^levelCurve (front-loaded for levelCurve < 1).
+   */
+  blow: [number, number];
+  special: [number, number];
+  levelCurve: number;
+  /** Levels stop here (the champion is mastered). */
+  maxLevel: number;
   /** Gold (tier-0 scale) for level 2; each level costs `costGrowth` × the last. */
   baseCost: number;
   costGrowth: number;
-  /** Seconds between special moves; a special hits for `specialMult` × a blow. */
+  /** Seconds between special moves. */
   specialEvery: number;
-  specialMult: number;
 }
 
 export interface Balance {
@@ -211,9 +217,10 @@ export const BALANCE: Balance = {
 
   /**
    * The tier's boss (the Wyrm Gauge's payoff). HP and gold are those of the tier's dragon #bossAt ×
-   * these, fixed per tier (a boss that escaped comes back no tougher, so the grown army wins: no
-   * dead end); its size is the current dragon's × sizeMult. The timer (s) runs only while it can be
-   * hit; on timeout the gauge drops back to escapeCharge × bossAt.
+   * these, fixed per tier; its size is the current dragon's × sizeMult. The timer (s) runs only
+   * while it can be hit; on timeout the gauge drops back to escapeCharge × bossAt and the refill
+   * replays the dragons leading up to the boss (the same indices), so a retry is never harder than
+   * the first approach and the army has grown meanwhile: no dead end.
    */
   boss: { hpMult: 2, goldMult: 4, sizeMult: 1.5, timer: 30, escapeCharge: 0.75 },
 
@@ -256,14 +263,16 @@ export const BALANCE: Balance = {
 
   /**
    * Champions join by themselves (level 1, free) and persist through zooms. A blow lands on every
-   * footman melee beat (with or without footmen); damage = damage × level × 2^⌊level/doubleEvery⌋ ×
-   * all-damage multipliers (like a unit's, not scaled by tier). Levels cost gold (baseCost × tier
-   * costMult × costGrowth^(level-1)). Ser Aldric joins at the Meadow's 20th kill (~2:00 engaged),
-   * Dame Brunhild at the Mountain's 12th.
+   * footman melee beat (with or without footmen) and a special every specialEvery s; both deal a
+   * share of the current dragon's max HP (× stagger ×2 and Charge! ×3 when they land; the Fusion
+   * Bonus and Lion don't apply). Aldric at level 1: blows 0.4%, specials 2%; mastered (level 15):
+   * 1.2% and 6%. An engaged player's champion does ~8-15% of the damage in each tier. Levels cost
+   * gold (baseCost × tier costMult × costGrowth^(level-1)). Ser Aldric joins at the Meadow's 20th
+   * kill (~2:00 engaged), Dame Brunhild at the Mountain's 12th.
    */
   champions: {
-    aldric: { unlock: { stat: 'kills', at: 20, tier: 0 }, damage: 40, doubleEvery: 10, baseCost: 6000, costGrowth: 1.22, specialEvery: 9, specialMult: 8 },
-    brunhild: { unlock: { stat: 'kills', at: 12, tier: 1 }, damage: 100, doubleEvery: 10, baseCost: 15000, costGrowth: 1.22, specialEvery: 8, specialMult: 10 },
+    aldric: { unlock: { stat: 'kills', at: 20, tier: 0 }, blow: [0.008, 0.012], special: [0.04, 0.06], levelCurve: 0.7, maxLevel: 15, baseCost: 6000, costGrowth: 1.3, specialEvery: 9 },
+    brunhild: { unlock: { stat: 'kills', at: 12, tier: 1 }, blow: [0.002, 0.005], special: [0.012, 0.03], levelCurve: 0.7, maxLevel: 15, baseCost: 15000, costGrowth: 1.3, specialEvery: 8 },
   },
 
   click: {

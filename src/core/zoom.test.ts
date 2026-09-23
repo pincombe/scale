@@ -152,7 +152,14 @@ describe('the hold', () => {
     runFor(s, 5);
     expect(s.dragon.phaseT).toBe(0);
     expect(s.dragon.phase).toBe('enter');
-    applyAction(s, { type: 'zoom', stage: 'end' }, noop);
+    const { events, emit } = recorder();
+    applyAction(s, { type: 'zoom', stage: 'end' }, emit);
+    // The entrance starts now: zoomEnd, then the dragon's dragonPhase enter (the switch only resynced).
+    expect(events).toEqual([
+      { type: 'zoomEnd', tier: 1 },
+      { type: 'dragonPhase', id: s.dragon.id, phase: 'enter', dur: s.dragon.phaseDur },
+    ]);
+    expect(s.dragon.phaseDur).toBe(enterDuration(s.dragon.size));
     tick(s, TICK_DT, noop);
     expect(s.dragon.phaseT).toBeCloseTo(TICK_DT, 9);
   });
@@ -198,7 +205,7 @@ describe('the switch: reward, resets, persists', () => {
     s.champions.aldric = { level: 9, specialT: 1 };
     s.stats = { strikes: 500, crits: 90, staggers: 12 };
     s.flags['unit.archer'] = true;
-    s.abilities.charge = { active: 4, cooldown: 30 };
+    s.abilities.charge = { active: 4, cooldown: 30, cooldownDur: 60 };
     s.army.volleys.push({ unit: 'archer', target: s.dragon.id, t: 0.5, damage: D(5), arrows: 3 });
     s.army.meleeT = 0.1;
     applyAction(s, { type: 'zoom', stage: 'begin' }, noop);
@@ -209,7 +216,7 @@ describe('the switch: reward, resets, persists', () => {
     expect(s.units).toEqual({ footman: 0, archer: 0, lancer: 0 });
     expect(s.kills).toBe(0);
     expect(s.wyrm).toEqual({ charge: 0, bossT: 0, bossDur: 0, escapes: 0, cleared: false, clearedAt: 0 });
-    expect(s.abilities.charge).toEqual({ active: 0, cooldown: 0 });
+    expect(s.abilities.charge).toEqual({ active: 0, cooldown: 0, cooldownDur: 0 });
     expect(s.army.volleys).toEqual([]);
     expect(s.army.meleeT).toBe(BALANCE.units.footman.interval);
     // Kept.

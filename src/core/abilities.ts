@@ -6,11 +6,27 @@
 import { BALANCE } from './content';
 import { damageDragon, dragonHittable } from './dragon';
 import { abilityCooldown, clickDamage, volleyAbilityDamage } from './formulas';
+import { ENTER_WEAK_FROM, phaseProgress } from './weakspot';
 import type { AbilityId, Emit, GameState } from './types';
 
-/** Unlocked, off cooldown, and no zoom holding. */
+/**
+ * The Volley has something to land on: the dragon can be hit (not dying or leaving) and has
+ * arrived (past ENTER_WEAK_FROM of its entrance, like the weak spot).
+ */
+export function volleyTargetable(state: GameState): boolean {
+  const d = state.dragon;
+  if (!dragonHittable(d.phase)) return false;
+  return d.phase !== 'enter' || phaseProgress(d) > ENTER_WEAK_FROM;
+}
+
+/**
+ * Unlocked, off cooldown, and no zoom holding. The Volley also needs a target it can land on
+ * (volleyTargetable), so its long cooldown is never spent on a corpse; Charge! and Rally are
+ * usable anytime outside a hold.
+ */
 export function abilityReady(state: GameState, id: AbilityId): boolean {
-  return !!state.flags['ability.' + id] && state.abilities[id].cooldown <= 0 && state.zoom.stage === null;
+  if (!state.flags['ability.' + id] || state.abilities[id].cooldown > 0 || state.zoom.stage !== null) return false;
+  return id !== 'volley' || volleyTargetable(state);
 }
 
 export function useAbility(state: GameState, id: AbilityId, emit: Emit): void {
@@ -18,6 +34,7 @@ export function useAbility(state: GameState, id: AbilityId, emit: Emit): void {
   const a = state.abilities[id];
   const b = BALANCE.abilities;
   a.cooldown = abilityCooldown(state, id);
+  a.cooldownDur = a.cooldown;
   a.active = b[id].dur;
   emit({ type: 'abilityUse', id, dur: a.active });
   if (id === 'volley') {
@@ -51,6 +68,7 @@ export function updateAbilities(state: GameState, dt: number, emit: Emit): void 
       a.cooldown = Math.max(0, a.cooldown - dt);
       if (a.cooldown <= 1e-9) {
         a.cooldown = 0;
+        a.cooldownDur = 0;
         emit({ type: 'abilityReady', id });
       }
     }

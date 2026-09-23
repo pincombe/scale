@@ -47,6 +47,8 @@ export interface BotReport {
   killsAt: Record<number, number>;
   /** Sim time of the first zoomBegin, or -1. */
   firstZoom: number;
+  /** Largest ordinary (non-boss) dragon seen in the Meadow (m). */
+  meadowPeakSize: number;
   /** Longest stretch (s) between purchases after the first one. */
   longestBuyGap: number;
   purchases: number;
@@ -108,6 +110,7 @@ export function runBot(
     kills: 0,
     killsAt: {},
     firstZoom: -1,
+    meadowPeakSize: s.dragon.size,
     longestBuyGap: 0,
     purchases: 0,
     staggers: 0,
@@ -125,6 +128,9 @@ export function runBot(
       case 'dragonDeath':
         r.kills++;
         if (r.firstKill < 0) r.firstKill = s.t;
+        break;
+      case 'dragonSpawn':
+        if (s.tier === 0 && !s.dragon.boss) r.meadowPeakSize = Math.max(r.meadowPeakSize, s.dragon.size);
         break;
       case 'zoomBegin':
         if (r.firstZoom < 0) r.firstZoom = s.t;

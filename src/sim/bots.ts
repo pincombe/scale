@@ -163,7 +163,7 @@ function cheapestBuy(s: GameState): Action | null {
     }
   }
   for (const id of CHAMPION_IDS) {
-    if (!sel.championVisible(s, id)) continue;
+    if (!sel.championVisible(s, id) || sel.championMastered(s, id)) continue;
     const c = sel.championCost(s, id);
     if (s.gold.lt(c)) continue;
     if (!bestCost || c.lt(bestCost)) {
@@ -227,7 +227,7 @@ function greedyBuy(s: GameState, p: Profile): Action | null {
   // A champion level, when it buys more DPS per gold than the best unit.
   let champ: ChampionId | null = null;
   for (const id of CHAMPION_IDS) {
-    if (!sel.championVisible(s, id)) continue;
+    if (!sel.championVisible(s, id) || sel.championMastered(s, id)) continue;
     const v = championValue(s, p, id, base);
     if (v > bestValue) {
       bestValue = v;

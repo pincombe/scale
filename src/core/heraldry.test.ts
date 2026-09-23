@@ -68,7 +68,7 @@ describe('buying heraldry', () => {
 });
 
 describe('heraldry effects', () => {
-  it('lion: all damage (clicks, units, champions)', () => {
+  it('lion: clicks and units (champions strike for a share of the dragon\'s HP, which Lion leaves alone)', () => {
     const s = createInitialState(1);
     s.units.footman = 5;
     s.champions.aldric.level = 2;
@@ -79,7 +79,21 @@ describe('heraldry effects', () => {
     const m = mult('lion') ** 2;
     expect(clickDamage(s, false).toNumber()).toBeCloseTo(click * m, 9);
     expect(unitDamage(s, 'footman').toNumber()).toBeCloseTo(unit * m, 9);
-    expect(championHit(s, 'aldric').toNumber()).toBeCloseTo(champ * m, 9);
+    expect(championHit(s, 'aldric').toNumber()).toBe(champ);
+  });
+
+  it('tower: a purchase musters its troops at once (and every tier starts with them)', () => {
+    const s = withScales(100);
+    const { events, emit } = recorder();
+    const e = BALANCE.heraldry.tower.effect;
+    if (e.kind !== 'startUnits') throw new Error('tower');
+    s.units.footman = 7;
+    applyAction(s, { type: 'buyHeraldry', id: 'tower' }, emit);
+    expect(s.units[e.unit]).toBe(7 + e.count);
+    applyAction(s, { type: 'buyHeraldry', id: 'tower' }, emit);
+    expect(s.units[e.unit]).toBe(7 + 2 * e.count);
+    // Crossing 10 owned is a milestone like any other.
+    expect(ofType(events, 'milestone').map((m) => m.owned)).toContain(10);
   });
 
   it('sun: kill gold', () => {

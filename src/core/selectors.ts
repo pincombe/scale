@@ -13,8 +13,12 @@ import {
   canZoom,
   championCost,
   championDps,
+  championBlowShare,
   championHit,
+  championLevelsLeft,
   championMaxAffordable,
+  championSpecialDamage,
+  championSpecialShare,
   championsDps,
   displayMeters,
   fusionForZoom,
@@ -49,8 +53,12 @@ export {
   canZoom,
   championCost,
   championDps,
+  championBlowShare,
   championHit,
+  championLevelsLeft,
   championMaxAffordable,
+  championSpecialDamage,
+  championSpecialShare,
   championsDps,
   clickDamage,
   displayMeters,
@@ -274,7 +282,10 @@ export function abilityVisible(s: GameState, id: AbilityId): boolean {
   return !!s.flags[ABILITIES[id].unlockFlag];
 }
 
-/** Unlocked, off cooldown and not in a zoom's hold. */
+/**
+ * Unlocked, off cooldown and not in a zoom's hold; the Volley also needs a dragon it can land on
+ * (hittable and arrived), so the UI greys it while the dragon dies, leaves or is still arriving.
+ */
 export function abilityReady(s: GameState, id: AbilityId): boolean {
   return coreAbilityReady(s, id);
 }
@@ -292,9 +303,11 @@ export function abilityActiveFrac(s: GameState, id: AbilityId): number {
 
 /** Cooldown progress 0..1 (1 = ready). */
 export function abilityFrac(s: GameState, id: AbilityId): number {
-  const cd = s.abilities[id].cooldown;
+  const a = s.abilities[id];
+  const cd = a.cooldown;
   if (cd <= 0) return 1;
-  const full = abilityCooldown(s, id);
+  // The cooldown this use started with (buying Stag mid-cooldown doesn't stall the bar).
+  const full = a.cooldownDur > 0 ? a.cooldownDur : abilityCooldown(s, id);
   return full > 0 ? Math.max(0, Math.min(1, 1 - cd / full)) : 1;
 }
 
@@ -305,9 +318,15 @@ export function championVisible(s: GameState, id: ChampionId): boolean {
   return s.champions[id].level > 0;
 }
 
-/** Joined and the gold covers `amount` more levels (BUY_MAX / -1: at least one). */
+/** Joined, not mastered, and the gold covers `amount` more levels (BUY_MAX / -1: at least one). */
 export function championAffordable(s: GameState, id: ChampionId, amount = 1): boolean {
-  return championVisible(s, id) && s.gold.gte(championCost(s, id, amount < 1 ? 1 : amount));
+  const n = amount < 1 ? 1 : amount;
+  return championVisible(s, id) && championLevelsLeft(s, id) >= n && s.gold.gte(championCost(s, id, n));
+}
+
+/** The champion reached maxLevel: its row shows "Mastered", no more levels to buy. */
+export function championMastered(s: GameState, id: ChampionId): boolean {
+  return championVisible(s, id) && championLevelsLeft(s, id) <= 0;
 }
 
 // ---- Reward preview for the Zoom button and the cinematic ----

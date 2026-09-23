@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { applyAction } from './actions';
 import { BALANCE, CHAMPION_TEXT } from './content';
 import { D } from './decimal';
-import { BUY_MAX, championCost, championDps, championHit, championMaxAffordable, championSpecialDamage, damageMult, unitPeriod } from './formulas';
+import { BUY_MAX, championBlowShare, championCost, championDps, championHit, championMaxAffordable, championSpecialDamage, championSpecialShare, unitPeriod } from './formulas';
 import * as sel from './selectors';
 import { createInitialState } from './state';
 import { tick } from './tick';
@@ -79,8 +79,8 @@ describe('levels', () => {
   });
 });
 
-describe('damage', () => {
-  it('a blow on every footman melee beat (even with no footmen), scaling with level', () => {
+describe('damage: a share of the current dragon\'s max HP', () => {
+  it('a blow on every footman melee beat (even with no footmen): level 1 → mastery', () => {
     const s = withAldric(4);
     tank(s);
     const { events, emit } = recorder();
@@ -89,38 +89,82 @@ describe('damage', () => {
     expect(hits.length).toBe(3); // the first newt idles 4 s
     expect(hits[0]!.id).toBe('aldric');
     expect(hits[0]!.damage.eq(championHit(s, 'aldric'))).toBe(true);
-    expect(championHit(s, 'aldric').toNumber()).toBe(BALANCE.champions.aldric.damage);
-    s.champions.aldric.level = 5;
-    expect(championHit(s, 'aldric').toNumber()).toBe(BALANCE.champions.aldric.damage * 5);
-    s.champions.aldric.level = 10; // a doubling every doubleEvery levels
-    expect(championHit(s, 'aldric').toNumber()).toBe(BALANCE.champions.aldric.damage * 10 * 2);
     const b = BALANCE.champions.aldric;
-    expect(championDps(s, 'aldric').toNumber()).toBeCloseTo(championHit(s, 'aldric').toNumber() * (1 / unitPeriod(s, 'footman') + b.specialMult / b.specialEvery), 6);
+    expect(championBlowShare(s, 'aldric')).toBe(b.blow[0]);
+    expect(championHit(s, 'aldric').toNumber()).toBe(Math.ceil(s.dragon.maxHp.toNumber() * b.blow[0] - 1e-9));
+    // Rises with level, gently, and stops at mastery.
+    let prev = 0;
+    for (let L = 1; L <= b.maxLevel; L++) {
+      s.champions.aldric.level = L;
+      const share = championBlowShare(s, 'aldric');
+      expect(share).toBeGreaterThan(prev);
+      prev = share;
+    }
+    expect(championBlowShare(s, 'aldric')).toBeCloseTo(b.blow[1], 12);
+    expect(championSpecialShare(s, 'aldric')).toBeCloseTo(b.special[1], 12);
+    s.champions.aldric.level = b.maxLevel + 5;
+    expect(championBlowShare(s, 'aldric')).toBeCloseTo(b.blow[1], 12);
+    // A blow never one-shots: even mastered, it's a small share.
+    expect(b.blow[1]).toBeLessThan(0.02);
+    expect(b.special[1]).toBeLessThanOrEqual(0.07);
+    const dps = championHit(s, 'aldric').toNumber() / unitPeriod(s, 'footman') + championSpecialDamage(s, 'aldric').toNumber() / b.specialEvery;
+    expect(championDps(s, 'aldric').toNumber() / dps).toBeCloseTo(1, 9);
   });
 
-  it('a special move every specialEvery s: specialMult × a blow, damage applied', () => {
+  it('counts in every tier and against bosses: the share of whatever dragon is on stage', () => {
+    const m = inMountain(8);
+    m.champions.aldric.level = 5;
+    const share = championBlowShare(m, 'aldric');
+    expect(championHit(m, 'aldric').toNumber()).toBeCloseTo(m.dragon.maxHp.toNumber() * share, -1);
+    applyAction(m, { type: 'debug', op: 'boss' }, noop);
+    killAndNext(m);
+    expect(m.dragon.boss).toBe('grimmaw');
+    expect(championHit(m, 'aldric').toNumber()).toBeCloseTo(m.dragon.maxHp.toNumber() * share, -3);
+    expect(championSpecialDamage(m, 'aldric').gt(championHit(m, 'aldric'))).toBe(true);
+  });
+
+  it('a special move every specialEvery s visibly chunks the HP bar', () => {
     const s = withAldric(5);
     const { events, emit } = recorder();
     runUntil(s, () => ofType(events, 'championSpecial').length > 0, emit);
     expect(s.t).toBeGreaterThanOrEqual(BALANCE.champions.aldric.specialEvery - 1e-6);
     const sp = ofType(events, 'championSpecial')[0]!;
     expect(sp.id).toBe('aldric');
-    expect(sp.damage.eq(championSpecialDamage(s, 'aldric')) || s.dragon.phase === 'stagger').toBe(true);
-    expect(sp.damage.toNumber()).toBeGreaterThanOrEqual(championHit(s, 'aldric').toNumber() * BALANCE.champions.aldric.specialMult);
+    const base = championSpecialDamage(s, 'aldric');
+    expect(sp.damage.eq(base) || sp.damage.eq(base.mul(BALANCE.stagger.armyMult))).toBe(true);
+    expect(base.toNumber() / s.dragon.maxHp.toNumber()).toBeGreaterThanOrEqual(BALANCE.champions.aldric.special[0] - 1e-9);
+  });
+});
+
+describe('mastery', () => {
+  it('levels stop at maxLevel: costs, BUY_MAX and affordability respect it', () => {
+    const s = withAldric(7);
+    const max = BALANCE.champions.aldric.maxLevel;
+    s.gold = D('1e30');
+    applyAction(s, { type: 'levelChampion', id: 'aldric', amount: max + 10 }, noop);
+    expect(s.champions.aldric.level).toBe(1); // all-or-nothing: more levels than exist
+    applyAction(s, { type: 'levelChampion', id: 'aldric', amount: BUY_MAX }, noop);
+    expect(s.champions.aldric.level).toBe(max);
+    expect(sel.championMastered(s, 'aldric')).toBe(true);
+    expect(sel.championAffordable(s, 'aldric')).toBe(false);
+    expect(championMaxAffordable(s, 'aldric')).toBe(0);
+    const gold = s.gold;
+    applyAction(s, { type: 'levelChampion', id: 'aldric', amount: 1 }, noop);
+    expect(s.champions.aldric.level).toBe(max);
+    expect(s.gold.eq(gold)).toBe(true);
   });
 });
 
 describe('persistence', () => {
-  it('champions keep their levels through a zoom, and the Fusion Bonus lifts their blows', () => {
+  it('champions keep their levels through a zoom and strike the new tier\'s dragons at the same share', () => {
     const s = withAldric(6);
     s.champions.aldric.level = 12;
-    s.units.footman = 100;
-    const before = championHit(s, 'aldric').toNumber();
+    const share = championBlowShare(s, 'aldric');
     applyAction(s, { type: 'debug', op: 'cleared' }, noop);
     finishZoom(s);
     expect(s.tier).toBe(1);
     expect(s.champions.aldric.level).toBe(12);
-    expect(championHit(s, 'aldric').toNumber()).toBeCloseTo(before * damageMult(s), 6);
-    expect(damageMult(s)).toBeGreaterThan(1);
+    expect(championBlowShare(s, 'aldric')).toBe(share);
+    expect(championHit(s, 'aldric').toNumber()).toBe(Math.ceil(s.dragon.maxHp.toNumber() * share - 1e-9));
   });
 });

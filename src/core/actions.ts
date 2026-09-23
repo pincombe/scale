@@ -10,6 +10,7 @@ import {
   bossAt,
   canZoom,
   championCost,
+  championLevelsLeft,
   championMaxAffordable,
   clickDamage,
   dyingDuration,
@@ -125,6 +126,14 @@ function buyHeraldry(state: GameState, id: ChargeId, emit: Emit): void {
   if (h.levels[id] <= 0 && !h.order.includes(id)) h.order.push(id);
   h.levels[id]++;
   emit({ type: 'purchase', kind: 'heraldry', id, amount: 1 });
+  // Tower also musters its troops at once (the level just bought's share), besides the grant at
+  // the start of every tier, so the first Scales spent on it show on the field.
+  const e = CHARGES[id].effect;
+  if (e.kind === 'startUnits' && e.count > 0) {
+    const before = state.units[e.unit];
+    state.units[e.unit] = before + e.count;
+    checkMilestones(e.unit, before, before + e.count, emit);
+  }
 }
 
 /** Buy `amount` levels of a joined champion (BUY_MAX = as many as gold allows). All-or-nothing. */
@@ -132,7 +141,7 @@ function levelChampion(state: GameState, a: Extract<Action, { type: 'levelChampi
   const c = state.champions[a.id as ChampionId];
   if (!c || c.level <= 0) return;
   const amount = a.amount === BUY_MAX ? championMaxAffordable(state, a.id) : Math.min(MAX_BUY, Math.floor(finite(a.amount)));
-  if (!(amount >= 1)) return;
+  if (!(amount >= 1) || amount > championLevelsLeft(state, a.id)) return;
   const cost = championCost(state, a.id, amount);
   if (state.gold.lt(cost)) return;
   state.gold = state.gold.sub(cost);

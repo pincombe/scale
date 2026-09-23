@@ -55,6 +55,10 @@ export function endZoom(state: GameState, emit: Emit): void {
   z.stage = null;
   z.pending = null;
   emit({ type: 'zoomEnd', tier: state.tier });
+  // Dragon #0 has waited frozen since the switch (announced only by the resync): its entrance
+  // starts now, so one-shot entrance effects hear it.
+  const d = state.dragon;
+  if (d.phase === 'enter') emit({ type: 'dragonPhase', id: d.id, phase: 'enter', dur: d.phaseDur });
 }
 
 /**
@@ -76,6 +80,7 @@ export function enterTier(state: GameState, tier: number, height: number): void 
   for (const a of Object.values(state.abilities)) {
     a.active = 0;
     a.cooldown = 0;
+    a.cooldownDur = 0;
   }
   for (const id of CHAMPION_IDS) state.champions[id].specialT = BALANCE.champions[id].specialEvery;
   state.army = { meleeT: UNITS.footman.interval, volleyT: UNITS.archer.interval, cavalryT: UNITS.lancer.interval, volleys: [] };

@@ -127,6 +127,8 @@ export interface AbilityState {
   active: number;
   /** Seconds until it can be used again (0 = ready). */
   cooldown: number;
+  /** The full cooldown started at the last use (Stag at that moment), for the bar; 0 when ready. */
+  cooldownDur: number;
 }
 
 export interface ChampionState {

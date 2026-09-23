@@ -6,7 +6,7 @@ import { TICK_DT, bossAt, bossGold, bossMaxHp, dragonGold, dragonMaxHp, dragonSi
 import * as sel from './selectors';
 import { createInitialState } from './state';
 import { tick } from './tick';
-import { finishZoom, inMountain, killAndNext, ofType, recorder, runFor, runUntil, withBoss } from './testing/helpers';
+import { finishZoom, inMountain, killAndNext, noop, ofType, recorder, runFor, runUntil, withBoss } from './testing/helpers';
 
 describe('the Wyrm Gauge', () => {
   it('each ordinary kill fills it; when full, the next dragon is the boss (bossSummon, then its spawn)', () => {
@@ -91,10 +91,11 @@ describe('the boss timer', () => {
     const hp = s.dragon.hp;
     applyAction(s, { type: 'strike', weak: false, aimed: true, x: 0, y: 0 }, emit);
     expect(s.dragon.hp.eq(hp)).toBe(true);
-    // After the leave, the next ordinary dragon.
+    // After the leave, an ordinary dragon: the refill replays the ones leading up to the boss
+    // (this boss was debug-summoned early, at #1, so the replay clamps at #0; a real approach is below).
     runUntil(s, () => s.dragon.id !== id, emit);
     expect(s.dragon.boss).toBeNull();
-    expect(s.dragon.index).toBe(index + 1);
+    expect(s.dragon.index).toBe(Math.max(0, index - (bossAt(0) - back)));
     expect(s.dragon.phase).toBe('enter');
     expect(s.wyrm.cleared).toBe(false);
     // Refill the gauge: the boss is back, no tougher than before.
@@ -175,5 +176,42 @@ describe('beating the boss', () => {
     finishZoom(a, emit);
     expect(a.tier).toBe(1);
     expect(ofType(events, 'zoomBegin').length).toBe(1);
+  });
+});
+
+describe('the refill after an escape is never harder than the first approach', () => {
+  it('a real approach: the boss at #bossAt escapes; dragons #(bossAt - refill)… come back, then the boss at #bossAt again', () => {
+    const s = createInitialState(9);
+    const { events, emit } = recorder();
+    const at = bossAt(0);
+    for (let k = 0; k < at; k++) killAndNext(s, emit);
+    expect(s.dragon.boss).toBe('elderNewt');
+    expect(s.dragon.index).toBe(at);
+    const approachHp = s.dragon.maxHp;
+    runUntil(s, () => s.dragon.boss === null, emit, 60);
+    const refill = at - s.wyrm.charge;
+    expect(s.dragon.index).toBe(at - refill);
+    const hps: number[] = [];
+    for (let k = 0; k < refill; k++) {
+      expect(s.dragon.boss).toBeNull();
+      expect(s.dragon.index).toBeLessThan(at);
+      hps.push(s.dragon.maxHp.toNumber());
+      killAndNext(s, emit);
+    }
+    // Each refill dragon is one the player already beat on the first approach.
+    expect(Math.max(...hps)).toBeLessThan(approachHp.toNumber());
+    expect(s.dragon.boss).toBe('elderNewt');
+    expect(s.dragon.index).toBe(at);
+    expect(s.dragon.maxHp.eq(approachHp)).toBe(true);
+    expect(ofType(events, 'bossSummon').length).toBe(2);
+  });
+
+  it('after the boss is beaten, ordinary dragons keep growing past it (the push-further choice)', () => {
+    const s = inMountain(10);
+    applyAction(s, { type: 'debug', op: 'boss' }, noop);
+    killAndNext(s);
+    const bossIndex = s.dragon.index;
+    killAndNext(s);
+    expect(s.dragon.index).toBe(bossIndex + 1);
   });
 });

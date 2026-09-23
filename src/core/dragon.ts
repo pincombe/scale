@@ -113,8 +113,14 @@ function nextDragon(state: GameState, emit: Emit): void {
     beginZoom(state, emit);
     return;
   }
-  if (!d.boss && !w.cleared && w.charge >= bossAt(state.tier)) summonBoss(state, d.index + 1, emit);
-  else spawnDragon(state, d.index + 1, emit);
+  const at = bossAt(state.tier);
+  if (!d.boss && !w.cleared && w.charge >= at) summonBoss(state, d.index + 1, emit);
+  else if (d.boss && d.phase === 'leave') {
+    // An escaped boss: the refill replays the dragons leading up to it, so the boss comes back at
+    // the same index after (bossAt - charge) kills, and a retry is never harder than the first
+    // approach (the army has grown meanwhile).
+    spawnDragon(state, Math.max(0, d.index - (at - w.charge)), emit);
+  } else spawnDragon(state, d.index + 1, emit);
 }
 
 /**

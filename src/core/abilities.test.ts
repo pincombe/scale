@@ -4,6 +4,7 @@ import { applyAction } from './actions';
 import { BALANCE } from './content';
 import { abilityCooldown, clickDamage, unitDamage, volleyAbilityDamage } from './formulas';
 import * as sel from './selectors';
+import { ENTER_WEAK_FROM } from './weakspot';
 import { createInitialState } from './state';
 import { inMountain, killAndNext, noop, ofType, recorder, runFor, runUntil, tank } from './testing/helpers';
 import type { GameState } from './types';
@@ -132,6 +133,60 @@ describe('holds and zooms', () => {
     expect(s.abilities.charge).toEqual(a);
     expect(sel.abilityReady(s, 'rally')).toBe(false); // nothing is ready during a hold
     applyAction(s, { type: 'zoom', stage: 'switch' }, noop);
-    expect(s.abilities.charge).toEqual({ active: 0, cooldown: 0 });
+    expect(s.abilities.charge).toEqual({ active: 0, cooldown: 0, cooldownDur: 0 });
+  });
+});
+
+describe('the Volley needs something to land on', () => {
+  it('not ready while the dragon dies, leaves, is still arriving or a zoom holds; Charge! and Rally stay usable', () => {
+    const s = inMountain(11);
+    s.flags['ability.volley'] = true;
+    // Early in the entrance: not yet (the weak spot's rule: past ENTER_WEAK_FROM of it).
+    expect(s.dragon.phase).toBe('enter');
+    expect(sel.abilityReady(s, 'volley')).toBe(false);
+    applyAction(s, { type: 'useAbility', id: 'volley' }, noop);
+    expect(s.abilities.volley.cooldown).toBe(0);
+    runUntil(s, () => s.dragon.phase !== 'enter' || s.dragon.phaseT / s.dragon.phaseDur > ENTER_WEAK_FROM + 0.01);
+    expect(sel.abilityReady(s, 'volley')).toBe(true);
+    runUntil(s, () => s.dragon.phase !== 'enter');
+    expect(sel.abilityReady(s, 'volley')).toBe(true);
+    // Dying: greyed, and a press does nothing (the cooldown isn't spent on a corpse).
+    applyAction(s, { type: 'debug', op: 'kill' }, noop);
+    expect(s.dragon.phase).toBe('dying');
+    expect(sel.abilityReady(s, 'volley')).toBe(false);
+    expect(sel.abilityReady(s, 'charge')).toBe(true);
+    expect(sel.abilityReady(s, 'rally')).toBe(true);
+    const { events, emit } = recorder();
+    applyAction(s, { type: 'useAbility', id: 'volley' }, emit);
+    expect(events).toEqual([]);
+    expect(s.abilities.volley.cooldown).toBe(0);
+    // Leaving (an escaping boss): greyed too.
+    runUntil(s, () => s.dragon.phase !== 'dying');
+    applyAction(s, { type: 'debug', op: 'phase', phase: 'leave' }, noop);
+    expect(sel.abilityReady(s, 'volley')).toBe(false);
+    expect(sel.abilityReady(s, 'charge')).toBe(true);
+  });
+});
+
+describe('the cooldown bar', () => {
+  it('keeps the full cooldown the use started with, so buying Stag mid-cooldown never stalls it', () => {
+    const s = ready(12);
+    applyAction(s, { type: 'useAbility', id: 'charge' }, noop);
+    const full = BALANCE.abilities.charge.cooldown;
+    expect(s.abilities.charge.cooldownDur).toBe(full);
+    runFor(s, full / 2);
+    expect(sel.abilityFrac(s, 'charge')).toBeCloseTo(0.5, 2);
+    s.heraldry.levels.stag = 5; // bought mid-cooldown
+    expect(sel.abilityFrac(s, 'charge')).toBeCloseTo(0.5, 2);
+    let last = sel.abilityFrac(s, 'charge');
+    for (let i = 0; i < 10; i++) {
+      runFor(s, 1);
+      const f = sel.abilityFrac(s, 'charge');
+      expect(f).toBeGreaterThan(last);
+      last = f;
+    }
+    runFor(s, full);
+    expect(sel.abilityFrac(s, 'charge')).toBe(1);
+    expect(s.abilities.charge.cooldownDur).toBe(0);
   });
 });
