@@ -272,13 +272,24 @@ export const MICROCOPY: Readonly<Record<string, string>> = {
   clickToStart: 'Click to draw your sword.',
 
   // First-minute hints, in the order a new player meets them.
-  hintWeakSpot: "Strike the glowing scale. It's loose, and it knows it.",
   hintFirstKill: 'The first dragon falls. The songs will be short.',
   hintHireFootman: 'Glory is better shared. Hire a Footman.',
   hintArmy: "Your footmen fight on their own. They'd still like you to watch.",
-  hintStagger: "It's winding up. Hit the glow, now!",
   hintGrowth: 'Each dragon is a little bigger than the last. Nobody finds this reassuring.',
   hireFootman: 'Hire a Footman',
+
+  // Coach marks, drawn on the stage beside the glowing weak spot (render/fx/coach.ts). Line 1 is
+  // Cinzel caps (a call to action, read at a glance: the stagger one shows for a 1.2 s windup),
+  // line 2 EB Garamond italic. {mult} is the live weak-spot multiplier (5, or 10 with Keen Eye).
+  // The weak-spot coach can sit on a loose scale, a glowing throat or a tail base, so line 1 names
+  // the glow, not the body part. The stagger coach only shows once the glow is learned, so its
+  // line 1 teaches the timing alone; the ring already says where. Clarity on line 1, wink on line 2.
+  coachWeakSpot: 'Strike where it glows',
+  coachWeakSpotSub: "×{mult} damage. It's a sore spot.",
+  coachStagger: 'Strike now!',
+  coachStaggerSub: 'Interrupt it for bonus gold',
+  // Caption under the first few crit numbers, naming the cause. A label, not a joke.
+  critCaption: 'Weak spot ×{mult}',
 
   // HUD and panel labels.
   'tier.0': 'The Meadow',

@@ -28,6 +28,9 @@
 //                  first crit after a CRIT_STOP_GAP pause: isolated crits punch, sprees feel like
 //                  power, not an earthquake. No full-screen flash on crits.
 //     stagger    + STAGGERED! callout, big ring, ember burst, gentle warm flash
+//     first crits  the first CRIT_CAPTIONS crits that stay on screen carry a "WEAK SPOT ×5" caption
+//                  (not lethal ones, whose number the kill dismisses; not staggers: STAGGERED! names
+//                  those, and their +gold rises through that band; none past 6 saved crits)
 //   armyHit      small sparks per blow/arrow, ONE aggregated army number (merges), shake ~ damage/maxHp
 //   dragonDeath  hit-stop, short slow-mo beat, then visuals scaled by killScale (corpse screen size +
 //                  reward): warm gold flash, kick, amber bloom, shockwaves, embers + smoke + dust,
@@ -39,6 +42,9 @@
 //   goldGain     (stagger) a few coins from the weak spot + gold number
 //   milestone / unlock(unit) / purchase(upgrade)   gold shimmer and light shafts rising over the army
 //                  (merged: one shimmer per frame however many events a purchase emits)
+//
+// Coach mark (./coach.ts, when: ./coachTimeline.ts): the ring + label at the live weak spot that
+// teaches the ×5 crit and then the stagger; drawn in fx.text under the numbers.
 //
 // Timing: world effects run on scaled time (they freeze in hit-stop and crawl in slow-mo); numbers
 // and the coin flight (particles.screen runs on the real clock) use wall time so the reward always
@@ -58,6 +64,8 @@ import { PF_HOMING, type ParticleSpec, type ParticleSystem } from '../particles'
 import { rect, vec2 } from '../../lib/vec';
 import { KNIGHT_HEIGHT } from '../world';
 import { buildPresets, type Presets } from './presets';
+import { createCoach } from './coach';
+import { MICROCOPY, weakMult } from '../../core';
 import { fxSprites } from './sprites';
 import { NK_ARMY, NK_CALLOUT, NK_CLICK, NK_CRIT, NK_GOLD, NK_REWARD, NumberPool } from './numbers';
 import {
@@ -85,6 +93,10 @@ export interface FxRender {
 }
 
 const TAG_GOLD = 1;
+/** The first this-many crit numbers the player actually sees name their cause under the number. */
+const CRIT_CAPTIONS = 3;
+/** No captions once the save has this many crits (a returning player already knows). */
+const CRIT_CAPTION_MAX_CRITS = 6;
 const KIND_ID: Record<DamageKind, number> = { click: NK_CLICK, crit: NK_CRIT, army: NK_ARMY, gold: NK_GOLD };
 
 // ---- Emitters: spawn a preset continuously over a region for a while (shimmer, smolder) ----
@@ -212,6 +224,21 @@ export function createFx(scene: Scene): FxRender {
 
   let slashFlip = false;
 
+  const coach = createCoach(scene);
+  let captionText = '';
+  /** Captions shown this session (a lethal crit's number is dismissed at once, so it doesn't count). */
+  let captionsShown = 0;
+  let captionMult = 0;
+  /** "WEAK SPOT ×5" with the live multiplier (built per event, cached per multiplier). */
+  const critCaption = (): string => {
+    const m = weakMult(game.state);
+    if (m !== captionMult) {
+      captionMult = m;
+      captionText = (MICROCOPY['critCaption'] ?? '').replace('{mult}', String(m)).toUpperCase();
+    }
+    return captionText;
+  };
+
   // ---- coins ----
   const ZERO = D(0);
   let landed = 0;
@@ -315,7 +342,13 @@ export function createFx(scene: Scene): FxRender {
       tmp2.x += 16 / camera.zoomEff;
       // The crit owns the space: live click numbers (mid-rise, right where it slams) fade out.
       numbers.dismiss(NK_CLICK, 0.12);
-      numbers.crit(tmp2.x, tmp2.y, e.damage);
+      // The first crits name their cause. Not on a stagger: STAGGERED! names it, and the bonus gold
+      // number rises through the caption's band.
+      // Not on a lethal crit either: the kill dismisses the number at once (the +N owns the space).
+      const st = game.state;
+      const cap = !e.stagger && st.dragon.phase !== 'dying' && captionsShown < CRIT_CAPTIONS && st.stats.crits <= CRIT_CAPTION_MAX_CRITS;
+      if (cap) captionsShown++;
+      numbers.crit(tmp2.x, tmp2.y, e.damage, cap ? critCaption() : '');
       const damp = critDamp(critHeat);
       critHeat = heatAfterCrit(critHeat);
       // Hit-stop and the chromatic kick only on the first crit after a pause (and on kills):
@@ -471,6 +504,7 @@ export function createFx(scene: Scene): FxRender {
     if (e.kind === 'upgrade' && shimmerPending < 0.6) shimmerPending = 0.6;
   });
   game.on('resync', () => {
+    if (game.state.stats.crits === 0) captionsShown = 0; // a hard reset teaches it again
     numbers.clear();
     eActive.fill(0);
     shimmerPending = 0;
@@ -552,6 +586,7 @@ export function createFx(scene: Scene): FxRender {
   dbg.section('FX');
   dbg.watch('numbers', () => `${numbers.count} live, ${(numbers.memBytes / 1048576).toFixed(1)} MB`);
   dbg.watch('crit heat', () => critHeat.toFixed(2));
+  dbg.watch('coach', () => coach.status());
   dbg.watch('coins land', () => (firstLand < 0 ? '-' : `${firstLand.toFixed(2)}-${lastLand.toFixed(2)} s`));
   dbg.button('crit', () => {
     const d = scene.dragon;
@@ -575,6 +610,7 @@ export function createFx(scene: Scene): FxRender {
     visible: true,
     update(v: View) {
       clock += v.realDt;
+      coach.update(v);
       numbers.setDpr(v.dpr);
       numbers.update(v.realDt);
       updateEmitters(v.dt);
@@ -613,6 +649,7 @@ export function createFx(scene: Scene): FxRender {
       }
     },
     draw(ctx: CanvasRenderingContext2D, v: View) {
+      coach.draw(ctx, v);
       numbers.draw(ctx, v.camera, v.dpr);
     },
   };

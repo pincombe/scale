@@ -307,6 +307,9 @@ function createMute(scene: Scene, ui: UiRoot): void {
 function createHireButton(scene: Scene, ui: UiRoot): void {
   const wrap = el('div', 'hire-lone', ui.stage);
   wrap.hidden = true;
+  // The coach mark (render/fx/coach.ts) keeps its label clear of this. The static wrapper, not the
+  // animated button, so the measured rect never catches the hire-in transform.
+  ui.registerAnchor('hire', wrap);
   const state = (): GameState => scene.game.state;
   const b = gameButton(
     'hire-lone-btn',

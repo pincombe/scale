@@ -6,6 +6,10 @@
 // Army hits, rapid clicks and rapid crits aggregate: a new hit merges into the live number of its group (bumping
 // it) instead of spawning another, so a big army or a crit spree never turns into number soup.
 //
+// A number can carry a small caption under it (the first crits say "WEAK SPOT ×5"): it's rendered
+// into the same canvas, which grows symmetrically so the number stays centered on its anchor, and
+// it survives merges.
+//
 // Memory: each slot's canvas is sized to fit its text (rounded to buckets), rendered at about
 // DPR x 1.2, shrinks when reused for smaller text, and the pool never holds more than MAX_BYTES of
 // backing store (renders drop resolution instead of growing past it).
@@ -67,6 +71,12 @@ const DRAW_ORDER = [NK_ARMY, NK_CLICK, NK_GOLD, NK_REWARD, NK_CRIT, NK_CALLOUT] 
 
 const MAX = 48;
 const PAD = 8;
+/** Caption under a number: small letter-spaced Cinzel caps between two gold hairlines. */
+const CAP_FONT = `700 16px ${CINZEL}`;
+const CAP_SIZE = 16;
+const CAP_TRACK = 0.16;
+/** Height the caption adds below the number (the canvas grows by twice this, see render). */
+const CAP_H = 22;
 /** Backing-store budget for all number canvases (bytes). */
 const MAX_BYTES = 8 * 1024 * 1024;
 /** Merge rules: a hit merges into a live number of its group whose last merge (or spawn) was less
@@ -100,6 +110,8 @@ export class NumberPool {
   private readonly amount: (Decimal | null)[] = new Array<Decimal | null>(MAX).fill(null);
   /** Text each slot was last rendered with (re-rendered once the web font finishes loading). */
   private readonly texts: string[] = new Array<string>(MAX).fill('');
+  /** Caption drawn under the number ('' = none). */
+  private readonly captions: string[] = new Array<string>(MAX).fill('');
   /** Some live slot was rendered before Cinzel was ready (with a fallback font). */
   private staleFonts = false;
   // Cached render per slot.
@@ -184,8 +196,8 @@ export class NumberPool {
     }
   }
 
-  /** Spawn a number (or a text callout when `text` is given). Returns the slot. */
-  spawn(kind: number, wx: number, wy: number, amount: Decimal | null, text: string | null = null, group = 255): number {
+  /** Spawn a number (or a text callout when `text` is given), with an optional caption under it. Returns the slot. */
+  spawn(kind: number, wx: number, wy: number, amount: Decimal | null, text: string | null = null, group = 255, caption = ''): number {
     const i = this.alloc();
     const st = STYLES[kind]!;
     this.active[i] = 1;
@@ -199,6 +211,7 @@ export class NumberPool {
     this.amount[i] = amount;
     this.spin[i] = 0;
     this.fadeShort[i] = 0;
+    this.captions[i] = caption;
     this.ox[i] = 0;
     this.oy[i] = 0;
     this.vx[i] = (Math.random() - 0.5) * 40;
@@ -224,20 +237,24 @@ export class NumberPool {
 
   /** Army hit: merge into that group's live number if it's fresh, else spawn a new one. */
   army(group: number, wx: number, wy: number, amount: Decimal): void {
-    if (!this.merge(NK_ARMY, group, amount, ARMY_WINDOW, ARMY_MAX_AGE, 0.7)) this.spawn(NK_ARMY, wx, wy, amount, null, group);
+    if (this.merge(NK_ARMY, group, amount, ARMY_WINDOW, ARMY_MAX_AGE, 0.7, '') < 0) this.spawn(NK_ARMY, wx, wy, amount, null, group);
   }
 
-  /** Crit: rapid crits merge into one number that re-slams, instead of piling into a column. */
-  crit(wx: number, wy: number, amount: Decimal): void {
-    if (!this.merge(NK_CRIT, GROUP_CRIT, amount, CRIT_WINDOW, CRIT_MAX_AGE, 0.9)) this.spawn(NK_CRIT, wx, wy, amount, null, GROUP_CRIT);
+  /**
+   * Crit: rapid crits merge into one number that re-slams, instead of piling into a column. A
+   * `caption` names the cause under it (kept by later merges; a merge can add one, never remove it).
+   */
+  crit(wx: number, wy: number, amount: Decimal, caption = ''): void {
+    if (this.merge(NK_CRIT, GROUP_CRIT, amount, CRIT_WINDOW, CRIT_MAX_AGE, 0.9, caption) < 0) this.spawn(NK_CRIT, wx, wy, amount, null, GROUP_CRIT, caption);
   }
 
   /** Click: rapid clicks count up in one bumping number instead of a spray of "1 1 1". */
   click(wx: number, wy: number, amount: Decimal): void {
-    if (!this.merge(NK_CLICK, GROUP_CLICK, amount, CLICK_WINDOW, CLICK_MAX_AGE, 0.6)) this.spawn(NK_CLICK, wx, wy, amount, null, GROUP_CLICK);
+    if (this.merge(NK_CLICK, GROUP_CLICK, amount, CLICK_WINDOW, CLICK_MAX_AGE, 0.6, '') < 0) this.spawn(NK_CLICK, wx, wy, amount, null, GROUP_CLICK);
   }
 
-  private merge(kind: number, group: number, amount: Decimal, window: number, maxAge: number, extend: number): boolean {
+  /** Merge into a fresh live number of the group; returns its slot, or -1 when none qualifies. */
+  private merge(kind: number, group: number, amount: Decimal, window: number, maxAge: number, extend: number, caption: string): number {
     for (let i = 0; i < MAX; i++) {
       if (!this.active[i] || this.kind[i] !== kind || this.group[i] !== group) continue;
       const a = this.age[i]!;
@@ -247,10 +264,11 @@ export class NumberPool {
       this.amount[i] = sum;
       this.bump[i] = 0;
       this.life[i] = Math.max(this.life[i]!, a + extend);
+      if (caption && !this.captions[i]) this.captions[i] = caption;
       this.render(i, fmt(sum));
-      return true;
+      return i;
     }
-    return false;
+    return -1;
   }
 
   update(realDt: number): void {
@@ -376,10 +394,18 @@ export class NumberPool {
     let c = context2d(cv);
     c.font = st.font;
     const tw = c.measureText(text).width;
+    const caption = this.captions[i]!;
+    let capW = 0;
+    if (caption) {
+      c.font = CAP_FONT;
+      capW = trackedWidth(c, caption, CAP_SIZE * CAP_TRACK) + CAP_RULE * 2 + CAP_RULE_GAP * 2;
+    }
     const iconS = st.icon ? st.size * 0.86 : 0;
     const gap = st.icon ? st.size * 0.14 : 0;
-    const wCss = tw + iconS + gap + PAD * 2 + st.stroke * 2;
-    const hCss = st.size * 1.3 + PAD * 2;
+    const wCss = Math.max(tw + iconS + gap, capW) + PAD * 2 + st.stroke * 2;
+    // A caption hangs below the number; the canvas grows by it on both sides so the number stays
+    // at the canvas center (its anchor, and the center of the slam).
+    const hCss = st.size * 1.3 + PAD * 2 + (caption ? CAP_H * 2 : 0);
     let res = Math.max(1, this.dpr) * st.res;
     let W = Math.ceil(wCss * res);
     let H = Math.ceil(hCss * res);
@@ -411,7 +437,7 @@ export class NumberPool {
     c.textBaseline = 'middle';
     c.lineJoin = 'round';
     c.miterLimit = 2;
-    const x0 = PAD + st.stroke + iconS + gap;
+    const x0 = (wCss - (tw + iconS + gap)) / 2 + iconS + gap;
     const y = hCss / 2 + st.size * 0.05;
 
     if (st.icon) {
@@ -420,7 +446,7 @@ export class NumberPool {
         c.shadowColor = 'rgba(12,4,0,0.65)';
         c.shadowBlur = 4 * res;
         c.shadowOffsetY = 1.5 * res;
-        c.drawImage(coin, PAD + st.stroke - 1, y - iconS / 2 - st.size * 0.04, iconS, iconS);
+        c.drawImage(coin, x0 - iconS - gap - 1, y - iconS / 2 - st.size * 0.04, iconS, iconS);
       }
     }
     // Soft drop shadow + thick dark outline: reads over bright sky and dark silhouettes alike.
@@ -438,12 +464,68 @@ export class NumberPool {
     for (let k = 0; k < n; k++) g.addColorStop(k / (n - 1), st.fill[k]!);
     c.fillStyle = g;
     c.fillText(text, x0, y);
+    if (caption) this.drawCaption(c, caption, wCss / 2, y + st.size * 0.5 + CAP_H * 0.5 + 2);
     this.srcW[i] = W;
     this.srcH[i] = H;
     // Destination size = source pixels / res, so an s = 1 draw maps texels 1:1 onto the screen.
     this.dstW[i] = W / res;
     this.dstH[i] = H / res;
     this.texts[i] = text;
-    if (!this.fontsOk(st.font)) this.staleFonts = true;
+    if (!this.fontsOk(st.font) || (caption && !this.fontsOk(CAP_FONT))) this.staleFonts = true;
+  }
+
+  /** The caption line centered on (cx, cy): outlined tracked caps between two fading gold rules. */
+  private drawCaption(c: CanvasRenderingContext2D, caption: string, cx: number, cy: number): void {
+    c.font = CAP_FONT;
+    const track = CAP_SIZE * CAP_TRACK;
+    const w = trackedWidth(c, caption, track);
+    const x = cx - (w - track) / 2;
+    c.textBaseline = 'middle';
+    c.shadowColor = 'rgba(12,4,0,0.8)';
+    c.shadowBlur = 5;
+    c.shadowOffsetY = 1;
+    c.lineWidth = 3.4;
+    c.strokeStyle = '#1c0c05';
+    trackedText(c, caption, x, cy, track, true);
+    c.shadowColor = 'rgba(0,0,0,0)';
+    c.shadowBlur = 0;
+    c.shadowOffsetY = 0;
+    c.fillStyle = '#fbeed2';
+    trackedText(c, caption, x, cy, track, false);
+    // Hairline rules either side, fading outward.
+    const ry = Math.round(cy) + 0.5;
+    for (let s = -1; s <= 1; s += 2) {
+      const x0 = s < 0 ? x - CAP_RULE_GAP : x + w - track + CAP_RULE_GAP;
+      const x1 = x0 + s * CAP_RULE;
+      const g = c.createLinearGradient(x0, 0, x1, 0);
+      g.addColorStop(0, 'rgba(255,227,154,0.9)');
+      g.addColorStop(1, 'rgba(255,227,154,0)');
+      c.fillStyle = 'rgba(28,12,5,0.7)';
+      c.fillRect(Math.min(x0, x1), ry - 1.5, CAP_RULE, 3);
+      c.fillStyle = g;
+      c.fillRect(Math.min(x0, x1), ry - 0.5, CAP_RULE, 1);
+    }
+  }
+}
+
+/** Length of each hairline rule beside a caption, and its gap to the text (CSS px). */
+const CAP_RULE = 22;
+const CAP_RULE_GAP = 8;
+
+/** Width of `text` with `track` px after every glyph (canvas letterSpacing isn't everywhere yet). */
+export function trackedWidth(c: CanvasRenderingContext2D, text: string, track: number): number {
+  let w = 0;
+  for (let k = 0; k < text.length; k++) w += c.measureText(text[k]!).width + track;
+  return w;
+}
+
+/** Draw `text` glyph by glyph from x (left, current baseline), `track` px apart (render-time only). */
+export function trackedText(c: CanvasRenderingContext2D, text: string, x: number, y: number, track: number, stroke: boolean): void {
+  c.textAlign = 'left';
+  for (let k = 0; k < text.length; k++) {
+    const ch = text[k]!;
+    if (stroke) c.strokeText(ch, x, y);
+    else c.fillText(ch, x, y);
+    x += c.measureText(ch).width + track;
   }
 }

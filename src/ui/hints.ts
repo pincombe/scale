@@ -1,6 +1,10 @@
 // First-minute hints: one quiet italic line above the bottom of the stage, one at a time, each at
-// most once per session. They teach the weak spot, the first hire, the army, the stagger and the
-// growth, then get out of the way. Strings come from MICROCOPY (hint*) at runtime.
+// most once per session. They teach the first hire, the army and the growth, then get out of the
+// way. Strings come from MICROCOPY (hint*) at runtime.
+//
+// The weak spot and the stagger are taught in the world instead, by the coach mark beside the glow
+// (render/fx/coach.ts). So the two never fight for the same spot, this registers the caption as
+// the UI anchor 'hint' (hud.ts registers the Hire button as 'hire'); the coach keeps clear of both.
 import { MICROCOPY } from '../core';
 import type { Scene } from '../app/scene';
 import { el } from './dom';
@@ -20,6 +24,10 @@ export function createHints(scene: Scene, ui: UiRoot): void {
     if (key !== undefined && key !== current) return;
     current = '';
     line.classList.remove('on');
+    // Out of layout once faded, so its 'hint' anchor reads null (the coach may use the space).
+    window.setTimeout(() => {
+      if (current === '') line.hidden = true;
+    }, 650);
   };
 
   const show = (key: string): void => {
@@ -40,15 +48,9 @@ export function createHints(scene: Scene, ui: UiRoot): void {
     window.setTimeout(fn, ms);
   };
 
-  // No crit a few seconds after starting: point at the weak spot.
-  scene.input.onFirstGesture(() => {
-    later(2600, () => {
-      if (game.state.stats.crits === 0) show('hintWeakSpot');
-    });
-  });
-  game.on('strike', (e) => {
-    if (e.crit) hide('hintWeakSpot');
-  });
+  // Keep-out anchor for the coach mark (null while hidden, so only what's on screen counts). The
+  // lone Hire button registers its own ('hire', ui/hud.ts).
+  ui.registerAnchor('hint', line);
 
   game.on('dragonDeath', () => {
     const s = game.state;
@@ -64,10 +66,5 @@ export function createHints(scene: Scene, ui: UiRoot): void {
   game.on('purchase', (e) => {
     if (e.kind === 'unit') hide('hintHireFootman');
     if (e.kind === 'unit' && e.id === 'footman' && game.state.units.footman === e.amount) later(900, () => show('hintArmy'));
-  });
-
-  game.on('dragonPhase', (e) => {
-    if (e.phase === 'windup' && game.state.kills >= 2) show('hintStagger');
-    else if (e.phase !== 'windup') hide('hintStagger');
   });
 }

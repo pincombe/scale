@@ -420,6 +420,9 @@ export function createDragon(scene: Scene): DragonRender {
       const pad = BODY_HIT_PAD_PX / Math.max(1e-6, scene.camera.zoomEff * L());
       return rig.hitBody(p.x, p.y, pad) ? 'body' : null;
     },
+    weakRadius() {
+      return weakHitRadiusU() * L();
+    },
     impactPoint(out) {
       ensureIndividual();
       const r = Math.random();

@@ -13,7 +13,7 @@ The code contracts. PLAN.md is the design, BUILD_LOG.md the status. If a contrac
 | `src/render/backdrop/` | `createBackdrop(scene) → { back, front }` | 1.1 (+ `palette.ts` values) |
 | `src/render/dragon/` | `createDragon(scene) → { layer, view: DragonView }` | 1.2 |
 | `src/render/crowd/` | `createCrowd(scene) → { layer, view: CrowdView }` | 1.3 |
-| `src/render/fx/` + `render/post.ts` | `createFx(scene) → { api: FxApi, text, post }` | 1.4 |
+| `src/render/fx/` + `render/post.ts` | `createFx(scene) → { api: FxApi, text, post }`; also the first-minute **coach marks** (`coach.ts`, pure timeline in `coachTimeline.ts`: weak-spot coach until the first crit, stagger coach until the first stagger, derived from `state.stats`, so nothing new is saved) and the "Weak spot ×N" cause caption on the first crits | 1.4 (coach: 1.11) |
 | `src/audio/` | `engine.ts` (graph, lead); `sfx.ts` → `createSfx(scene)` | 1.7 (`sfx*`) |
 | `src/ui/` | `mount.ts` (UiRoot: regions, anchors, inset, toasts, refresh), placeholder `hud.ts`, `panel.ts`, `title.ts`, `styles.css` | 1.6 |
 | `src/sim/` | Headless runs of the real core (`npm run sim`, in CI) | 1.9 |
@@ -153,7 +153,8 @@ interface DragonView {                          // scene.dragon (render/dragon)
   impactPoint(out): Vec2;                       // random point on the body: un-aimed clicks, army hits, arrow targets
   weakSpot(out): Vec2 | null;                   // null when not showing
   headPoint(out): Vec2;                         // mouth: fire origin
-  bounds(out): Rect }                           // stable rest-pose AABB at current size (framing, targeting)
+  bounds(out): Rect;                            // stable rest-pose AABB at current size (framing, targeting)
+  weakRadius?(): number }                       // current weak-spot hit radius in world m (≥ WEAK_HIT_MIN_PX on screen); the fx coach ring sizes from it
 interface CrowdView { heroPoint(out): Vec2; frontX(): number; bounds(out): Rect }   // scene.crowd (render/crowd)
 interface FxApi {                               // scene.fx (render/fx)
   damageNumber(wx, wy, amount: Decimal, kind: 'click'|'crit'|'army'|'gold'); flash(color, alpha, seconds);

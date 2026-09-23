@@ -12,6 +12,12 @@ export interface DragonView {
   impactPoint(out: Vec2): Vec2;
   /** World position of the glowing weak spot, or null when it isn't showing. */
   weakSpot(out: Vec2): Vec2 | null;
+  /**
+   * Current weak-spot hit radius in world meters: the circle hitTest() accepts around weakSpot()
+   * (at least WEAK_HIT_MIN_PX on screen at the current zoom). During the turn-around lash the rig's
+   * mirror briefly squashes it horizontally. Optional so null objects stay valid.
+   */
+  weakRadius?(): number;
   /** Head / mouth (fire origin). */
   headPoint(out: Vec2): Vec2;
   /**
