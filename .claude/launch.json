@@ -4,20 +4,196 @@
     {
       "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5173", "--strictPort"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5173",
+        "--strictPort"
+      ],
       "port": 5173
     },
     {
       "name": "preview",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "preview", "--", "--port", "4173", "--strictPort"],
+      "runtimeArgs": [
+        "run",
+        "preview",
+        "--",
+        "--port",
+        "4173",
+        "--strictPort"
+      ],
       "port": 4173
     },
     {
       "name": "snapshot",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "preview", "--outDir", ".vite/snapshot", "--port", "4180", "--strictPort"],
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/snapshot",
+        "--port",
+        "4180",
+        "--strictPort"
+      ],
       "port": 4180
+    },
+    {
+      "name": "wp20",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp20",
+        "--port",
+        "4201",
+        "--strictPort"
+      ],
+      "port": 4201
+    },
+    {
+      "name": "wp21",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp21",
+        "--port",
+        "4202",
+        "--strictPort"
+      ],
+      "port": 4202
+    },
+    {
+      "name": "wp23",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp23",
+        "--port",
+        "4203",
+        "--strictPort"
+      ],
+      "port": 4203
+    },
+    {
+      "name": "wp24",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp24",
+        "--port",
+        "4204",
+        "--strictPort"
+      ],
+      "port": 4204
+    },
+    {
+      "name": "wp26",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp26",
+        "--port",
+        "4206",
+        "--strictPort"
+      ],
+      "port": 4206
+    },
+    {
+      "name": "wp28",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp28",
+        "--port",
+        "4208",
+        "--strictPort"
+      ],
+      "port": 4208
+    },
+    {
+      "name": "wp22",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp22",
+        "--port",
+        "4212",
+        "--strictPort"
+      ],
+      "port": 4212
+    },
+    {
+      "name": "wp25",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp25",
+        "--port",
+        "4215",
+        "--strictPort"
+      ],
+      "port": 4215
+    },
+    {
+      "name": "wp27",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp27",
+        "--port",
+        "4217",
+        "--strictPort"
+      ],
+      "port": 4217
+    },
+    {
+      "name": "wp29",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp29",
+        "--port",
+        "4219",
+        "--strictPort"
+      ],
+      "port": 4219
+    },
+    {
+      "name": "wp210",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--outDir",
+        ".vite/wp210",
+        "--port",
+        "4220",
+        "--strictPort"
+      ],
+      "port": 4220
     }
   ]
 }
