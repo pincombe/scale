@@ -459,25 +459,32 @@ export function createMeadow(host: BackdropHost): TierBackdrop {
       }
       return b;
     },
+    freeStep(i: number): boolean {
+      // One small piece per call: the backdrop spreads a tier's release over frames.
+      if (i === 0) {
+        if (sky) {
+          zero(sky.sky);
+          zero(sky.sun);
+          zero(sky.sunGlow);
+          zero(sky.mist);
+          for (const cl of sky.clouds) zero(cl.canvas);
+          sky = null;
+        }
+      } else if (i === 1) {
+        zero(rays);
+        zero(amberGlow);
+        zero(warmGlow);
+        rays = amberGlow = warmGlow = null;
+        // Atlas tints are shared and small: drop the references only.
+        flyGlow = flyCore = moteCore = puffGlow = null;
+      } else if (i < 2 + caches.length) caches[i - 2]!.free();
+      else if (i === 2 + caches.length) ground.free();
+      else if (i === 3 + caches.length) fg.free();
+      else eye.dispose();
+      return i >= 4 + caches.length;
+    },
     free() {
-      for (let i = 0; i < caches.length; i++) caches[i]!.free();
-      ground.free();
-      fg.free();
-      eye.dispose();
-      zero(rays);
-      zero(amberGlow);
-      zero(warmGlow);
-      rays = amberGlow = warmGlow = null;
-      if (sky) {
-        zero(sky.sky);
-        zero(sky.sun);
-        zero(sky.sunGlow);
-        zero(sky.mist);
-        for (const cl of sky.clouds) zero(cl.canvas);
-        sky = null;
-      }
-      // Atlas tints are shared and small: drop the references only.
-      flyGlow = flyCore = moteCore = puffGlow = null;
+      for (let i = 0; !this.freeStep(i); i++);
     },
   };
 }

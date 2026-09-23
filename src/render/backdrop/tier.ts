@@ -39,6 +39,13 @@ export interface TierBackdrop {
   drawFront(ctx: CanvasRenderingContext2D, view: View): void;
   openEye(): void;
   birds(): void;
+  /**
+   * Release piece `i` (0, 1, 2...) of this tier's canvases: a few at most, so a switch never
+   * frees a whole tier in one frame. True once `i` was the last piece. Safe to stop half-way:
+   * whatever was released re-bakes lazily if the tier comes back.
+   */
+  freeStep(i: number): boolean;
+  /** Release everything now (freeStep over every piece). */
   free(): void;
   /** Canvas backing store owned by this tier (bytes). */
   bytes(): number;

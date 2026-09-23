@@ -1,8 +1,9 @@
 // The backdrop (WP 1.1, 1.12; tier-aware since WP 2.3): one pair of layers that paints the
 // active tier's world. Tier 0 is the Meadow (meadow.ts, unchanged), tier 1 the Mountain
 // (mountain.ts). The tier follows view.state.tier (its palette arrives with the resync from the
-// zoom's switch or a debug jump); only the active tier keeps its caches: the other's canvases are
-// freed on a switch and re-bake lazily on the way back.
+// zoom's switch or a debug jump); only the active tier (and the one the zoom is preparing) keeps
+// its caches: any other tier's canvases are released a piece per frame (never a whole tier in the
+// switch frame) and re-bake lazily on the way back.
 //
 //   backdrop.back  (slot 0): sky, parallax silhouettes, the tier's wyrm, the ground at y = 0.
 //   backdrop.front (slot 4): foreground framing and ambient life in front of the army.
@@ -76,17 +77,36 @@ export function createBackdrop(scene: Scene): Backdrop {
   const mountain = createMountain(host);
   const worlds: TierBackdrop[] = [meadow, mountain];
   let active = worldOf(scene.game.state.tier);
-  /** The world being baked ahead for the zoom (null: none). */
-  let preparing: 0 | 1 | null = null;
+  /** The world the zoom asked to have ready (null: none), and whether it is still baking. */
+  let target: 0 | 1 | null = null;
+  let baking = false;
+  /** Worlds that may hold canvases, and how far each one's gradual release has got. */
+  const held = [false, false];
+  const freeAt = [0, 0];
+  held[active] = true;
 
-  /** The world for this view; a switch frees the old world's canvases. */
+  /** The world for this view; a switch only changes which one is active (release is gradual). */
   const worldFor = (view: View): TierBackdrop => {
     const w = worldOf(view.state.tier);
-    if (w !== active && view === scene.renderer.view) {
-      worlds[active]!.free();
-      active = w;
-    }
+    if (w !== active && view === scene.renderer.view) active = w;
     return worlds[w]!;
+  };
+
+  /** Keep the active and the targeted worlds; release one piece of any other per frame. */
+  const release = (): void => {
+    for (let w = 0; w < 2; w++) {
+      if (w === active || w === target) {
+        held[w] = true;
+        freeAt[w] = 0;
+        continue;
+      }
+      if (!held[w]) continue;
+      if (worlds[w]!.freeStep(freeAt[w]!++)) {
+        held[w] = false;
+        freeAt[w] = 0;
+      }
+      return;
+    }
   };
 
   const back: Layer = {
@@ -94,11 +114,14 @@ export function createBackdrop(scene: Scene): Backdrop {
     visible: true,
     update(view: View) {
       worldFor(view).update(view);
-      // The zoom's rally: the next world bakes a piece per frame while this one is on screen.
-      if (preparing !== null) {
-        if (preparing === active) preparing = null;
-        else if (worlds[preparing]!.prepare?.(view) ?? true) preparing = null;
+      // The zoom's rally: the next world bakes a piece per frame while this one is on screen. It
+      // stays targeted (kept) until it becomes the active one or the zoom lets go of it.
+      if (target !== null && target === active) {
+        target = null;
+        baking = false;
       }
+      if (target !== null && baking && (worlds[target]!.prepare?.(view) ?? true)) baking = false;
+      if (view === scene.renderer.view) release();
     },
     draw(ctx: CanvasRenderingContext2D, view: View) {
       const t0 = performance.now();
@@ -139,14 +162,10 @@ export function createBackdrop(scene: Scene): Backdrop {
       mountain.pose(pose);
     },
     prepare(tier) {
-      if (tier === null) {
-        // Cancelled: a world baked ahead but never shown gives its memory back.
-        if (preparing !== null && preparing !== active) worlds[preparing]!.free();
-        preparing = null;
-        return;
-      }
-      const w = worldOf(tier);
-      preparing = w === active ? null : w;
+      // null: cancelled, a world baked ahead but never shown gives its memory back (gradually).
+      const w = tier === null ? null : worldOf(tier);
+      target = w === null || w === active ? null : w;
+      baking = target !== null;
     },
     markScale(mark) {
       mountain.markScale(mark);
@@ -185,7 +204,7 @@ export function createBackdrop(scene: Scene): Backdrop {
   dbg.watch('bakes', () => `${stats.bakes}, max ${stats.bakeMsMax.toFixed(1)} ms ${stats.bakeWorst ?? ''}`);
   dbg.watch('prepared', () => {
     const p = mountain.prepStats;
-    return `${p.pieces} pieces ${p.ms.toFixed(0)} ms, worst ${p.worst.toFixed(1)} ${p.worstName}${preparing !== null ? ' (baking)' : ''}`;
+    return `${p.pieces} pieces ${p.ms.toFixed(0)} ms, worst ${p.worst.toFixed(1)} ${p.worstName}${baking ? ' (baking)' : target !== null ? ' (ready)' : ''}${held[active ^ 1] ? ' | releasing ' + freeAt[active ^ 1] : ''}`;
   });
   dbg.watch('eye', () => worlds[active]!.eyeState());
   dbg.toggle('zoom transition', () => transition, (v) => (transition = v));

@@ -813,35 +813,45 @@ export function createMountain(host: BackdropHost): TierBackdrop & {
       }
       return b;
     },
-    free() {
-      if (skyBaker) skyBaker.canvas.width = skyBaker.canvas.height = 0;
-      skyBaker = null;
-      skyBakerPal = null;
-      for (const r of ridges) r.free();
-      ground.free();
-      wyrm.free();
-      wisps.free();
-      fg.free();
-      seaHigh.free();
-      seaFar.free();
-      seaLow.free();
-      zero(rays);
-      zero(amberGlow);
-      rays = amberGlow = null;
-      flake = spark = null;
-      if (sky) {
-        zero(sky.sky);
-        zero(sky.glow);
-        for (const c of sky.clouds) zero(c.canvas);
-        sky = null;
+    freeStep(i: number): boolean {
+      // One small piece per call: the backdrop spreads a tier's release over frames.
+      if (i === 0) {
+        if (skyBaker) skyBaker.canvas.width = skyBaker.canvas.height = 0;
+        skyBaker = null;
+        skyBakerPal = null;
+        // The meadow's scale belongs to this visit; a fresh visit starts the wyrm asleep.
+        marked = false;
+        markPic = null;
+        resetWyrmIdle(idle);
+        cur.rise = cur.eye = cur.jaw = 0;
+        sink = 0;
+        eyeArmed = roarArmed = shedArmed = true;
+      } else if (i === 1) {
+        if (sky) {
+          zero(sky.sky);
+          zero(sky.glow);
+          for (const c of sky.clouds) zero(c.canvas);
+          sky = null;
+        }
+      } else if (i === 2) {
+        zero(rays);
+        zero(amberGlow);
+        rays = amberGlow = null;
+        flake = spark = null;
+      } else if (i < 3 + ridges.length) ridges[i - 3]!.free();
+      else if (i === 3 + ridges.length) ground.free();
+      else if (i === 4 + ridges.length) wyrm.free();
+      else if (i === 5 + ridges.length) wisps.free();
+      else if (i === 6 + ridges.length) fg.free();
+      else {
+        seaHigh.free();
+        seaFar.free();
+        seaLow.free();
       }
-      // The meadow's scale belongs to this visit; a fresh visit starts the wyrm asleep.
-      marked = false;
-      markPic = null;
-      resetWyrmIdle(idle);
-      cur.rise = cur.eye = cur.jaw = 0;
-      sink = 0;
-      eyeArmed = roarArmed = shedArmed = true;
+      return i >= 7 + ridges.length;
+    },
+    free() {
+      for (let i = 0; !this.freeStep(i); i++);
     },
   };
 }
