@@ -1,15 +1,22 @@
-// HUD: gold counter + gold/sec + tier label (top-left, anchor 'gold'), dragon name, HP bar and
-// size word (top-center), mute toggle (top-right of the stage), the lone "Hire a Footman" button
-// (bottom-center of the stage, before the panel exists) and unlock/milestone toasts.
+// HUD: gold counter + gold/sec + tier label and height headline + Scales (top-left, anchors 'gold'
+// and 'scales'), dragon name, HP bar and size word with the Wyrm Gauge under it (top-center; ornate
+// while a boss fights), mute toggle (top-right of the stage), the lone "Hire a Footman" button and
+// the M2 dock (abilities, Zoom) at the bottom of the stage, and unlock/milestone toasts.
 // Everything appears only when its flag says it matters (ARCHITECTURE.md §4).
-import { D, MICROCOPY, UNITS, fmt, sel, unitCost } from '../core';
+import { CHAMPION_TEXT, D, MICROCOPY, UNITS, fmt, sel, unitCost } from '../core';
 import type { Decimal, GameState } from '../core';
 import type { Scene } from '../app/scene';
+import { bossWing, createBossMoments, epithetLine } from './boss';
+import { cinematicOf } from './cinematic';
+import { createDock } from './dock';
 import { el, gameButton, setClass, setShown, setText } from './dom';
-import { roman } from './effectText';
+import { template } from './effectText';
+import { createGauge } from './gauge';
+import { createHeadline } from './headline';
 import { createHints } from './hints';
 import { coinIcon, speakerIcon } from './icons';
 import type { UiRoot } from './mount';
+import { createScales } from './scales';
 
 /** Gold counter catch-up: coins land ~0.6-1.4 s after a kill, so count over that window. */
 const COUNT_DELAY = 0.3;
@@ -20,31 +27,27 @@ const GPS_MIN_SPAN = 4;
 /** HP bar: damage chunk holds this long, then drains. */
 const TRAIL_HOLD = 0.35;
 
-/** Tier names until text.ts carries them (MICROCOPY['tier.<n>'] wins when present). */
-const TIER_FALLBACK: readonly string[] = ['The Meadow'];
-
 function copy(key: string): string | undefined {
   return MICROCOPY[key];
 }
 
-/** A microcopy template with {name} slots, or the fallback. */
-function template(key: string, fallback: string, vars: Record<string, string>): string {
-  const t = copy(key) ?? fallback;
-  return t.replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m);
-}
-
 export function createHud(scene: Scene, ui: UiRoot): void {
-  createGold(scene, ui);
-  createDragonBar(scene, ui);
+  const left = createGold(scene, ui);
+  createHeadline(scene, ui, left.box, left.tier);
+  createScales(scene, ui, left.box);
+  const dragon = createDragonBar(scene, ui);
+  createGauge(scene, ui, dragon);
+  createBossMoments(scene, ui);
   createMute(scene, ui);
   createHireButton(scene, ui);
+  createDock(scene, ui);
   createToasts(scene, ui);
   createHints(scene, ui);
 }
 
 // ---------------------------------------------------------------- gold (top-left)
 
-function createGold(scene: Scene, ui: UiRoot): void {
+function createGold(scene: Scene, ui: UiRoot): { box: HTMLElement; tier: HTMLElement } {
   const box = el('div', 'hud-left', ui.regions.hud);
   box.hidden = true;
   const tier = el('div', 'hud-tier', box);
@@ -115,7 +118,6 @@ function createGold(scene: Scene, ui: UiRoot): void {
   let count = 0;
   let clock = 0;
   let lastGps = '';
-  let lastTier = -1;
   scene.game.on('resync', () => {
     count = 0;
     snap(scene.game.state);
@@ -139,11 +141,6 @@ function createGold(scene: Scene, ui: UiRoot): void {
       ui.invalidateAnchors();
     }
     if (!on) return;
-    if (s.tier !== lastTier) {
-      lastTier = s.tier;
-      const name = copy(`tier.${s.tier}`) ?? TIER_FALLBACK[s.tier] ?? '';
-      setText(tier, `${roman(s.tier + 1)} · ${name}`);
-    }
     clock += 0.1;
     const life = s.lifetimeGold.toNumber();
     if (count > 0 && life < samples[(head - 1 + GPS_SAMPLES) % GPS_SAMPLES]!) count = 0;
@@ -166,11 +163,12 @@ function createGold(scene: Scene, ui: UiRoot): void {
       gpsEl.textContent = t;
     }
   });
+  return { box, tier };
 }
 
 // ---------------------------------------------------------------- dragon (top-center)
 
-function createDragonBar(scene: Scene, ui: UiRoot): void {
+function createDragonBar(scene: Scene, ui: UiRoot): HTMLElement {
   const box = el('div', 'hud-dragon', ui.regions.hud);
   box.hidden = true;
   const name = el('div', 'hud-dragon-name', box);
@@ -180,6 +178,8 @@ function createDragonBar(scene: Scene, ui: UiRoot): void {
   const trail = el('div', 'hud-hp-trail', bar);
   const fill = el('div', 'hud-hp-fill', bar);
   const flash = el('div', 'hud-hp-flash', bar);
+  bar.appendChild(bossWing('left'));
+  bar.appendChild(bossWing('right'));
   const sub = el('div', 'hud-dragon-sub', box);
   const size = el('span', 'hud-size', sub);
   const hpText = el('span', 'hud-hp-text', sub);
@@ -217,8 +217,13 @@ function createDragonBar(scene: Scene, ui: UiRoot): void {
       fillFrac = first ? targetFrac : 0;
       trailFrac = fillFrac;
       holdT = 0;
+      // A boss: the ornate bar, its epithet on a line of its own (boss.css).
+      setClass(box, 'boss', !!d.boss);
+      setClass(ui.root, 'boss-fight', !!d.boss);
       setText(main, d.name);
-      setText(epi, d.epithet ? (d.epithet.startsWith(',') ? '' : ' ') + d.epithet : '');
+      if (d.boss) setText(epi, epithetLine(d.epithet));
+      else setText(epi, d.epithet ? (d.epithet.startsWith(',') ? '' : ' ') + d.epithet : '');
+      ui.invalidateAnchors();
       if (typeof name.animate === 'function') {
         name.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], {
           duration: 520,
@@ -278,6 +283,7 @@ function createDragonBar(scene: Scene, ui: UiRoot): void {
       hpText.textContent = hp;
     }
   });
+  return box;
 }
 
 // ---------------------------------------------------------------- mute (top-right of the stage)
@@ -350,13 +356,31 @@ function createHireButton(scene: Scene, ui: UiRoot): void {
 
 function createToasts(scene: Scene, ui: UiRoot): void {
   const { game } = scene;
+  const cine = cinematicOf(scene, ui);
+  // Moments that happen under the zoom cinematic (the switch's unlocks) wait until the HUD is back,
+  // then arrive a beat apart, in order.
+  let pending = 0;
+  const say = (text: string | undefined, kind: 'unlock' | 'upgrade' | 'milestone' | 'info'): void => {
+    if (!text) return;
+    if (!cine.on) {
+      ui.toast(text, kind);
+      return;
+    }
+    cine.after(() => ui.toast(text, kind), 400 + 900 * pending++);
+    cine.after(() => (pending = 0), 0);
+  };
   game.on('unlock', (e) => {
+    // A champion's join line is their one toast (below): no generic unlock toast on top of it.
+    if (e.kind === 'champion') return;
     const text = copy(`unlock.${e.kind}.${e.id}`) ?? (e.kind === 'upgrade' ? copy('unlock.upgrade') : undefined);
-    if (text) ui.toast(text, e.kind === 'upgrade' ? 'upgrade' : 'unlock');
+    say(text, e.kind === 'upgrade' ? 'upgrade' : 'unlock');
+  });
+  game.on('championJoin', (e) => {
+    say(CHAMPION_TEXT[e.id]?.join, 'unlock');
   });
   game.on('milestone', (e) => {
     const vars = { unit: UNITS[e.unit].name, plural: UNITS[e.unit].plural, owned: String(e.owned), mult: String(e.mult) };
     const key = copy(`milestone.${e.unit}.${e.owned}`) !== undefined ? `milestone.${e.unit}.${e.owned}` : 'milestone';
-    ui.toast(template(key, '{plural} ×{mult} damage · {owned} strong', vars), 'milestone');
+    say(template(key, '{plural} ×{mult} damage · {owned} strong', vars), 'milestone');
   });
 }

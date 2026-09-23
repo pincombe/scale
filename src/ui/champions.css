@@ -1,0 +1,163 @@
+/* Champion cards: a portrait in a gilded roundel, name and title, stats, the special-move bar. */
+.champ {
+  --accent: #ffcf7a;
+  position: relative;
+  padding: 12px 12px 12px;
+  background: linear-gradient(180deg, rgba(255, 230, 190, 0.06), rgba(255, 230, 190, 0.02));
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 3px;
+  animation: ui-enter 0.5s var(--ease-out) both;
+}
+.champ-top {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.champ-portrait {
+  position: relative;
+  flex: none;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(circle at 60% 70%, #ffcf7a 0%, #f08a3c 32%, #9c3a2a 64%, #3a1712 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 220, 140, 0.8),
+    inset 0 0 0 3px rgba(20, 8, 5, 0.6),
+    inset 0 0 0 4px var(--gold-line),
+    inset 0 -10px 14px rgba(20, 8, 5, 0.55),
+    0 3px 10px rgba(0, 0, 0, 0.45);
+}
+.icon-portrait {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.portrait-body {
+  fill: #170c09;
+  filter: drop-shadow(-0.8px 0 0 rgba(255, 214, 140, 0.9));
+}
+.portrait-color {
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.6));
+}
+.champ-info {
+  flex: 1;
+  min-width: 0;
+}
+.champ-name-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.champ-name {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.05em;
+  color: #fff1cf;
+  white-space: nowrap;
+}
+.champ-level {
+  display: inline-block;
+  flex: none;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.champ-title {
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.2;
+  color: var(--parchment-dim);
+}
+.champ-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 14.5px;
+  color: var(--parchment-dim);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.champ-dps {
+  color: var(--parchment);
+}
+.champ-special {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 9px;
+}
+.champ-special-name {
+  display: inline-block;
+  align-self: flex-start;
+  font-family: var(--font-title);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.champ-special-bar {
+  position: relative;
+  height: 3px;
+  background: rgba(255, 230, 190, 0.1);
+  overflow: hidden;
+  border-radius: 2px;
+}
+.champ-special-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.15), var(--accent));
+  transition: transform 0.12s linear;
+}
+/* The special move landed: the card flares in the champion's color. */
+.champ::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    inset 0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.champ.struck::after {
+  animation: champ-struck 0.8s var(--ease-out);
+}
+.champ.struck .champ-special-name {
+  animation: champ-special 0.8s var(--ease-out);
+}
+.champ.struck .champ-portrait {
+  animation: champ-lunge 0.45s var(--ease-back);
+}
+@keyframes champ-struck {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes champ-special {
+  0% {
+    color: #ffffff;
+    text-shadow: 0 0 10px var(--accent);
+  }
+}
+@keyframes champ-lunge {
+  40% {
+    transform: translateX(4px) scale(1.06);
+  }
+}
+.champ .unit-buys {
+  margin-top: 11px;
+}

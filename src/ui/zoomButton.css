@@ -1,0 +1,214 @@
+/*
+ * The Zoom button: the prestige, so it glows. Deep vellum with a double gold frame, sonar rings
+ * that expand out of it (the camera about to pull back), a breathing halo and a light sweep.
+ * Locked (the last tier of this build): dim gold, a padlock, no light.
+ */
+.zb-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 420px;
+}
+.zb-wrap.enter {
+  animation: zb-in 1s var(--ease-back) both;
+}
+@keyframes zb-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.zb-push {
+  margin-bottom: 9px;
+  max-width: 400px;
+  text-align: center;
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.25;
+  color: var(--parchment);
+  text-shadow: var(--shadow);
+}
+.zb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 11px 30px 12px;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse 80% 120% at 50% 0%, rgba(255, 200, 110, 0.22), rgba(255, 200, 110, 0) 60%),
+    linear-gradient(180deg, rgba(44, 27, 16, 0.94), rgba(16, 9, 6, 0.94));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 220, 140, 0.8),
+    inset 0 0 0 4px rgba(12, 6, 4, 0.55),
+    inset 0 0 0 5px var(--gold-line),
+    inset 0 1px 12px rgba(255, 210, 130, 0.18),
+    0 10px 34px rgba(0, 0, 0, 0.5),
+    0 0 36px rgba(255, 180, 70, 0.25);
+  transition: transform 0.15s var(--ease-out);
+}
+.zb-wrap.ready .zb:hover {
+  transform: translateY(-2px);
+}
+.zb-wrap.ready .zb:active {
+  transform: translateY(1px) scale(0.98);
+}
+/* The breathing halo (opacity only). */
+.zb::before {
+  content: '';
+  position: absolute;
+  inset: -18px -26px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 200, 100, 0.45), rgba(255, 170, 70, 0));
+  opacity: 0.4;
+  z-index: -1;
+  pointer-events: none;
+}
+.zb-wrap.ready .zb::before {
+  animation: glow-pulse 2.2s ease-in-out infinite;
+}
+/* A light sweep across the face every few seconds. */
+.zb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 250, 225, 0.32) 50%, transparent 70%);
+  background-size: 250% 100%;
+  background-position: 120% 0;
+  pointer-events: none;
+  opacity: 0;
+}
+.zb-wrap.ready .zb::after {
+  opacity: 1;
+  animation: zb-sweep 4.2s ease-in-out 0.8s infinite;
+}
+@keyframes zb-sweep {
+  0% {
+    background-position: 120% 0;
+  }
+  35%,
+  100% {
+    background-position: -20% 0;
+  }
+}
+/* Sonar rings: the frame expanding outward, as the camera will. */
+.zb-rings {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+.zb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(255, 220, 150, 0.7);
+  opacity: 0;
+}
+.zb-wrap.ready .zb-ring {
+  animation: zb-ring 3s var(--ease-out) infinite;
+}
+.zb-wrap.ready .zb-ring:nth-child(2) {
+  animation-delay: 1s;
+}
+.zb-wrap.ready .zb-ring:nth-child(3) {
+  animation-delay: 2s;
+}
+@keyframes zb-ring {
+  0% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.35, 1.9);
+  }
+}
+.zb-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.zb-title-text {
+  font-family: var(--font-title);
+  font-weight: 800;
+  font-size: 26px;
+  line-height: 1.05;
+  letter-spacing: 0.42em;
+  padding-left: 0.42em;
+  text-transform: uppercase;
+  color: #fff3d0;
+  text-shadow:
+    0 0 18px rgba(255, 190, 80, 0.7),
+    0 0 4px rgba(255, 230, 170, 0.6),
+    0 1px 2px rgba(10, 4, 2, 0.9);
+}
+.zb-sub {
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.2;
+  color: var(--parchment);
+}
+.zb-preview {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 16px;
+  letter-spacing: 0.01em;
+  color: var(--gold-hi);
+  text-shadow: 0 0 10px rgba(255, 190, 80, 0.35);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Locked: the Kingdom comes in the next build. */
+.zb-wrap.locked .zb {
+  cursor: default;
+  max-width: 380px;
+  background: linear-gradient(180deg, rgba(30, 20, 14, 0.9), rgba(14, 9, 6, 0.9));
+  box-shadow:
+    inset 0 0 0 1px var(--gold-line),
+    inset 0 0 0 4px rgba(12, 6, 4, 0.55),
+    inset 0 0 0 5px var(--gold-line-soft),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.zb-wrap.locked .zb::before {
+  opacity: 0;
+}
+.zb-wrap.locked .zb-title-text {
+  color: rgba(242, 193, 78, 0.6);
+  text-shadow: 0 1px 2px rgba(10, 4, 2, 0.9);
+}
+.zb-wrap.locked .zb-sub {
+  color: var(--parchment-dim);
+  text-align: center;
+}
+.zb-lock {
+  display: block;
+  width: 18px;
+  height: 18px;
+  color: rgba(242, 193, 78, 0.7);
+}
+.icon-lock {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zb-wrap.ready .zb::before,
+  .zb-wrap.ready .zb::after,
+  .zb-wrap.ready .zb-ring {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,291 @@
+/*
+ * Boss presentation: the ornate dragon bar (a red aura behind a gilded name, a deep red-gold HP bar
+ * in a double gold frame with wing flourishes) and the arrival / fall cards that sweep across the
+ * top of the stage.
+ */
+
+/* ---------- the ornate dragon bar ---------- */
+.hud-dragon::before {
+  content: '';
+  position: absolute;
+  inset: -14px -40px -10px;
+  background: radial-gradient(ellipse 50% 60% at 50% 45%, rgba(90, 12, 6, 0.62), rgba(40, 6, 3, 0.3) 60%, rgba(20, 4, 2, 0) 100%);
+  opacity: 0;
+  transition: opacity 0.8s var(--ease-out);
+  z-index: -1;
+  pointer-events: none;
+}
+.hud-dragon.boss::before {
+  opacity: 1;
+}
+.hud-dragon.boss .hud-dragon-name {
+  overflow: visible;
+  white-space: normal;
+  line-height: 1.05;
+}
+.hud-dragon.boss .hud-dragon-main {
+  display: inline-block;
+  font-weight: 800;
+  font-size: 28px;
+  letter-spacing: 0.1em;
+  color: #ffe7a8;
+  background: linear-gradient(180deg, #fff8e0 0%, #ffe39a 38%, #f2c14e 62%, #c68a22 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 1px 1px rgba(20, 4, 2, 0.95)) drop-shadow(0 0 12px rgba(255, 90, 40, 0.45));
+  animation: boss-name-in 0.9s var(--ease-out) both;
+}
+@keyframes boss-name-in {
+  from {
+    opacity: 0;
+    letter-spacing: 0.4em;
+  }
+  to {
+    opacity: 1;
+    letter-spacing: 0.1em;
+  }
+}
+.hud-dragon.boss .hud-dragon-epithet {
+  display: block;
+  margin-top: 1px;
+  font-size: 17px;
+  color: #f3c9a0;
+}
+.hud-dragon.boss .hud-hp {
+  height: 13px;
+  margin-top: 9px;
+  background: rgba(24, 4, 2, 0.8);
+  box-shadow:
+    0 0 0 1px #e8b347,
+    0 0 0 3px rgba(34, 8, 4, 0.9),
+    0 0 0 4px rgba(242, 193, 78, 0.6),
+    0 0 22px rgba(255, 70, 30, 0.35),
+    0 2px 10px rgba(0, 0, 0, 0.6);
+}
+.hud-dragon.boss .hud-hp-fill {
+  background:
+    linear-gradient(180deg, rgba(255, 240, 200, 0.4), rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.25)),
+    linear-gradient(90deg, #4a0806, #9c1418 40%, #d8401f 78%, #ffb040);
+}
+.hud-dragon.boss .hud-hp-trail {
+  background: linear-gradient(180deg, #fff1c8, #f2c14e);
+}
+.hud-dragon.boss .hud-hp::before,
+.hud-dragon.boss .hud-hp::after {
+  opacity: 0;
+}
+
+/* Wing flourishes on the bar's ends (only in boss mode). */
+.boss-wing {
+  position: absolute;
+  top: 50%;
+  width: 40px;
+  height: 16px;
+  margin-top: -9px;
+  fill: #e8b347;
+  stroke: #fff0c0;
+  opacity: 0;
+  filter: drop-shadow(0 0 4px rgba(255, 150, 60, 0.55)) drop-shadow(0 1px 1px rgba(20, 4, 2, 0.9));
+  transition:
+    opacity 0.5s,
+    transform 0.7s var(--ease-back);
+  pointer-events: none;
+  z-index: 4;
+}
+.boss-wing.left {
+  right: 100%;
+  margin-right: 2px;
+  transform: scaleX(0.3);
+  transform-origin: 100% 50%;
+}
+.boss-wing.right {
+  left: 100%;
+  margin-left: 2px;
+  /* Mirrored in place: translate first, then flip about the left edge. */
+  transform: scaleX(-0.3) translateX(-100%);
+  transform-origin: 0 50%;
+}
+.hud-dragon.boss .boss-wing {
+  opacity: 1;
+}
+.hud-dragon.boss .boss-wing.left {
+  transform: none;
+}
+.hud-dragon.boss .boss-wing.right {
+  transform: scaleX(-1) translateX(-100%);
+}
+
+/* ---------- arrival and fall cards ---------- */
+.boss-cards {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* The toasts region starts under the HUD; the card sweeps across the very top of the stage. */
+  top: -112px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.boss-card {
+  position: absolute;
+  top: 6px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+}
+.boss-card-band {
+  position: relative;
+  width: 100%;
+  padding: 18px 40px 20px;
+  text-align: center;
+  background: linear-gradient(90deg, rgba(26, 4, 3, 0) 0%, rgba(34, 6, 4, 0.9) 18%, rgba(30, 5, 3, 0.95) 50%, rgba(34, 6, 4, 0.9) 82%, rgba(26, 4, 3, 0) 100%);
+  clip-path: inset(0 100% 0 0);
+  animation: boss-card-in 0.75s cubic-bezier(0.7, 0, 0.2, 1) forwards;
+}
+.boss-card-band::before,
+.boss-card-band::after {
+  content: '';
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(232, 120, 60, 0.55) 20%, #ffd98a 50%, rgba(232, 120, 60, 0.55) 80%, transparent);
+  box-shadow: 0 0 10px rgba(255, 110, 50, 0.6);
+}
+.boss-card-band::before {
+  top: 4px;
+}
+.boss-card-band::after {
+  bottom: 4px;
+}
+.boss-card.out .boss-card-band {
+  animation: boss-card-out 0.65s cubic-bezier(0.6, 0, 0.4, 1) forwards;
+}
+@keyframes boss-card-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes boss-card-out {
+  from {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(0 0 0 100%);
+    opacity: 0.6;
+  }
+}
+.boss-card-name {
+  position: relative;
+  display: inline-block;
+  font-family: var(--font-title);
+  font-weight: 800;
+  font-size: clamp(34px, 3.6vw, 50px);
+  line-height: 1.05;
+  letter-spacing: 0.12em;
+  padding-left: 0.12em;
+  animation: boss-name-sweep 1.2s var(--ease-out) 0.2s both;
+}
+.boss-card-name-base {
+  display: block;
+  color: #ffe7a8;
+  background: linear-gradient(180deg, #fffbe8 0%, #ffe39a 40%, #f2a93e 68%, #c0441e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 2px rgba(20, 2, 1, 0.9)) drop-shadow(0 0 22px rgba(255, 80, 30, 0.55));
+}
+.boss-card-name-shine {
+  position: absolute;
+  inset: 0 0 0 0.12em;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(100deg, transparent 0%, transparent 42%, rgba(255, 255, 240, 0.95) 50%, transparent 58%, transparent 100%);
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: shimmer 1.3s ease-in-out 0.7s 1 both;
+}
+@keyframes boss-name-sweep {
+  from {
+    opacity: 0;
+    letter-spacing: 0.5em;
+  }
+  to {
+    opacity: 1;
+    letter-spacing: 0.12em;
+  }
+}
+.boss-card-epithet {
+  margin-top: 2px;
+  font-style: italic;
+  font-size: 21px;
+  color: #f3c9a0;
+  text-shadow: 0 1px 2px rgba(10, 2, 1, 0.9);
+  animation: ui-enter 0.6s var(--ease-out) 0.45s both;
+}
+.boss-card-rule {
+  width: min(300px, 40%);
+  height: 1px;
+  margin: 9px auto 8px;
+  background: linear-gradient(90deg, transparent, rgba(255, 200, 130, 0.8), transparent);
+  animation: boss-rule 0.8s var(--ease-out) 0.55s both;
+}
+@keyframes boss-rule {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: none;
+  }
+}
+.boss-card-line {
+  font-style: italic;
+  font-size: 22px;
+  line-height: 1.25;
+  color: var(--parchment);
+  text-shadow: 0 1px 2px rgba(10, 2, 1, 0.9);
+  animation: ui-enter 0.6s var(--ease-out) 0.75s both;
+}
+
+/* The fall: a gilded, quieter card. */
+.boss-card.fall .boss-card-band {
+  padding: 14px 40px 16px;
+  background: linear-gradient(90deg, rgba(20, 12, 4, 0) 0%, rgba(26, 16, 6, 0.92) 20%, rgba(24, 15, 6, 0.95) 50%, rgba(26, 16, 6, 0.92) 80%, rgba(20, 12, 4, 0) 100%);
+}
+.boss-card.fall .boss-card-band::before,
+.boss-card.fall .boss-card-band::after {
+  background: linear-gradient(90deg, transparent, var(--gold-line) 20%, #ffe39a 50%, var(--gold-line) 80%, transparent);
+  box-shadow: 0 0 10px rgba(255, 200, 100, 0.5);
+}
+.boss-card-kicker {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--gold);
+  text-shadow: 0 0 10px rgba(255, 190, 80, 0.45);
+  animation: ui-enter 0.5s var(--ease-out) 0.25s both;
+}
+.boss-card.fall .boss-card-line {
+  margin-top: 4px;
+  font-size: 24px;
+  color: #ffe9b8;
+  animation-delay: 0.4s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boss-card-name,
+  .boss-card-name-shine {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,22 @@
+/* The dock at the stage's bottom center (abilities + Zoom), clear of the fight above the ground. */
+.dock {
+  position: absolute;
+  left: 50%;
+  bottom: max(18px, 3.2%);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: flex-end;
+  gap: 30px;
+  transition: opacity 0.45s var(--ease-out);
+}
+/* While a zoom holds (core's zoom.stage, or the director is active; cinematic.ts sets the class),
+   the stage prompts are gone even if Ui.setCinematic (which fades the whole stage layer) is late. */
+#ui.ui-zoom-hold .dock,
+#ui.ui-zoom-hold .hire-lone,
+#ui.ui-zoom-hold .hint {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+#ui.ui-zoom-hold .dock * {
+  pointer-events: none !important;
+}

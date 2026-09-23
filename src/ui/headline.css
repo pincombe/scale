@@ -1,0 +1,66 @@
+/* The tier label's height headline (top-left): the running gag in the HUD. The left column stays
+   clear of the dragon bar (centered, min(440px, 44vw) wide) at any stage width. */
+.hud-left {
+  max-width: min(360px, calc(50% - min(220px, 22vw) - 44px));
+}
+.hud-left .hud-tier {
+  white-space: nowrap;
+}
+.hud-height {
+  margin: 1px 0 9px;
+}
+.hud-height-line {
+  font-size: 18px;
+  line-height: 1.2;
+  color: #fbeed2;
+}
+.hud-height-num {
+  display: inline-block;
+  font-size: 21px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--gold-hi);
+  text-shadow:
+    0 0 14px rgba(255, 190, 80, 0.45),
+    var(--shadow);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.hud-height-num.landed {
+  animation: height-landed 0.7s var(--ease-back);
+}
+@keyframes height-landed {
+  0% {
+    transform: scale(1.35);
+    color: #fff8e0;
+  }
+  100% {
+    transform: none;
+  }
+}
+.hud-height-word {
+  margin-top: 2px;
+  font-style: italic;
+  font-size: 14.5px;
+  line-height: 1.25;
+  color: var(--parchment-dim);
+}
+/* A new tier: the label and the headline make an entrance (after the zoom hands back). */
+.hud-left.tier-enter .hud-tier {
+  animation: tier-label-in 0.9s var(--ease-out) both;
+}
+.hud-left.tier-enter .hud-height-line {
+  animation: ui-enter 0.8s var(--ease-out) 0.25s both;
+}
+.hud-left.tier-enter .hud-height-word {
+  animation: ui-enter 0.8s var(--ease-out) 0.6s both;
+}
+@keyframes tier-label-in {
+  from {
+    opacity: 0;
+    letter-spacing: 0.6em;
+  }
+  to {
+    opacity: 0.85;
+    letter-spacing: 0.26em;
+  }
+}

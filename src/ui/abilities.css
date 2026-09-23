@@ -1,0 +1,411 @@
+/*
+ * The abilities bar: round vellum buttons with gold line-art glyphs, a hotkey diamond, a radial
+ * cooldown sweep (SVG dashes), a gold progress rim, and while active a hot core, a flickering halo
+ * and a draining white-gold ring. Transform/opacity animations only.
+ */
+.ab-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+}
+.ab-wrap {
+  position: relative;
+  width: 62px;
+  height: 62px;
+}
+.ab-wrap.enter {
+  animation: ab-in 0.85s var(--ease-back) both;
+}
+@keyframes ab-in {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ab {
+  position: relative;
+  display: block;
+  width: 62px;
+  height: 62px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  transition: transform 0.15s var(--ease-out);
+}
+.ab:hover {
+  transform: translateY(-2px);
+}
+.ab:active {
+  transform: translateY(1px) scale(0.95);
+}
+.ab-halo {
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 200, 100, 0.55), rgba(255, 170, 70, 0));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+.ab-face {
+  position: absolute;
+  inset: 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 36%, #3d2819 0%, #1c110b 62%, #0f0806 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(226, 180, 96, 0.5),
+    inset 0 2px 6px rgba(255, 214, 150, 0.14),
+    inset 0 -8px 14px rgba(0, 0, 0, 0.6),
+    0 6px 18px rgba(0, 0, 0, 0.55);
+  color: var(--parchment-dim);
+  transition:
+    color 0.3s,
+    background 0.3s;
+}
+.icon-ability {
+  width: 29px;
+  height: 29px;
+  fill: currentColor;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.85));
+  transition: transform 0.3s var(--ease-back);
+}
+.ab-rings {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: rotate(-90deg);
+  pointer-events: none;
+}
+.ab-pie {
+  fill: none;
+  stroke: rgba(8, 4, 2, 0.66);
+  stroke-width: 26;
+}
+.ab-track {
+  fill: none;
+  stroke: rgba(226, 180, 96, 0.2);
+  stroke-width: 2.4;
+}
+.ab-rim {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+.ab-act {
+  fill: none;
+  stroke: #fff4d2;
+  stroke-width: 3.6;
+  stroke-linecap: round;
+  opacity: 0;
+  filter: drop-shadow(0 0 3px rgba(255, 150, 60, 0.95));
+  transition: opacity 0.3s;
+}
+.ab-time {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 18px;
+  color: #fff1cf;
+  text-shadow:
+    0 1px 2px #000,
+    0 0 10px rgba(0, 0, 0, 0.9);
+  font-variant-numeric: tabular-nums lining-nums;
+  pointer-events: none;
+}
+.ab-key {
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  width: 17px;
+  height: 17px;
+  margin-left: -8.5px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--gold);
+  pointer-events: none;
+  z-index: 1;
+}
+.ab-key::before {
+  content: '';
+  position: absolute;
+  inset: 1.5px;
+  transform: rotate(45deg);
+  background: #1a0f0a;
+  box-shadow:
+    inset 0 0 0 1px var(--gold-line),
+    0 2px 6px rgba(0, 0, 0, 0.6);
+  z-index: -1;
+}
+
+/* Ready: the glyph turns gold and the halo breathes. */
+.ab-wrap.ready .ab-face {
+  color: var(--gold-hi);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 220, 140, 0.85),
+    inset 0 2px 8px rgba(255, 214, 150, 0.25),
+    inset 0 -8px 14px rgba(0, 0, 0, 0.55),
+    0 6px 18px rgba(0, 0, 0, 0.55);
+}
+.ab-wrap.ready .ab-halo {
+  animation: glow-pulse 2.6s ease-in-out infinite;
+}
+.ab-wrap.ready .ab-rim {
+  opacity: 1;
+  filter: drop-shadow(0 0 2px rgba(255, 200, 100, 0.8));
+}
+.ab-wrap.ready .ab:hover .icon-ability {
+  transform: scale(1.1);
+}
+/* Active: a hot core, a flickering halo and a draining ring. */
+.ab-wrap.active .ab-face {
+  color: #fff8e6;
+  background: radial-gradient(circle at 50% 40%, #ffcf7a 0%, #f08a3c 30%, #9c3a2a 66%, #3a1712 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 236, 190, 0.9),
+    inset 0 -8px 14px rgba(60, 10, 4, 0.5),
+    0 0 22px rgba(255, 140, 50, 0.55),
+    0 6px 18px rgba(0, 0, 0, 0.5);
+}
+.ab-wrap.active .ab-halo {
+  opacity: 1;
+  background: radial-gradient(closest-side, rgba(255, 150, 60, 0.75), rgba(255, 110, 40, 0));
+  animation: ab-flicker 0.45s ease-in-out infinite alternate;
+}
+.ab-wrap.active .ab-act {
+  opacity: 1;
+}
+/* The cooldown runs alongside the effect; the sweep only shows once the effect is spent. */
+.ab-pie {
+  transition: opacity 0.3s;
+}
+.ab-wrap.active .ab-pie {
+  opacity: 0;
+}
+.ab-wrap.active .ab-rim {
+  opacity: 0;
+}
+.ab-wrap.active .icon-ability {
+  filter: drop-shadow(0 0 4px rgba(255, 240, 200, 0.8));
+}
+@keyframes ab-flicker {
+  from {
+    opacity: 0.65;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+/* Cooling down: the glyph dims under the sweep. */
+.ab-wrap.cooling .ab-face {
+  color: rgba(244, 230, 198, 0.4);
+}
+/* Cooldown over, not usable yet (a zoom's hold, or the Volley waiting for a target). */
+.ab-wrap.waiting .ab-face {
+  color: rgba(242, 193, 78, 0.6);
+}
+.ab-wrap.waiting .ab-rim {
+  animation: ab-wait 1.1s ease-in-out infinite;
+}
+@keyframes ab-wait {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Used: a punch and a shockwave ring. Ready again: a gold ping. */
+.ab::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 2px rgba(255, 236, 190, 0.95),
+    0 0 16px rgba(255, 170, 70, 0.8);
+  opacity: 0;
+  pointer-events: none;
+}
+.ab-wrap.fired .ab {
+  animation: ab-fire 0.5s var(--ease-back);
+}
+.ab-wrap.fired .ab::after {
+  animation: ab-wave 0.7s var(--ease-out);
+}
+.ab-wrap.pinged .ab::after {
+  animation: ab-wave 0.9s var(--ease-out);
+}
+.ab-wrap.pinged .icon-ability {
+  animation: ab-ping 0.6s var(--ease-back);
+}
+@keyframes ab-fire {
+  0% {
+    transform: scale(0.86);
+  }
+  60% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: none;
+  }
+}
+@keyframes ab-wave {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.1);
+  }
+}
+@keyframes ab-ping {
+  40% {
+    transform: scale(1.3);
+  }
+}
+
+/* Tooltip (hover) and coach label share the space above the button. */
+.ab-tip,
+.ab-coach {
+  position: absolute;
+  bottom: calc(100% + 18px);
+  left: 50%;
+  pointer-events: none;
+  text-align: center;
+}
+.ab-tip {
+  width: 236px;
+  margin-left: -118px;
+  padding: 10px 14px 11px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(34, 21, 14, 0.94), var(--vellum-deep));
+  box-shadow:
+    inset 0 0 0 1px var(--gold-line),
+    inset 0 0 0 4px rgba(12, 6, 4, 0.5),
+    inset 0 0 0 5px var(--gold-line-soft),
+    0 10px 30px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.2s,
+    transform 0.25s var(--ease-out);
+}
+.ab-wrap:hover .ab-tip {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0.12s;
+}
+.ab-tip-name {
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  color: var(--gold-hi);
+}
+.ab-tip-flavor {
+  margin-top: 3px;
+  font-style: italic;
+  font-size: 15px;
+  line-height: 1.25;
+  color: var(--parchment);
+}
+.ab-tip-stats {
+  margin-top: 6px;
+  font-family: var(--font-title);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--parchment-faint);
+}
+.ab-coach {
+  white-space: nowrap;
+  transform: translate(-50%, 6px);
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #fff3d6;
+  text-shadow:
+    0 0 12px rgba(255, 190, 80, 0.6),
+    var(--shadow);
+  opacity: 0;
+  transition:
+    opacity 0.5s var(--ease-out),
+    transform 0.5s var(--ease-out);
+}
+.ab-coach::after {
+  content: '';
+  display: block;
+  width: 9px;
+  height: 9px;
+  margin: 5px auto 0;
+  border-right: 2px solid var(--gold-hi);
+  border-bottom: 2px solid var(--gold-hi);
+  transform: rotate(45deg);
+  filter: drop-shadow(0 0 4px rgba(255, 190, 80, 0.8));
+}
+.ab-coach.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  animation: ab-bob 1.4s ease-in-out 0.5s infinite;
+}
+@keyframes ab-bob {
+  50% {
+    transform: translate(-50%, -4px);
+  }
+}
+.ab-wrap:hover .ab-coach {
+  opacity: 0;
+}
+/* The coach's ring pulses around the button, like the weak-spot coach in the world. */
+.ab-wrap.coached .ab::before {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 2px rgba(255, 246, 216, 0.9),
+    0 0 14px rgba(255, 200, 110, 0.7);
+  pointer-events: none;
+  animation: ab-coach-ring 1.5s ease-out infinite;
+}
+@keyframes ab-coach-ring {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.94);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ab-wrap.ready .ab-halo,
+  .ab-wrap.active .ab-halo,
+  .ab-coach.on,
+  .ab-wrap.coached .ab::before {
+    animation: none !important;
+  }
+}

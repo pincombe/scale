@@ -1,0 +1,348 @@
+/*
+ * The Wyrm Gauge: a serpent of scales under the dragon bar. Tail left, head right (toward the
+ * dragon). Unlit scales are dark vellum with a gold hairline; lit ones burn ember-orange over a
+ * heartbeat glow (--beat, set from the fill); the boss turns them red-gold; cleared, they're gilded.
+ * Animates transform, opacity and (briefly) filter only.
+ */
+.wg {
+  --beat: 2.4s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 9px auto 0;
+  width: max-content;
+}
+.wg.enter {
+  animation: wg-enter 0.9s var(--ease-out) both;
+}
+@keyframes wg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scaleX(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.wg-serpent {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 20px;
+  filter: drop-shadow(0 1px 2px rgba(10, 4, 2, 0.85));
+}
+.wg-tail {
+  width: 16px;
+  height: 11px;
+  margin-right: -3px;
+  margin-top: -3px;
+  overflow: visible;
+}
+.wg-tail-body,
+.wg-head-body,
+.wg-head-horn {
+  fill: #1f130d;
+  stroke: rgba(226, 180, 96, 0.5);
+  stroke-width: 0.9;
+  stroke-linejoin: round;
+}
+.wg-head {
+  position: relative;
+  z-index: 60;
+  width: 37px;
+  height: 21px;
+  margin-left: -9px;
+  margin-top: -2px;
+  overflow: visible;
+  transform-origin: 20% 60%;
+}
+.wg-eye {
+  fill: #4a2c1c;
+  transition: fill 0.4s;
+}
+.wg.full .wg-eye,
+.wg.mode-cleared .wg-eye {
+  fill: #ffd36a;
+  filter: drop-shadow(0 0 2px #ff9a2a);
+}
+.wg.mode-boss .wg-eye {
+  fill: #ff5a3a;
+  filter: drop-shadow(0 0 3px #ff2a10);
+  animation: wg-blink var(--beat) ease-in-out infinite;
+}
+@keyframes wg-blink {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.wg-body {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.wg-seg {
+  position: relative;
+  flex: none;
+  display: block;
+  animation: wg-slither 3.4s ease-in-out infinite;
+}
+@keyframes wg-slither {
+  0%,
+  100% {
+    transform: translateY(-0.9px);
+  }
+  50% {
+    transform: translateY(0.9px);
+  }
+}
+/* A scale: the free edge rounded toward the tail (left), the root tucked under the next one. */
+.wg-scale {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 62% 18% 18% 62% / 50% 50% 50% 50%;
+  background: linear-gradient(180deg, #3f2d21 0%, #1e120c 55%, #120a07 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(226, 180, 96, 0.34),
+    inset 1.5px 0 0 rgba(255, 220, 160, 0.12);
+  transition:
+    background 0.3s,
+    box-shadow 0.3s,
+    opacity 0.35s;
+}
+.wg-scale.lit {
+  background: radial-gradient(circle at 42% 34%, #fff3c8 0%, #ffc25a 26%, #ff7a1f 58%, #a3301a 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 226, 160, 0.75),
+    inset 1.5px 0 0 rgba(255, 255, 230, 0.5);
+}
+/* The heartbeat: one glow behind the lit run (opacity only). */
+.wg-glow {
+  position: absolute;
+  top: 50%;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 6px;
+  background: rgba(255, 130, 40, 0.5);
+  box-shadow: 0 0 14px 5px rgba(255, 120, 30, 0.5);
+  opacity: 0.3;
+  animation: wg-beat var(--beat) ease-in-out infinite;
+  z-index: 0;
+  pointer-events: none;
+}
+@keyframes wg-beat {
+  0%,
+  100% {
+    opacity: 0.22;
+  }
+  14% {
+    opacity: 0.95;
+  }
+  28% {
+    opacity: 0.4;
+  }
+  42% {
+    opacity: 0.75;
+  }
+  70% {
+    opacity: 0.28;
+  }
+}
+/* A kill: a wave of light runs down the lit body, tail to head. */
+.wg.wave .wg-scale.lit {
+  animation: wg-wave 0.55s ease-out calc(var(--i) * 12ms) 1 both;
+}
+@keyframes wg-wave {
+  0% {
+    filter: brightness(1);
+  }
+  35% {
+    filter: brightness(1.9);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+
+/* The gauge's caption: the name (or the boss timer's) and the count. */
+.wg-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 1px;
+  line-height: 1.1;
+}
+.wg-label {
+  font-family: var(--font-title);
+  font-weight: 600;
+  font-size: 9.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--parchment-faint);
+  transition: color 0.4s;
+}
+.wg-count {
+  font-family: var(--font-title);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--parchment-dim);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Full, waiting for the boss: the head wakes. */
+.wg.full.mode-charge .wg-head {
+  animation: wg-stir 1.6s ease-in-out infinite;
+}
+@keyframes wg-stir {
+  50% {
+    transform: rotate(-4deg) translateY(-0.5px);
+  }
+}
+
+/* ---- the boss timer ---- */
+.wg.mode-boss .wg-scale.lit {
+  background: radial-gradient(circle at 42% 34%, #fff0cc 0%, #ffcf6a 24%, #e2472b 60%, #6a0e09 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 214, 150, 0.8),
+    inset 1.5px 0 0 rgba(255, 250, 220, 0.5);
+}
+.wg.mode-boss .wg-glow {
+  background: rgba(235, 70, 30, 0.5);
+  box-shadow: 0 0 16px 6px rgba(225, 45, 20, 0.5);
+}
+.wg.mode-boss .wg-tail-body,
+.wg.mode-boss .wg-head-body,
+.wg.mode-boss .wg-head-horn {
+  stroke: rgba(255, 150, 110, 0.7);
+}
+.wg.mode-boss .wg-label {
+  color: #ffc09a;
+}
+.wg.mode-boss .wg-count {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffd9a0;
+}
+.wg.urgent .wg-label {
+  color: #ff7a55;
+  animation: wg-urgent 0.84s ease-in-out infinite;
+}
+.wg.urgent .wg-count {
+  display: inline-block;
+  color: #ff6a45;
+  text-shadow:
+    0 0 10px rgba(255, 60, 30, 0.8),
+    var(--shadow);
+}
+.wg.urgent .wg-glow {
+  box-shadow: 0 0 20px 8px rgba(255, 40, 20, 0.6);
+}
+@keyframes wg-urgent {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* ---- cleared: gilded, resting ---- */
+.wg.mode-cleared .wg-scale.lit {
+  background: radial-gradient(circle at 42% 34%, #fffbe8 0%, #ffe39a 28%, #f2c14e 60%, #946212 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 244, 210, 0.85),
+    inset 1.5px 0 0 rgba(255, 255, 240, 0.6);
+}
+.wg.mode-cleared .wg-glow {
+  background: rgba(255, 200, 90, 0.45);
+  box-shadow: 0 0 14px 5px rgba(255, 196, 80, 0.45);
+}
+.wg.mode-cleared .wg-label {
+  color: var(--gold);
+}
+
+/* ---- one-shot moments ---- */
+.wg.roar .wg-head {
+  animation: wg-roar 1.1s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes wg-roar {
+  0% {
+    transform: none;
+  }
+  18% {
+    transform: scale(1.5) rotate(-10deg);
+  }
+  30% {
+    transform: scale(1.45) rotate(-6deg) translateX(1px);
+  }
+  42% {
+    transform: scale(1.5) rotate(-10deg) translateX(-1px);
+  }
+  100% {
+    transform: none;
+  }
+}
+.wg.ignite .wg-serpent,
+.wg.triumph .wg-serpent {
+  animation: wg-flash 0.9s ease-out;
+}
+@keyframes wg-flash {
+  0% {
+    filter: drop-shadow(0 1px 2px rgba(10, 4, 2, 0.85)) brightness(2.4);
+  }
+  100% {
+    filter: drop-shadow(0 1px 2px rgba(10, 4, 2, 0.85)) brightness(1);
+  }
+}
+.wg.triumph .wg-scale.lit {
+  animation: wg-wave 0.8s ease-out calc(var(--i) * 18ms) 1 both;
+}
+.wg.escaped .wg-serpent {
+  animation: wg-shake 0.5s ease-out;
+}
+@keyframes wg-shake {
+  20% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(1px);
+  }
+}
+
+/* The one-time caption (the Meadow, when it first appears). */
+.wg-hint {
+  /* Wider than the dragon bar, so the line doesn't wrap early. */
+  margin: 5px -90px 0;
+  font-style: italic;
+  font-size: 16.5px;
+  line-height: 1.25;
+  color: #fbeed2;
+  text-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.6s var(--ease-out),
+    transform 0.6s var(--ease-out);
+}
+.wg-hint.on {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wg-seg,
+  .wg-glow,
+  .wg.full.mode-charge .wg-head,
+  .wg.urgent .wg-label {
+    animation: none !important;
+  }
+}

@@ -432,6 +432,20 @@
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  transition:
+    right 0.45s var(--ease-out),
+    padding-top 0.45s var(--ease-out);
+}
+/* M2: the Wyrm Gauge (and its caption, and a boss's taller bar) push the toasts down. Padding, not
+   top, so absolutely placed layers in the region (the boss cards) keep their place. */
+#ui.has-gauge .ui-toasts {
+  padding-top: 32px;
+}
+#ui.has-gauge.wg-hinting .ui-toasts {
+  padding-top: 58px;
+}
+#ui.has-gauge.boss-fight .ui-toasts {
+  padding-top: 62px;
 }
 .ui-toast {
   position: relative;
@@ -626,6 +640,49 @@
     opacity: 0.5;
   }
 }
+/* Three or four tabs: a tighter row that still fits the 340 px panel; badges float as corner dots.
+   (#ui: `#ui button { font: inherit }` outranks class selectors, so the size needs the id too.) */
+.panel-tabs.many {
+  justify-content: space-between;
+  gap: 0;
+  margin: 0 -8px 0 -4px;
+}
+#ui .panel-tabs.many .panel-tab {
+  padding: 8px 5px 10px;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+}
+.panel-tabs.many .panel-tab::after,
+.panel-tabs.many .panel-tab:not(:first-child)::after {
+  left: 5px;
+  right: 5px;
+}
+.panel-tabs.many .panel-tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  line-height: 15px;
+  font-size: 10px;
+}
+/* A tab appears: it rises in with a glint. */
+.panel-tab.tab-new {
+  animation: tab-new 0.9s var(--ease-back) both;
+}
+@keyframes tab-new {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  50% {
+    color: var(--gold-hi);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
 .panel-tab-badge {
   min-width: 17px;
   height: 17px;
@@ -653,6 +710,47 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.panel-page.page-in {
+  animation: page-in 0.35s var(--ease-out) both;
+}
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Upgrades: a quiet divider per tier's set. */
+.upg-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 -2px;
+}
+.upg-divider:first-child {
+  margin-top: 0;
+}
+.upg-divider::before,
+.upg-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--gold-line));
+}
+.upg-divider::after {
+  background: linear-gradient(90deg, var(--gold-line), transparent);
+}
+.upg-divider-text {
+  font-family: var(--font-title);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--parchment-faint);
 }
 .panel-empty {
   margin: 12px 2px;
@@ -691,6 +789,14 @@
   height: 100%;
   fill: #170c09;
   filter: drop-shadow(-0.8px 0 0 rgba(255, 214, 140, 0.9));
+}
+/* Stroked parts of a silhouette (the lancer's galloping legs). */
+.icon-unit .st {
+  fill: none;
+  stroke: #170c09;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .unit-info {
   flex: 1;

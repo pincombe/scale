@@ -1,34 +1,25 @@
-// Right panel (340 px): Army and Upgrades tabs. Slides in once 'feature.panel' is set (the camera
-// re-frames into the uncovered stage via setPanelOpen). Rows and cards are built once and only
-// shown, hidden and re-texted at 10 Hz when their values change. One pulsing call to action marks
-// the most important buy. Champions and Heraldry tabs arrive in M2.
-import { BUY_MAX, MICROCOPY, UNITS, UNIT_IDS, UPGRADES, fmt, sel } from '../core';
+// Right panel (340 px): Army · Upgrades · Champions · Heraldry. Slides in once 'feature.panel' is
+// set (the camera re-frames into the uncovered stage via setPanelOpen); each tab appears when its
+// content does (the first upgrade, the first champion, `feature.heraldry`). Rows and cards are built
+// once and only shown, hidden and re-texted at 10 Hz when their values change; only the active tab
+// refreshes. One pulsing call to action marks the most important buy. After the first zoom the
+// Heraldry tab opens by itself, with its coach.
+import { BUY_MAX, CHAMPION_IDS, MICROCOPY, TIERS, UNITS, UNIT_IDS, UPGRADES, fmt, sel } from '../core';
 import type { GameState, UnitId, UpgradeDef } from '../core';
 import type { Scene } from '../app/scene';
+import { Afford } from './afford';
+import { createChampionsPage } from './champions';
+import { cinematicOf } from './cinematic';
 import { el, gameButton, setClass, setShown, setText } from './dom';
-import { effectLine } from './effectText';
+import { effectLine, roman } from './effectText';
+import { createHeraldryPage } from './heraldry';
 import { coinIcon, unitIcon } from './icons';
 import type { UiRoot } from './mount';
 
-type Tab = 'army' | 'upgrades';
-/** How long a just-affordable button shimmers (ms). */
-const FRESH_MS = 1400;
+type Tab = 'army' | 'upgrades' | 'champions' | 'heraldry';
+const TABS: readonly Tab[] = ['army', 'upgrades', 'champions', 'heraldry'];
 /** A bought upgrade card lingers this long for its exit animation (ms). */
 const BOUGHT_MS = 450;
-
-/** Tracks affordability to flash "just became affordable" once per false → true edge. */
-class Afford {
-  private was = false;
-  private until = 0;
-  constructor(private readonly target: HTMLElement) {}
-  set(can: boolean, now: number): void {
-    if (can && !this.was) this.until = now + FRESH_MS;
-    this.was = can;
-    setClass(this.target, 'can', can);
-    setClass(this.target, 'off', !can);
-    setClass(this.target, 'fresh', can && now < this.until);
-  }
-}
 
 interface BuyBtn {
   b: HTMLButtonElement;
@@ -58,38 +49,54 @@ interface UpgradeCard {
   boughtAt: number;
 }
 
+interface TabBtn {
+  b: HTMLButtonElement;
+  badge: HTMLElement;
+}
+
 export function createPanel(scene: Scene, ui: UiRoot): void {
   const panel = ui.regions.panel;
   panel.classList.add('interactive');
   const state = (): GameState => scene.game.state;
   const now = (): number => performance.now();
+  const cine = cinematicOf(scene, ui);
 
   // ---- tabs ----
   const head = el('div', 'panel-head', panel);
   const tabs = el('div', 'panel-tabs', head);
   const body = el('div', 'panel-body', panel);
-  const pages: Record<Tab, HTMLElement> = {
-    army: el('div', 'panel-page', body),
-    upgrades: el('div', 'panel-page', body),
-  };
+  const pages = {} as Record<Tab, HTMLElement>;
+  for (const t of TABS) pages[t] = el('div', 'panel-page', body);
   let active: Tab = 'army';
-  const tabBtn = (tab: Tab, text: string): { b: HTMLButtonElement; badge: HTMLElement } => {
+  const tabBtn = (tab: Tab, text: string): TabBtn => {
     const b = gameButton('panel-tab', tabs, () => true, () => select(tab));
     el('span', 'panel-tab-text', b, text);
     const badge = el('span', 'panel-tab-badge', b);
     badge.hidden = true;
     return { b, badge };
   };
-  const armyTab = tabBtn('army', 'Army');
-  const upgTab = tabBtn('upgrades', 'Upgrades');
-  upgTab.b.hidden = true;
+  const tabBtns: Record<Tab, TabBtn> = {
+    army: tabBtn('army', 'Army'),
+    upgrades: tabBtn('upgrades', 'Upgrades'),
+    champions: tabBtn('champions', MICROCOPY['tab.champions'] ?? 'Champions'),
+    heraldry: tabBtn('heraldry', MICROCOPY['tab.heraldry'] ?? 'Heraldry'),
+  };
+  tabBtns.upgrades.b.hidden = true;
+  tabBtns.champions.b.hidden = true;
+  tabBtns.heraldry.b.hidden = true;
   const select = (tab: Tab): void => {
+    const changed = tab !== active;
     active = tab;
-    setClass(armyTab.b, 'active', tab === 'army');
-    setClass(upgTab.b, 'active', tab === 'upgrades');
-    setShown(pages.army, tab === 'army');
-    setShown(pages.upgrades, tab === 'upgrades');
-    body.scrollTop = 0;
+    for (const t of TABS) {
+      setClass(tabBtns[t].b, 'active', t === tab);
+      setShown(pages[t], t === tab);
+    }
+    if (changed) {
+      body.scrollTop = 0;
+      pages[tab].classList.remove('page-in');
+      void pages[tab].offsetWidth;
+      pages[tab].classList.add('page-in');
+    }
     refresh();
   };
 
@@ -127,8 +134,15 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
     return { id, root, owned, dps, next, msFill, one, ten, max };
   });
 
-  // ---- upgrades ----
+  // ---- upgrades (a quiet divider per tier's set once a later tier's set shows) ----
   const upgEmpty = el('p', 'panel-empty', pages.upgrades);
+  const dividers = TIERS.map((t) => {
+    const d = el('div', 'upg-divider', pages.upgrades);
+    d.hidden = true;
+    const name = MICROCOPY[`tier.${t.id}`] ?? '';
+    el('span', 'upg-divider-text', d, name ? `${roman(t.id + 1)} · ${name}` : roman(t.id + 1));
+    return d;
+  });
   const cards: UpgradeCard[] = UPGRADES.map((def) => {
     const root = gameButton('upg-card', pages.upgrades, () => sel.upgradeAffordable(state(), def.id), () =>
       scene.game.dispatch({ type: 'buyUpgrade', id: def.id }),
@@ -145,6 +159,10 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
   });
   const cardById = new Map<string, UpgradeCard>(cards.map((c) => [c.def.id, c]));
 
+  // ---- champions, heraldry ----
+  const champions = createChampionsPage(scene, ui, pages.champions);
+  const heraldry = createHeraldryPage(scene, ui, pages.heraldry);
+
   scene.game.on('purchase', (e) => {
     if (e.kind === 'upgrade') {
       const c = cardById.get(e.id);
@@ -152,7 +170,7 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
         c.boughtAt = now();
         c.root.classList.add('bought');
       }
-    } else {
+    } else if (e.kind === 'unit') {
       const row = unitRows.find((r) => r.id === e.id);
       if (row && typeof row.owned.animate === 'function') {
         row.owned.animate([{ transform: 'scale(1.4)', color: '#fff3d6' }, { transform: 'none' }], {
@@ -163,15 +181,34 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
     }
   });
 
+  // After the first zoom: the Heraldry tab opens by itself, with its coach ("Spend your Scales").
+  scene.game.on('zoomSwitch', () => {
+    if (scene.game.state.zoom.count !== 1) return;
+    cine.after(() => {
+      if (!heraldry.visible(state())) return;
+      ui.setPanelOpen(true);
+      select('heraldry');
+      heraldry.coach();
+    }, 250);
+  });
+
   // ---- refresh ----
   let autoOpened = false;
   let lastCta: HTMLElement | null = null;
   let seenUpgrades = 0;
+  let seenChampions = 0;
+  let tabCount = 1;
 
   const setBuy = (btn: BuyBtn, label: string, cost: string, can: boolean, t: number): void => {
     setText(btn.label, label);
     setText(btn.cost, cost);
     btn.afford.set(can, t);
+  };
+
+  const setBadge = (tab: Tab, text: string): void => {
+    const badge = tabBtns[tab].badge;
+    setText(badge, text);
+    setShown(badge, text !== '');
   };
 
   function refresh(): void {
@@ -183,12 +220,32 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
     if (!ui.panelOpen) return;
     const t = now();
 
-    // Upgrades tab appears with the first upgrade.
+    // Tabs appear with their content.
     let revealed = 0;
     for (const u of UPGRADES) if (s.flags[u.unlockFlag]) revealed++;
-    setShown(upgTab.b, revealed > 0);
-    setClass(tabs, 'single', revealed === 0);
+    let joined = 0;
+    for (const id of CHAMPION_IDS) if (sel.championVisible(s, id)) joined++;
+    const show: Record<Tab, boolean> = { army: true, upgrades: revealed > 0, champions: joined > 0, heraldry: heraldry.visible(s) };
+    let count = 0;
+    for (const tab of TABS) {
+      const b = tabBtns[tab].b;
+      if (show[tab] && b.hidden && tab !== 'army' && scene.input.hasStarted) {
+        b.classList.remove('tab-new');
+        void b.offsetWidth;
+        b.classList.add('tab-new');
+      }
+      setShown(b, show[tab]);
+      if (show[tab]) count++;
+    }
+    if (count !== tabCount) {
+      tabCount = count;
+      setClass(tabs, 'single', count === 1);
+      // Three or four tabs: a tighter row so "Champions" and "Heraldry" fit the 340 px panel.
+      setClass(tabs, 'many', count >= 3);
+    }
+    if (!show[active]) select('army');
     if (active === 'upgrades') seenUpgrades = revealed;
+    if (active === 'champions') seenChampions = joined;
 
     // CTA: the cheapest affordable upgrade, else the affordable unit with the best DPS per gold.
     let cta: HTMLElement | null = null;
@@ -219,21 +276,24 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
       if (cta) cta.classList.add('cta');
       lastCta = cta;
     }
-    setClass(upgTab.b, 'cta', !!cta && ctaTab === 'upgrades' && active !== 'upgrades');
+    setClass(tabBtns.upgrades.b, 'cta', !!cta && ctaTab === 'upgrades' && active !== 'upgrades');
 
-    // Upgrades badge: affordable count (or a dot for news) while on the Army tab.
+    // Badges while another tab is open: affordable upgrades (or a dot for news), a dot for a new
+    // champion, and the charges the Scales can buy (Scales are rare, so it's always worth a look).
     let affordableUpg = 0;
     for (const c of cards) if (sel.upgradeAffordable(s, c.def.id)) affordableUpg++;
-    const badge = active === 'upgrades' ? '' : affordableUpg > 0 ? String(affordableUpg) : revealed > seenUpgrades ? '•' : '';
-    setText(upgTab.badge, badge);
-    setShown(upgTab.badge, badge !== '');
+    setBadge('upgrades', active === 'upgrades' ? '' : affordableUpg > 0 ? String(affordableUpg) : revealed > seenUpgrades ? '•' : '');
+    setBadge('champions', active === 'champions' || joined <= seenChampions ? '' : '•');
+    const charges = show.heraldry ? heraldry.affordable(s) : 0;
+    setBadge('heraldry', active === 'heraldry' || charges === 0 ? '' : String(charges));
+    setClass(tabBtns.heraldry.b, 'cta', charges > 0 && active !== 'heraldry');
 
     if (active === 'army') {
       let any = false;
       for (const r of unitRows) {
-        const show = sel.unitVisible(s, r.id);
-        setShown(r.root, show);
-        if (!show) continue;
+        const vis = sel.unitVisible(s, r.id);
+        setShown(r.root, vis);
+        if (!vis) continue;
         any = true;
         const owned = s.units[r.id];
         setText(r.owned, owned > 0 ? '×' + owned : '');
@@ -249,9 +309,26 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
       }
       setShown(armyEmpty, !any);
       if (!any) setText(armyEmpty, MICROCOPY['panel.armyEmpty'] ?? 'No one has answered the call. Yet.');
-    } else {
-      const order = sel.visibleUpgrades(s);
-      const rank = new Map(order.map((u, i) => [u.id, i]));
+    } else if (active === 'upgrades') {
+      // By tier (each tier's set together, under its divider once a later set shows), then cost.
+      const order = sel.visibleUpgrades(s).sort((a, b) => a.tier - b.tier || a.cost - b.cost);
+      const withDividers = order.some((u) => u.tier > 0);
+      const rank = new Map<string, number>();
+      const dividerAt = new Map<number, number>();
+      let k = 0;
+      let tierNow = -1;
+      for (const u of order) {
+        if (u.tier !== tierNow) {
+          tierNow = u.tier;
+          if (withDividers) dividerAt.set(u.tier, k++);
+        }
+        rank.set(u.id, k++);
+      }
+      for (let i = 0; i < dividers.length; i++) {
+        const at = dividerAt.get(i);
+        setShown(dividers[i]!, at !== undefined);
+        if (at !== undefined) dividers[i]!.style.order = String(at);
+      }
       for (const c of cards) {
         const i = rank.get(c.def.id);
         const lingering = c.boughtAt > 0 && t - c.boughtAt < BOUGHT_MS;
@@ -264,6 +341,10 @@ export function createPanel(scene: Scene, ui: UiRoot): void {
       }
       setShown(upgEmpty, order.length === 0);
       if (order.length === 0) setText(upgEmpty, MICROCOPY['panel.upgradesEmpty'] ?? 'Every upgrade bought. For now.');
+    } else if (active === 'champions') {
+      champions.refresh(s, t);
+    } else {
+      heraldry.refresh(s, t);
     }
   }
 
