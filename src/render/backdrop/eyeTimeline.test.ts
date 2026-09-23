@@ -158,4 +158,26 @@ describe('eye schedule', () => {
       expect(sch.nextAt).toBeLessThanOrEqual(EYE_MAX_GAP);
     }
   });
+
+  it('counts play time from the first strike, not from page load (a long wait on the title)', () => {
+    const sch = createEyeSchedule();
+    const s = meadow(0, 0);
+    s.stats.strikes = 0;
+    // Three minutes on the title: nothing.
+    expect(runUntil(sch, s, 0, 180)).toBe(-1);
+    // The first strike: still nothing for EYE_FALLBACK s of play.
+    s.stats.strikes = 1;
+    const at = runUntil(sch, s, 180, 600, 180);
+    expect(at).toBeGreaterThan(180 + EYE_FALLBACK - 0.1);
+    expect(at).toBeLessThan(180 + EYE_FALLBACK + 0.1);
+    // The gauge rule's floor counts from the first strike too.
+    const sch2 = createEyeSchedule();
+    const w = meadow(0, 0);
+    w.stats.strikes = 0;
+    runUntil(sch2, w, 0, 31);
+    w.stats.strikes = 1;
+    w.wyrm.charge = w.kills = AT - 1;
+    const at2 = runUntil(sch2, w, 31, 400, 31);
+    expect(at2).toBeGreaterThan(31 + EYE_EARLIEST - 0.1);
+  });
 });

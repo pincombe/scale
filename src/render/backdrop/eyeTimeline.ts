@@ -15,9 +15,10 @@ import { sel, type GameState } from '../../core';
  * runs this same schedule for its "eye first opens" target.
  */
 export const EYE_GAUGE = 0.7;
-/** Play time (state.t, s) before which the gauge alone never opens it. */
+/** Play time (s since the first strike: state.t runs through the title screen too) before which the
+ *  gauge alone never opens it. */
 export const EYE_EARLIEST = 120;
-/** Play time (state.t, s) at which it opens anyway (the player has struck at least once). */
+/** Play time (s since the first strike) at which it opens anyway. */
 export const EYE_FALLBACK = 165;
 /** Seconds after the kill that filled the gauge to EYE_GAUGE (lets the kill's slow-mo finish). */
 export const EYE_FIRST_DELAY = 2.2;
@@ -37,10 +38,16 @@ export interface EyeSchedule {
   /** The boss (dragon id) the eye already opened for, and whether a boss is fighting now. */
   bossId: number;
   bossUp: boolean;
+  /**
+   * state.t when play started: tracks state.t while the player hasn't struck yet (the title
+   * screen), then freezes at the first strike. A state that arrives already struck (a loaded save)
+   * keeps 0: its play time is all of state.t.
+   */
+  playStart: number;
 }
 
 export function createEyeSchedule(): EyeSchedule {
-  return { firstShown: false, nextAt: Infinity, kills: 0, t: 0, bossId: -1, bossUp: false };
+  return { firstShown: false, nextAt: Infinity, kills: 0, t: 0, bossId: -1, bossUp: false, playStart: 0 };
 }
 
 /**
@@ -56,6 +63,8 @@ export function stepEyeSchedule(s: EyeSchedule, state: GameState, now: number, b
   }
   s.kills = state.kills;
   s.t = state.t;
+  if (state.stats.strikes === 0) s.playStart = state.t;
+  const played = state.t - s.playStart;
   const d = state.dragon;
   s.bossUp = d.boss !== null && d.phase !== 'dying' && d.phase !== 'leave';
   // A boss is summoned: the eye opens to watch the fight.
@@ -64,8 +73,8 @@ export function stepEyeSchedule(s: EyeSchedule, state: GameState, now: number, b
     s.nextAt = Math.min(s.nextAt, now);
   }
   if (!s.firstShown && s.nextAt === Infinity) {
-    if (sel.gauge(state) >= EYE_GAUGE) s.nextAt = now + Math.max(EYE_FIRST_DELAY, EYE_EARLIEST - state.t);
-    else if (state.t >= EYE_FALLBACK && state.stats.strikes > 0) s.nextAt = now;
+    if (sel.gauge(state) >= EYE_GAUGE) s.nextAt = now + Math.max(EYE_FIRST_DELAY, EYE_EARLIEST - played);
+    else if (played >= EYE_FALLBACK && state.stats.strikes > 0) s.nextAt = now;
   }
   if (now >= s.nextAt) {
     if (busy) {

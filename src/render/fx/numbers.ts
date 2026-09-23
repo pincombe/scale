@@ -20,6 +20,19 @@ import { context2d, makeCanvas } from '../atlas';
 import { outCubic } from '../../lib/ease';
 import { vec2 } from '../../lib/vec';
 
+/**
+ * A floating number's text: whole below 1,000 (Fusion and Lion multipliers make fractional
+ * damage, and "8.09" over a dragon reads like a debug readout), fmt() above (its suffixes are
+ * already three significant digits). fmt() itself stays as is: the HUD uses it.
+ */
+export function fmtWhole(amount: Decimal): string {
+  if (amount.lt(999.5)) {
+    const x = amount.toNumber();
+    return String(x > 0 && x < 1 ? 1 : Math.round(x));
+  }
+  return fmt(amount);
+}
+
 export const NK_CLICK = 0;
 export const NK_CRIT = 1;
 export const NK_ARMY = 2;
@@ -265,7 +278,7 @@ export class NumberPool {
       this.bump[i] = 0;
       this.life[i] = Math.max(this.life[i]!, a + extend);
       if (caption && !this.captions[i]) this.captions[i] = caption;
-      this.render(i, fmt(sum));
+      this.render(i, fmtWhole(sum));
       return i;
     }
     return -1;
@@ -364,7 +377,7 @@ export class NumberPool {
 
   private label(kind: number, amount: Decimal | null): string {
     if (!amount) return '';
-    return kind === NK_GOLD || kind === NK_REWARD ? '+' + fmt(amount) : fmt(amount);
+    return kind === NK_GOLD || kind === NK_REWARD ? '+' + fmtWhole(amount) : fmtWhole(amount);
   }
 
   private alloc(): number {
