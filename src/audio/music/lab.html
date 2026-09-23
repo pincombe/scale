@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Music lab</title>
+    <style>
+      html, body { margin: 0; background: #120c10; color: #e8d8c0; font: 13px ui-monospace, Menlo, monospace; }
+      main { padding: 16px; max-width: 1100px; }
+      button { font: inherit; margin: 0 6px 6px 0; padding: 6px 10px; background: #2a1d22; color: #f3e4c8; border: 1px solid #5a4148; border-radius: 4px; cursor: pointer; }
+      button:hover { background: #3a2830; }
+      pre { white-space: pre-wrap; background: #1b1317; padding: 12px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h3>SCALE music lab (dev only)</h3>
+      <div id="play"></div>
+      <div><button id="measure">Measure all (offline)</button> <button id="stop">Stop</button></div>
+      <pre id="out">Offline renders use the real conductor and performer. Live buttons play a scenario through an engine-like graph.</pre>
+    </main>
+    <script type="module" src="./lab.ts"></script>
+  </body>
+</html>
