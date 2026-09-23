@@ -27,16 +27,10 @@ export class Ambient {
   private readonly md = new Float32Array(MOTES);
   private readonly mSeed = new Float32Array(MOTES);
   private readonly mBright = new Float32Array(MOTES);
-  // Birds
-  private readonly bdx = new Float32Array(BIRDS);
-  private readonly bdy = new Float32Array(BIRDS);
-  private readonly bPhase = new Float32Array(BIRDS);
-  private birdCount = 0;
-  private birdX = 0;
-  private birdY = 0;
-  private birdVX = 0;
-  private birdSize = 6;
-  private birdT = 0;
+  // Birds: the occasional crossing flock, and a flock startled off the wyrm's skull (separate, so
+  // a lift-off never replaces a flock already crossing).
+  private readonly flock = new Flock();
+  private readonly startled = new Flock();
   private nextBirds = 9;
 
   private lastPan = NaN;
@@ -60,24 +54,14 @@ export class Ambient {
     }
   }
 
-  /** Start a flock now (debug). */
+  /** Start a crossing flock now (debug). */
   birds(W: number, H: number): void {
-    const n = 5 + ((Math.random() * 6) | 0);
-    this.birdCount = n;
-    const dir = Math.random() < 0.6 ? -1 : 1;
-    this.birdVX = dir * H * (0.045 + 0.025 * Math.random());
-    this.birdX = dir < 0 ? W + 60 : -60;
-    this.birdY = H * (0.14 + 0.24 * Math.random());
-    this.birdSize = H * (0.0055 + 0.003 * Math.random());
-    this.birdT = 0;
-    for (let i = 0; i < n; i++) {
-      // Loose V trailing behind the leader.
-      const rank = Math.ceil(i / 2);
-      const side = i % 2 === 0 ? 1 : -1;
-      this.bdx[i] = -dir * rank * this.birdSize * (3.2 + Math.random() * 1.5);
-      this.bdy[i] = side * rank * this.birdSize * (1.6 + Math.random()) + (Math.random() - 0.5) * this.birdSize * 2;
-      this.bPhase[i] = Math.random() * TAU;
-    }
+    this.flock.cross(W, H);
+  }
+
+  /** Startle a flock off a ridge at (x, y) CSS px: bunched, climbing and fanning out, flying left. */
+  birdsFrom(x: number, y: number, H: number): void {
+    this.startled.liftOff(x, y, H);
   }
 
   update(view: View, anchorX: number, anchorY: number, panX: number): void {
@@ -140,16 +124,12 @@ export class Ambient {
     }
 
     // Birds
-    if (this.birdCount > 0) {
-      this.birdT += dt;
-      this.birdX += this.birdVX * dt + pan * 0.08;
-      if ((this.birdVX < 0 && this.birdX < -W * 0.3) || (this.birdVX > 0 && this.birdX > W * 1.3)) {
-        this.birdCount = 0;
-        this.nextBirds = t + 22 + Math.random() * 30;
-      }
+    if (this.flock.count > 0) {
+      if (!this.flock.update(dt, pan, W)) this.nextBirds = t + 22 + Math.random() * 30;
     } else if (t > this.nextBirds) {
-      this.birds(W, H);
+      this.flock.cross(W, H);
     }
+    if (this.startled.count > 0) this.startled.update(dt, pan, W);
     void anchorX;
   }
 
@@ -187,21 +167,85 @@ export class Ambient {
   }
 
   drawBirds(ctx: CanvasRenderingContext2D, color: string, t: number): void {
-    if (this.birdCount === 0) return;
-    const s = this.birdSize;
+    this.flock.draw(ctx, color, t);
+    this.startled.draw(ctx, color, t);
+  }
+}
+
+/** One flock of birds: a loose V of wingbeats, in screen px. */
+class Flock {
+  private readonly dx = new Float32Array(BIRDS);
+  private readonly dy = new Float32Array(BIRDS);
+  private readonly phase = new Float32Array(BIRDS);
+  count = 0;
+  private x = 0;
+  private y = 0;
+  private vx = 0;
+  /** Climb rate (px/s, decays) and formation spread (0 = bunched on the ridge .. 1): lift-offs. */
+  private vy = 0;
+  private spread = 1;
+  private size = 6;
+
+  /** Enter from a screen edge and cross the far sky. */
+  cross(W: number, H: number): void {
+    const dir = Math.random() < 0.6 ? -1 : 1;
+    this.start(dir < 0 ? W + 60 : -60, H * (0.14 + 0.24 * Math.random()), dir, H * (0.045 + 0.025 * Math.random()), H * (0.0055 + 0.003 * Math.random()), 0, 1, 3.2, 1.5, 1.6, 2);
+  }
+
+  /** Burst off a ridge at (x, y), bunched and climbing, fanning out as it flies left. */
+  liftOff(x: number, y: number, H: number): void {
+    this.start(x, y, -1, H * 0.07, H * 0.0042, -H * 0.06, 0.15, 3, 2, 1.4, 3);
+  }
+
+  private start(x: number, y: number, dir: number, speed: number, size: number, vy: number, spread: number, gapX: number, gapXr: number, gapY: number, jitter: number): void {
+    const n = 5 + ((Math.random() * 6) | 0);
+    this.count = n;
+    this.x = x;
+    this.y = y;
+    this.vx = dir * speed;
+    this.vy = vy;
+    this.spread = spread;
+    this.size = size;
+    for (let i = 0; i < n; i++) {
+      // Loose V trailing behind the leader.
+      const rank = Math.ceil(i / 2);
+      const side = i % 2 === 0 ? 1 : -1;
+      this.dx[i] = -dir * rank * size * (gapX + Math.random() * gapXr);
+      this.dy[i] = side * rank * size * (gapY + Math.random()) + (Math.random() - 0.5) * size * jitter;
+      this.phase[i] = Math.random() * TAU;
+    }
+  }
+
+  /** Advance; returns false (and empties the flock) once it has left the screen. */
+  update(dt: number, pan: number, W: number): boolean {
+    this.x += this.vx * dt + pan * 0.08;
+    this.y += this.vy * dt;
+    this.vy *= Math.exp(-dt * 0.9);
+    if (this.spread < 1) this.spread = Math.min(1, this.spread + dt * 0.45);
+    if ((this.vx < 0 && this.x < -W * 0.3) || (this.vx > 0 && this.x > W * 1.3)) {
+      this.count = 0;
+      return false;
+    }
+    return true;
+  }
+
+  draw(ctx: CanvasRenderingContext2D, color: string, t: number): void {
+    if (this.count === 0) return;
+    const s = this.size;
     ctx.strokeStyle = color;
     ctx.lineWidth = Math.max(1, s * 0.28);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.beginPath();
-    for (let i = 0; i < this.birdCount; i++) {
-      const ph = this.bPhase[i]! + t * 9;
+    for (let i = 0; i < this.count; i++) {
+      const ph = this.phase[i]! + t * 9;
       const flap = Math.sin(ph);
       // Glide now and then: wings held up in a shallow V.
-      const glide = smoothstep(0.3, 0.8, Math.sin(t * 0.7 + this.bPhase[i]!));
+      const glide = smoothstep(0.3, 0.8, Math.sin(t * 0.7 + this.phase[i]!));
       const wing = (flap * (1 - glide) + 0.35 * glide) * s * 0.9;
-      const x = this.birdX + this.bdx[i]! + Math.sin(t * 0.9 + i) * s * 0.6;
-      const y = this.birdY + this.bdy[i]! + Math.sin(t * 1.3 + i * 2) * s * 0.5 - flap * s * 0.12;
+      const sp = this.spread;
+      const x = this.x + this.dx[i]! * sp + Math.sin(t * 0.9 + i) * s * 0.6;
+      const y = this.y + this.dy[i]! * sp + Math.sin(t * 1.3 + i * 2) * s * 0.5 - flap * s * 0.12;
       ctx.moveTo(x - s, y - wing);
       ctx.quadraticCurveTo(x - s * 0.45, y - wing * 0.1 - s * 0.15, x, y);
       ctx.quadraticCurveTo(x + s * 0.45, y - wing * 0.1 - s * 0.15, x + s, y - wing);

@@ -19,12 +19,14 @@ import { rect, vec2, type Vec2 } from '../../lib/vec';
 import { hash2f } from '../../lib/math';
 import { SAFE_MARGIN } from '../world';
 import { bakeClouds, bakeGlow, bakeRays, bakeSky, bakeSun, SUN_SPRITE_R, type CloudBank } from './sky';
-import { HILLS, MOUNTAINS, RIDGES, RidgeCache, TREELINE, WINDMILL_TOWER, WINDMILL_X, WINDOWS, WYRM_EYE_X, WYRM_EYE_Y, type Light } from './ridges';
+import { HILLS, MOUNTAINS, RIDGES, RidgeCache, TREELINE, WINDMILL_TOWER, WINDMILL_X, WINDOWS, type Light } from './ridges';
 import { Ground } from './ground';
 import { Foreground } from './foreground';
 import { Ambient } from './ambient';
-import { drawEye, drawSails, drawWindows, makeIris, type EyeArt } from './props';
-import { createEyeSchedule, eyeClosed, eyePose, stepEyeSchedule, EYE_DURATION, type EyePose } from './eyeTimeline';
+import { drawSails, drawWindows } from './props';
+import { createEyeSchedule, eyeClosed, eyePose, stepEyeSchedule, EYE_CRACK_T, EYE_DURATION, EYE_WIDE_T, type EyePose } from './eyeTimeline';
+import { WyrmEye } from './eye';
+import { EYE_H, EYE_X } from './wyrm';
 import { breeze, gust } from './wind';
 
 export interface Backdrop {
@@ -35,7 +37,7 @@ export interface Backdrop {
   /** Send a flock of birds across the sky now. */
   birds(): void;
   /** Rolling CPU cost of the two layers' draw() (ms, main view), and silhouette re-bakes. */
-  readonly stats: { backMs: number; frontMs: number; bakes: number; bakeMsMax: number };
+  readonly stats: { backMs: number; frontMs: number; eyeMs: number; bakes: number; bakeMsMax: number };
   /** Canvas memory owned by the backdrop (MB of backing store). */
   memMB(): number;
 }
@@ -91,7 +93,7 @@ export function createBackdrop(scene: Scene): Backdrop {
   const rays = bakeRays(7);
   const amberGlow = bakeGlow('#ffa22a', 128);
   const warmGlow = bakeGlow('#ffc766', 64);
-  let eyeArt: EyeArt | null = null;
+  const eye = new WyrmEye();
   let sky: SkyArt | null = null;
   let flyGlow: HTMLCanvasElement | null = null;
   let flyCore: HTMLCanvasElement | null = null;
@@ -106,14 +108,14 @@ export function createBackdrop(scene: Scene): Backdrop {
   const clearA: Vec2 = vec2();
   const clearR = rect();
   const light: Light = { x: 0, y: 0 };
-  const pose: EyePose = { open: 0, look: 0, pupil: 0.4, glow: 0 };
+  const pose: EyePose = { open: 0, look: 0, pupil: 0.4, glow: 0, awake: 0 };
   const schedule = createEyeSchedule();
   let eyeT = -1;
   let millAngle = 0.3;
   let pendW = 0;
   let pendH = 0;
   let pendSince = 0;
-  const stats = { backMs: 0, frontMs: 0, bakes: 0, bakeMsMax: 0 };
+  const stats = { backMs: 0, frontMs: 0, eyeMs: 0, bakes: 0, bakeMsMax: 0 };
 
   const ensureSky = (view: View): SkyArt => {
     const p = view.palette;
@@ -161,8 +163,6 @@ export function createBackdrop(scene: Scene): Backdrop {
     flyCore = atlas.canvas(atlas.tint(sp.ember, mixHex(p.ambient, '#f4ffc0', 0.5)));
     moteCore = atlas.canvas(atlas.tint(sp.ember, p.ambient));
     puffGlow = atlas.canvas(atlas.tint(sp.glow, p.rim));
-    const c = makeCanvas(1, 1);
-    eyeArt = { glow: amberGlow, iris: makeIris(context2d(c)) };
   };
 
   /** Screen position of the sun for this view. */
@@ -229,6 +229,16 @@ export function createBackdrop(scene: Scene): Backdrop {
     if (eyeT < 0) eyeT = 0.0001;
   };
 
+  /** The lids move: stones and dust shake loose, the ground trembles, birds lift off the skull. */
+  const wake = (view: View, amount: number, trauma: number): void => {
+    eye.crumble(amount);
+    view.camera.addTrauma(trauma);
+    if (amount < 1) {
+      layerToScreen(view, MOUNTAINS.p, EYE_X + 0.75, -EYE_H - 0.72, tmp);
+      ambient.birdsFrom(tmp.x, tmp.y, view.height);
+    }
+  };
+
   const drawRidge = (ctx: CanvasRenderingContext2D, view: View, c: RidgeCache): void => {
     const cam = view.camera;
     const p = c.def.p;
@@ -259,16 +269,17 @@ export function createBackdrop(scene: Scene): Backdrop {
       ctx.shadowColor = 'rgba(0,0,0,0)';
     } else if (c === treeline) {
       drawWindows(ctx, WINDOWS, TREELINE, warmGlow, view.time);
-    } else if (c === mountains && eyeT >= 0 && eyeArt) {
+    } else if (c === mountains && (eyeT >= 0 || eye.busy) && c.palette === view.palette && eye.bakedFor(view.palette)) {
+      // (A view with another palette, e.g. M2's blended snapshot, skips the eye: draw never bakes.)
       eyePose(eyeT, pose);
-      const ex = WYRM_EYE_X;
-      const ey = -WYRM_EYE_Y;
       // Look toward the fight (stage center, a little above the ground line).
-      layerToScreen(view, p, ex, ey, origin);
+      layerToScreen(view, p, EYE_X, -EYE_H, origin);
       const dx = cam.stageCX - origin.x;
       const dy = cam.anchorFrac * view.height - view.height * 0.08 - origin.y;
       const l = Math.hypot(dx, dy) || 1;
-      drawEye(ctx, pose, ex, ey, dx / l, dy / l, eyeArt, c.shade, view.time);
+      const e0 = performance.now();
+      eye.draw(ctx, pose, c.bakeZ * c.dpr, dx / l, dy / l, amberGlow, view.time);
+      if (isMain(view)) stats.eyeMs = stats.eyeMs * 0.95 + (performance.now() - e0) * 0.05;
     }
     ctx.restore();
   };
@@ -305,18 +316,24 @@ export function createBackdrop(scene: Scene): Backdrop {
           bakeCache(c, view, zBase, tmp.x, tmp.y);
         }
       }
+      // The eye's palette art is baked up front, so its first opening doesn't hitch.
+      if (mountains.palette) eye.ensure(mountains.palette, mountains);
       // Windmill: sails spin with the breeze.
       const t = view.time;
       millAngle += view.dt * (0.45 + 0.9 * breeze(t) + 0.5 * gust(WINDMILL_X * 3, t));
       // The eye.
       if (stepEyeSchedule(schedule, view.state.kills, t, eyeT >= 0)) openEye();
       if (eyeT >= 0) {
+        const prev = eyeT;
         eyeT += view.dt;
+        if (prev < EYE_CRACK_T && eyeT >= EYE_CRACK_T) wake(view, 0.6, 0.22);
+        if (prev < EYE_WIDE_T && eyeT >= EYE_WIDE_T) wake(view, 1, 0.26);
         if (eyeT > EYE_DURATION) {
           eyeT = -1;
           eyeClosed(schedule, t, Math.random());
         }
       }
+      eye.update(view.dt, breeze(t));
       cam.worldToScreen(cam.refX, 0, tmp);
       cam.parallaxToScreen(0, cam.refX, 0, anchor);
       ambient.update(view, anchor.x, anchor.y, tmp.x);
@@ -435,7 +452,7 @@ export function createBackdrop(scene: Scene): Backdrop {
     birds: () => ambient.birds(scene.camera.viewW, scene.camera.viewH),
     stats,
     memMB() {
-      let b = ground.bytes() + fg.bytes();
+      let b = ground.bytes() + fg.bytes() + eye.bytes();
       for (let i = 0; i < caches.length; i++) b += caches[i]!.bytes();
       const cv = (c: HTMLCanvasElement | null): number => (c ? c.width * c.height * 4 : 0);
       b += cv(rays) + cv(amberGlow) + cv(warmGlow);
@@ -453,6 +470,7 @@ export function createBackdrop(scene: Scene): Backdrop {
   dbg.button('birds', api.birds);
   dbg.watch('backdrop ms', () => `${stats.backMs.toFixed(2)} + ${stats.frontMs.toFixed(2)}`);
   dbg.watch('backdrop MB', () => api.memMB().toFixed(1));
+  dbg.watch('eye', () => (eyeT < 0 ? 'shut' : `${eyeT.toFixed(1)} s, ${stats.eyeMs.toFixed(3)} ms`));
   if (dbg.enabled) Object.assign(window, { __backdrop: api });
 
   return api;

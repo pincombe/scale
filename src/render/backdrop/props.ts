@@ -1,6 +1,5 @@
 // Small animated props drawn per frame on top of their cached layers, in that layer's parallax
-// coordinates: the windmill's sails, the village's lit windows, and the eye in the wyrm hill.
-import type { EyePose } from './eyeTimeline';
+// coordinates: the windmill's sails and the village's lit windows (the wyrm's eye is eye.ts).
 import { TAU } from '../../lib/math';
 
 // ---------------------------------------------------------------- windmill
@@ -64,105 +63,6 @@ function quad(
   ctx.lineTo(hx + c * r1 + px * w1, hy + s * r1 + py * w1);
   ctx.lineTo(hx + c * r0 + px * w1, hy + s * r0 + py * w1);
   ctx.closePath();
-}
-
-// ---------------------------------------------------------------- the eye
-
-/** Half-width and max half-height of the eye opening (m on the far-hills layer). */
-const EYE_HW = 0.47;
-const EYE_HH = 0.175;
-/** The head faces left: the front (tear-duct) corner dips toward the snout. */
-const EYE_TILT = 0.1;
-
-function almond(ctx: CanvasRenderingContext2D, hw: number, hh: number): void {
-  // Reptile eye: the upper lid arcs higher than the lower, corners slightly hooded.
-  ctx.moveTo(hw, hh * 0.1);
-  ctx.bezierCurveTo(hw * 0.55, -hh * 1.25, -hw * 0.45, -hh * 1.35, -hw, -hh * 0.05);
-  ctx.bezierCurveTo(-hw * 0.5, hh * 1.05, hw * 0.5, hh * 1.1, hw, hh * 0.1);
-  ctx.closePath();
-}
-
-export interface EyeArt {
-  /** Amber glow sprite. */
-  glow: HTMLCanvasElement;
-  /** Iris gradient centered at the origin (created once). */
-  iris: CanvasGradient;
-}
-
-export function makeIris(ctx: CanvasRenderingContext2D): CanvasGradient {
-  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, EYE_HW * 1.05);
-  g.addColorStop(0, '#fff6b8');
-  g.addColorStop(0.22, '#ffd04a');
-  g.addColorStop(0.5, '#ff9420');
-  g.addColorStop(0.8, '#d2480f');
-  g.addColorStop(1, '#6a1606');
-  return g;
-}
-
-/**
- * Draw the eye at (x, y) in far-hills layer meters. `lx, ly` is the unit direction toward the
- * fight (layer space); `lid` is the hill's crest color, `t` the time (for the glow flicker).
- */
-export function drawEye(
-  ctx: CanvasRenderingContext2D,
-  pose: EyePose,
-  x: number,
-  y: number,
-  lx: number,
-  ly: number,
-  art: EyeArt,
-  lid: string,
-  t: number,
-): void {
-  const o = pose.open;
-  if (o < 0.003) return;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(EYE_TILT);
-  const flick = 0.9 + 0.1 * Math.sin(t * 7.3) * Math.sin(t * 3.1);
-  // Glow bleeding into the hill and the haze around it.
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.5 * pose.glow * flick;
-  ctx.drawImage(art.glow, -1.9, -1.9, 3.8, 3.8);
-  ctx.globalAlpha = 0.6 * pose.glow * flick;
-  ctx.drawImage(art.glow, -0.74, -0.63, 1.48, 1.26);
-  ctx.globalCompositeOperation = 'source-over';
-  // Lid folds: a dark crease that deepens as the lids part.
-  ctx.globalAlpha = Math.min(1, o * 5) * 0.75;
-  ctx.fillStyle = lid;
-  ctx.beginPath();
-  almond(ctx, EYE_HW * 1.14, EYE_HH * (0.25 + 1.2 * o));
-  ctx.fill();
-  ctx.globalAlpha = 1;
-  // The eye itself.
-  const hh = EYE_HH * o;
-  const px = lx * pose.look * EYE_HW * 0.42;
-  const py = ly * pose.look * EYE_HH * 0.35;
-  ctx.beginPath();
-  almond(ctx, EYE_HW, hh);
-  ctx.save();
-  ctx.clip();
-  ctx.translate(px, py);
-  ctx.fillStyle = art.iris;
-  ctx.fillRect(-EYE_HW * 1.6, -EYE_HH * 1.6, EYE_HW * 3.2, EYE_HH * 3.2);
-  // Slit pupil
-  ctx.fillStyle = '#160604';
-  ctx.beginPath();
-  ctx.ellipse(0, 0, EYE_HW * pose.pupil * 0.34, EYE_HH * 1.3, 0, 0, TAU);
-  ctx.fill();
-  // Wet highlight
-  ctx.fillStyle = 'rgba(255,250,225,0.8)';
-  ctx.beginPath();
-  ctx.ellipse(EYE_HW * 0.28 - px * 0.5, -hh * 0.35, EYE_HW * 0.07, EYE_HH * 0.16, -0.3, 0, TAU);
-  ctx.fill();
-  ctx.restore();
-  // Lid edge line
-  ctx.strokeStyle = lid;
-  ctx.lineWidth = 0.03;
-  ctx.beginPath();
-  almond(ctx, EYE_HW, hh);
-  ctx.stroke();
-  ctx.restore();
 }
 
 // ---------------------------------------------------------------- windows

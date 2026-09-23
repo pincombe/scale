@@ -7,6 +7,7 @@ import { makeCanvas, context2d } from '../atlas';
 import { mixHex, rgba } from '../../lib/color';
 import { Noise } from '../../lib/noise';
 import { hash2f, TAU } from '../../lib/math';
+import { paintFace, wyrmHeight, type FaceColors } from './wyrm';
 
 /** Layer x of the valley the sun sets into (the sun sits at refX + 0.27 H / refZoom ~ 1.93 m). */
 export const VALLEY_X = 1.95;
@@ -19,24 +20,6 @@ function valley(x: number, depth: number, width: number): number {
 function bump(x: number, cx: number, w: number): number {
   const u = (x - cx) / w;
   return Math.exp(-u * u);
-}
-
-/** Catmull-Rom through (xs, ys) (xs increasing); outside the range returns -Infinity. */
-function spline(xs: readonly number[], ys: readonly number[], x: number): number {
-  const n = xs.length;
-  if (x < xs[0]! || x > xs[n - 1]!) return -Infinity;
-  let i = 0;
-  while (i < n - 2 && x > xs[i + 1]!) i++;
-  const x1 = xs[i]!;
-  const x2 = xs[i + 1]!;
-  const t = (x - x1) / (x2 - x1);
-  const y0 = ys[Math.max(0, i - 1)]!;
-  const y1 = ys[i]!;
-  const y2 = ys[i + 1]!;
-  const y3 = ys[Math.min(n - 1, i + 2)]!;
-  const t2 = t * t;
-  const t3 = t2 * t;
-  return 0.5 * (2 * y1 + (-y0 + y2) * t + (2 * y0 - 5 * y1 + 4 * y2 - y3) * t2 + (-y0 + 3 * y1 - 3 * y2 + y3) * t3);
 }
 
 /** Smooth max (blends two silhouettes without a crease). */
@@ -74,6 +57,8 @@ export interface RidgeDef {
   height(x: number): number;
   /** Adds decoration subpaths (trees, buildings) intersecting [x0, x1]. */
   deco?(path: Path2D, x0: number, x1: number): void;
+  /** Extra painting baked over the silhouette (layer units, source-atop), before the texture. */
+  paint?(ctx: CanvasRenderingContext2D, pal: Palette, colors: FaceColors): void;
 }
 
 /** haze -> depthTint -> silhouette. */
@@ -113,40 +98,10 @@ export const MOUNTAINS: RidgeDef = {
   height(x) {
     const crag = 0.8 * ridged(nM, x * 0.38, 5.5) + 0.3 * ridged(nM, x * 0.95, 9.1) + 0.05 * nM.simplex2(x * 5, 3);
     const h = 1.95 + 0.7 * nM.fbm2(x * 0.14, 1.3, 3) + crag;
-    return smax(h * valley(x, 0.62, 2.1) + 0.1 * Math.min(Math.abs(x - VALLEY_X), 10), wyrm(x), 0.3);
+    return smax(h * valley(x, 0.62, 2.1) + 0.1 * Math.min(Math.abs(x - VALLEY_X), 10), wyrmHeight(x), 0.3);
   },
+  paint: paintFace,
 };
-
-// The wyrm: the valley's right wall is a sleeping head resting beside the setting sun, snout toward
-// the valley and the fight, horns swept back, its spine trailing off as the range. The eye opens in
-// its brow (WYRM_EYE_X, WYRM_EYE_Y): ~40% of the screen height, center-right of the stage.
-const HEAD_X = [2.15, 2.4, 2.58, 2.78, 2.98, 3.12, 3.28, 3.5, 3.75, 4.05, 4.4, 4.8, 5.3, 6.0, 6.9, 8.0, 9.0];
-const HEAD_Y = [1.3, 2.2, 2.5, 2.62, 2.58, 2.95, 3.62, 3.92, 3.84, 3.86, 3.95, 3.85, 3.62, 3.4, 3.15, 2.8, 2.5];
-export const WYRM_EYE_X = 3.76;
-export const WYRM_EYE_Y = 3.32;
-
-/** Backswept horn crag: rises gently from `base` rightward to a tip at `tip`, then drops. */
-function horn(x: number, base: number, tip: number, h: number): number {
-  if (x < base || x > tip + 0.12) return 0;
-  if (x <= tip) return h * Math.pow((x - base) / (tip - base), 1.6);
-  return h * (1 - (x - tip) / 0.12);
-}
-
-function wyrm(x: number): number {
-  let h = spline(HEAD_X, HEAD_Y, x);
-  // Weathered crags on the skull and neck so it reads as rock, not a mesa.
-  if (x > 3.2 && x < 9) h += 0.14 * ridged(nM, x * 2.1, 3.3) - 0.07 + 0.04 * nM.simplex2(x * 7, 1.1);
-  h += horn(x, 4.45, 5.3, 0.62) + horn(x, 4.95, 5.62, 0.36);
-  if (x > 5.8 && x < 8.8) {
-    // Spinal crags along the neck, like weathered rocks.
-    const u = (x - 5.8) / 0.38;
-    const f = u - Math.floor(u);
-    const size = 0.08 + 0.12 * hash2f(Math.floor(u), 7);
-    const env = Math.min(1, (x - 5.8) / 0.5, (8.8 - x) / 0.8);
-    h += size * env * Math.max(0, 1 - Math.abs(f - 0.55) * 2.6);
-  }
-  return h;
-}
 
 export const FAR_HILLS: RidgeDef = {
   name: 'farHills',
@@ -643,6 +598,11 @@ export class RidgeCache {
       eg.addColorStop(1, rgba(e, 0.25));
       paintFaces(ctx, path, cw, ch, k, x0, top, light.x, Math.max(0.05, 2.2 / z), eg, def.edge);
       ctx.setTransform(k, 0, 0, k, -x0 * k, -top * k);
+    }
+    if (def.paint) {
+      ctx.globalCompositeOperation = 'source-atop';
+      def.paint(ctx, pal, this);
+      ctx.globalCompositeOperation = 'source-over';
     }
     if (def.texture) {
       // Dry-brush strokes baked in, fixed in layer space so re-bakes never shift them.

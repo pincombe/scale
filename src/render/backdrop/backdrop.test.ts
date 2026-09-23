@@ -6,52 +6,62 @@ import {
   stepEyeSchedule,
   EYE_DURATION,
   EYE_FIRST_DELAY,
+  EYE_FIRST_KILLS,
   EYE_MAX_GAP,
   EYE_MIN_GAP,
   type EyePose,
 } from './eyeTimeline';
 import { breeze, gust, wind } from './wind';
+import { MOUNTAINS } from './ridges';
+
+const K = EYE_FIRST_KILLS;
 
 describe('eye schedule', () => {
-  it('stays shut before the 3rd kill', () => {
+  it(`stays shut before kill #${K}`, () => {
     const s = createEyeSchedule();
-    for (let t = 0; t < 300; t += 1) expect(stepEyeSchedule(s, 2, t, false)).toBe(false);
+    for (let t = 0; t < 300; t += 1) expect(stepEyeSchedule(s, K - 1, t, false)).toBe(false);
   });
 
-  it('opens shortly after the 3rd kill, then every 45-90 s', () => {
+  it(`opens shortly after kill #${K}, then every 45-90 s`, () => {
     const s = createEyeSchedule();
-    expect(stepEyeSchedule(s, 3, 100, false)).toBe(false);
-    expect(stepEyeSchedule(s, 3, 100 + EYE_FIRST_DELAY - 0.01, false)).toBe(false);
-    expect(stepEyeSchedule(s, 3, 100 + EYE_FIRST_DELAY, false)).toBe(true);
+    expect(stepEyeSchedule(s, K, 100, false)).toBe(false);
+    expect(stepEyeSchedule(s, K, 100 + EYE_FIRST_DELAY - 0.01, false)).toBe(false);
+    expect(stepEyeSchedule(s, K, 100 + EYE_FIRST_DELAY, false)).toBe(true);
     expect(s.firstShown).toBe(true);
     // Not again until it has closed and the gap has passed.
-    expect(stepEyeSchedule(s, 5, 200, false)).toBe(false);
+    expect(stepEyeSchedule(s, K + 2, 200, false)).toBe(false);
     eyeClosed(s, 112, 0.5);
     const next = 112 + EYE_MIN_GAP + 0.5 * (EYE_MAX_GAP - EYE_MIN_GAP);
     expect(s.nextAt).toBeCloseTo(next);
-    expect(stepEyeSchedule(s, 5, next - 1, false)).toBe(false);
-    expect(stepEyeSchedule(s, 5, next, false)).toBe(true);
+    expect(stepEyeSchedule(s, K + 2, next - 1, false)).toBe(false);
+    expect(stepEyeSchedule(s, K + 2, next, false)).toBe(true);
+  });
+
+  it('a save loaded past the beat still gets its first opening', () => {
+    const s = createEyeSchedule();
+    expect(stepEyeSchedule(s, K + 40, 3, false)).toBe(false);
+    expect(stepEyeSchedule(s, K + 40, 3 + EYE_FIRST_DELAY, false)).toBe(true);
   });
 
   it('waits while the eye is already open (manual opening)', () => {
     const s = createEyeSchedule();
-    stepEyeSchedule(s, 3, 0, false);
-    expect(stepEyeSchedule(s, 3, 10, true)).toBe(false);
-    expect(stepEyeSchedule(s, 3, 11, false)).toBe(true);
+    stepEyeSchedule(s, K, 0, false);
+    expect(stepEyeSchedule(s, K, 10, true)).toBe(false);
+    expect(stepEyeSchedule(s, K, 11, false)).toBe(true);
   });
 
   it('restarts when kills drop (reset game / new tier)', () => {
     const s = createEyeSchedule();
-    stepEyeSchedule(s, 3, 0, false);
-    expect(stepEyeSchedule(s, 3, EYE_FIRST_DELAY, false)).toBe(true);
+    stepEyeSchedule(s, K, 0, false);
+    expect(stepEyeSchedule(s, K, EYE_FIRST_DELAY, false)).toBe(true);
     eyeClosed(s, 20, 0);
     expect(stepEyeSchedule(s, 0, 30, false)).toBe(false);
     expect(s.firstShown).toBe(false);
     expect(s.nextAt).toBe(Infinity);
-    // No random openings until the 3rd kill again.
-    expect(stepEyeSchedule(s, 2, 20 + EYE_MAX_GAP + 1, false)).toBe(false);
-    stepEyeSchedule(s, 3, 500, false);
-    expect(stepEyeSchedule(s, 3, 500 + EYE_FIRST_DELAY, false)).toBe(true);
+    // No random openings until the beat's kill again.
+    expect(stepEyeSchedule(s, K - 1, 20 + EYE_MAX_GAP + 1, false)).toBe(false);
+    stepEyeSchedule(s, K, 500, false);
+    expect(stepEyeSchedule(s, K, 500 + EYE_FIRST_DELAY, false)).toBe(true);
   });
 
   it('a manual opening before the first kill-triggered one schedules nothing', () => {
@@ -72,7 +82,7 @@ describe('eye schedule', () => {
 });
 
 describe('eye pose', () => {
-  const p: EyePose = { open: 0, look: 0, pupil: 0, glow: 0 };
+  const p: EyePose = { open: 0, look: 0, pupil: 0, glow: 0, awake: 0 };
 
   it('is shut outside an opening', () => {
     expect(eyePose(-1, p).open).toBe(0);
@@ -91,6 +101,19 @@ describe('eye pose', () => {
     expect(eyePose(EYE_DURATION - 0.05, p).open).toBeLessThan(0.02);
   });
 
+  it('the face surfaces as it wakes, holds through the blink, and sinks back', () => {
+    expect(eyePose(0.2, p).awake).toBe(0);
+    expect(eyePose(4, p).awake).toBeGreaterThan(0.95);
+    expect(eyePose(5.6 + 0.21, p).awake).toBeGreaterThan(0.95); // mid-blink
+    expect(eyePose(EYE_DURATION - 0.05, p).awake).toBeLessThan(0.02);
+    let prev = 0;
+    for (let t = 0; t <= EYE_DURATION; t += 1 / 60) {
+      const a = eyePose(t, p).awake;
+      expect(Math.abs(a - prev)).toBeLessThan(0.02);
+      prev = a;
+    }
+  });
+
   it('contracts the pupil to a slit once awake', () => {
     const early = eyePose(0.5, p).pupil;
     const awake = eyePose(4, p).pupil;
@@ -106,6 +129,17 @@ describe('eye pose', () => {
       expect(o).toBeLessThanOrEqual(1);
       expect(Math.abs(o - prev)).toBeLessThan(0.15); // the blink is quick, but never a pop
       prev = o;
+    }
+  });
+});
+
+describe('the wyrm in the mountains', () => {
+  it('its head blends into the range with no step in the silhouette', () => {
+    let prev = MOUNTAINS.height(-10);
+    for (let x = -10; x < 14; x += 0.002) {
+      const h = MOUNTAINS.height(x);
+      expect(Math.abs(h - prev)).toBeLessThan(0.02);
+      prev = h;
     }
   });
 });

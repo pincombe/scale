@@ -4,11 +4,16 @@ import { clamp01, smoothstep } from '../../lib/math';
 
 // ---------------------------------------------------------------- schedule
 
-/** Seconds after the 3rd kill before the first opening (lets the kill slow-mo finish). */
+/**
+ * The first opening is the PLAN §2 foreshadowing beat (~2:00-2:30): the engaged bot makes its
+ * 23rd kill at 2:06-2:20 across seeds (`npm run sim -- --profile engaged --verbose`), by which
+ * time the player knows the fight and has a moment to look up while the next dragon walks in.
+ */
+export const EYE_FIRST_KILLS = 23;
+/** Seconds after that kill before the first opening (lets the kill slow-mo finish). */
 export const EYE_FIRST_DELAY = 2.2;
 export const EYE_MIN_GAP = 45;
 export const EYE_MAX_GAP = 90;
-export const EYE_FIRST_KILLS = 3;
 
 export interface EyeSchedule {
   /** The kill-triggered first opening has happened; random openings run after it. */
@@ -51,6 +56,9 @@ export function eyeClosed(s: EyeSchedule, now: number, rand: number): void {
 
 /** Total length of one opening, in seconds. */
 export const EYE_DURATION = 10.2;
+/** Moments the lids move enough to shake stones loose: the first crack, and opening wide. */
+export const EYE_CRACK_T = 0.35;
+export const EYE_WIDE_T = 1.6;
 
 export interface EyePose {
   /** Lid aperture 0 (shut) .. 1 (wide). */
@@ -61,6 +69,9 @@ export interface EyePose {
   pupil: number;
   /** Glow strength 0..1. */
   glow: number;
+  /** How far the face has surfaced from the rock, 0..1: builds as it wakes, holds through the
+   *  blink, fades as it goes back to sleep. */
+  awake: number;
 }
 
 function ease(t: number): number {
@@ -79,6 +90,7 @@ export function eyePose(t: number, out: EyePose): EyePose {
     out.look = 0;
     out.pupil = 0.4;
     out.glow = 0;
+    out.awake = 0;
     return out;
   }
   // Lids: crack open to 0.28, hold (did I see that?), then open wide; blink at 5.6; close from 7.4.
@@ -92,5 +104,6 @@ export function eyePose(t: number, out: EyePose): EyePose {
   // Pupil: dilated in the dark, contracts to a slit as it wakes.
   out.pupil = 0.42 - 0.3 * smoothstep(1.6, 3.4, t) + 0.08 * smoothstep(7.4, 9.5, t);
   out.glow = out.open;
+  out.awake = ease((t - 0.4) / 2.4) * (1 - ease((t - 7.2) / 2.8));
   return out;
 }

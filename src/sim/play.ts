@@ -7,6 +7,7 @@ import type { Action, GameEvent, GameState } from '../core';
 import { shop, shopPause } from './bots';
 import type { Profile } from './bots';
 import { JuiceClock } from './juice';
+import { EYE_FIRST_DELAY, EYE_FIRST_KILLS } from '../render/backdrop/eyeTimeline';
 
 export const FRAME_DT = 1 / 60;
 /** Checkpoints (wall s): dragon size sampled at the minutes, kills at 3:15 (the M2 boss). */
@@ -38,6 +39,9 @@ export interface RunResult {
   firstUpgradeBought: number;
   archersUnlocked: number;
   firstArcher: number;
+  /** Wall s the eye in the mountain first opens (the backdrop's schedule: kill #EYE_FIRST_KILLS
+   *  plus its delay), -1: never. */
+  eyeOpens: number;
   /** Wall s of the first purchase of each unit / upgrade id. */
   firstBuy: Record<string, number>;
   /** Dragon body length (m) at each SIZE_AT checkpoint. */
@@ -110,6 +114,7 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
     firstUpgradeBought: -1,
     archersUnlocked: -1,
     firstArcher: -1,
+    eyeOpens: -1,
     firstBuy: {},
     sizeAt: [],
     killsAtBoss: 0,
@@ -196,6 +201,7 @@ export function runGame(p: Profile, seed: number, opts: RunOptions = {}): RunRes
             lastNovelty = lastBuyNovelty = wall;
           }
           if (r.kills === 5) r.fifthKill = wall;
+          if (r.kills === EYE_FIRST_KILLS) r.eyeOpens = wall + EYE_FIRST_DELAY;
           if (log) {
             const d = s.dragon;
             log(wall, `kill #${r.kills}  ${d.name}  #${d.index} ${d.size.toFixed(2)} m  ${fmt(d.maxHp)} HP  +${fmt(e.gold)} gold  in ${(wall - killStart).toFixed(1)} s`);
