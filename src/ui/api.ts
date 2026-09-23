@@ -38,8 +38,10 @@ export interface Ui extends UiAnchors {
   /** Run fn ~10 times per second (wall clock): the place for DOM text updates. */
   onRefresh(fn: () => void): void;
   /**
-   * M2: cinematic mode (the zoom). true fades out the HUD, the panel and toasts and makes them
-   * non-interactive; false brings them back. Optional until the zoom WP implements it.
+   * M2: cinematic mode (the zoom). true fades out the HUD, the panel, toasts and in-stage prompts,
+   * makes them inert (no pointer, no focus) and gives the stage the whole window (the panel's
+   * inset returns with the UI); toasts raised meanwhile wait until the UI is back. false brings it
+   * all back. Idempotent. Optional so stand-ins stay valid; UiRoot implements it.
    */
   setCinematic?(on: boolean): void;
 }

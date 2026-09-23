@@ -1,9 +1,12 @@
-// The zoom director (WP 2.1): the prestige cinematic (PLAN §4.5). Layer slot 'zoom' (5), above the
-// world and below fx.text/post. STUB until WP 2.1 lands: it completes every zoom at once
-// (switch, then end) so the game never stalls in a hold, and draws nothing.
+// The zoom director (WP 2.1): the prestige cinematic (PLAN §4.5), layer slot 'zoom' (5), above the
+// world and below fx.text / post. The cinematic itself lives in cinematic.ts; this wires it to the
+// game (zoomBegin, resync), the layer stack, the ZoomApi and the ?debug controls.
 import type { Scene } from '../../app/scene';
 import type { Layer } from '../types';
 import type { ZoomApi, ZoomBeat } from './api';
+import { Cinematic } from './cinematic';
+import { zoomTimeline } from './timeline';
+import { installZoomDebug } from './debug';
 
 export interface ZoomRender {
   layer: Layer;
@@ -11,19 +14,46 @@ export interface ZoomRender {
 }
 
 export function createZoom(scene: Scene): ZoomRender {
-  const listeners: ((beat: ZoomBeat) => void)[] = [];
+  const cin = new Cinematic(scene);
+  const idleBeats = [zoomTimeline(false).beats, zoomTimeline(true).beats] as const;
+  let fakeNext = false;
+
   const api: ZoomApi = {
-    active: false,
-    onBeat(fn) {
-      listeners.push(fn);
-      return () => {
-        const i = listeners.indexOf(fn);
-        if (i >= 0) listeners.splice(i, 1);
-      };
+    get active() {
+      return cin.active;
+    },
+    onBeat(fn: (beat: ZoomBeat) => void) {
+      return cin.onBeat(fn);
+    },
+    get time() {
+      return cin.running ? cin.t : -1;
+    },
+    get beatTimes() {
+      return cin.running ? cin.tl.beats : idleBeats[scene.settings.get('reduceMotion') ? 1 : 0];
     },
   };
-  scene.game.on('zoomBegin', () => scene.game.dispatch({ type: 'zoom', stage: 'switch' }));
-  scene.game.on('zoomSwitch', () => scene.game.dispatch({ type: 'zoom', stage: 'end' }));
-  const layer: Layer = { name: 'zoom', visible: true, draw() {} };
+
+  scene.game.on('zoomBegin', (e) => {
+    const fake = fakeNext;
+    fakeNext = false;
+    if (cin.running) return;
+    cin.start({ from: e.from, to: e.to, height: e.height, fake });
+  });
+  // State is the truth: a zoom begun during a silent catch-up arrives as a resync only.
+  scene.game.on('resync', () => cin.reconcile());
+
+  const debug = installZoomDebug(scene, cin, () => (fakeNext = true));
+
+  const layer: Layer = {
+    name: 'zoom',
+    visible: true,
+    update(view) {
+      debug(view);
+      cin.update(view);
+    },
+    draw(ctx, view) {
+      cin.draw(ctx, view);
+    },
+  };
   return { layer, api };
 }

@@ -1,0 +1,69 @@
+/*
+ * The zoom's tier title card, in the title's voice (see .title in styles.css): Cinzel in warm ivory
+ * with a candle glow, a gold hairline, an EB Garamond italic line. Opacity and transform are driven
+ * per frame by the zoom director (ui/tierCard.ts), so no CSS animations here.
+ */
+.tier-card {
+  position: absolute;
+  top: 11%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  pointer-events: none;
+}
+.tier-card-title {
+  display: inline-block;
+  margin: 0;
+  font-family: var(--font-title);
+  font-weight: 700;
+  font-size: clamp(40px, 5.2vw, 84px);
+  line-height: 1.05;
+  letter-spacing: 0.16em;
+  padding-left: 0.16em;
+  text-transform: uppercase;
+  color: #fff0cf;
+  opacity: 0;
+  text-shadow:
+    0 0 42px rgba(255, 176, 104, 0.55),
+    0 0 16px rgba(255, 214, 150, 0.35),
+    0 5px 24px rgba(30, 8, 20, 0.65);
+  will-change: opacity, transform;
+}
+.tier-card-numeral {
+  font-weight: 800;
+  color: #ffe39a;
+}
+.tier-card-dot {
+  display: inline-block;
+  margin: 0 0.42em;
+  color: rgba(255, 226, 160, 0.8);
+  transform: translateY(-0.05em);
+}
+.tier-card-rule {
+  width: min(420px, 44vw);
+  height: 1px;
+  margin: 16px auto 14px;
+  background: linear-gradient(90deg, transparent, rgba(255, 226, 160, 0.8), transparent);
+  box-shadow: 0 0 10px rgba(255, 200, 120, 0.45);
+  opacity: 0;
+  transform: scaleX(0);
+  will-change: opacity, transform;
+}
+.tier-card-line {
+  margin: 0;
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: clamp(21px, 2vw, 31px);
+  color: #fbeed2;
+  opacity: 0;
+  text-shadow:
+    0 1px 2px rgba(10, 4, 12, 0.9),
+    0 2px 14px rgba(10, 4, 12, 0.75);
+  will-change: opacity, transform;
+}
+
+@media (max-height: 760px) {
+  .tier-card {
+    top: 8%;
+  }
+}

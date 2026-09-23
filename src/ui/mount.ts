@@ -42,6 +42,9 @@ export class UiRoot implements Ui {
   readonly stage: HTMLElement;
   private refreshAcc = 0;
   private open = false;
+  /** The zoom cinematic owns the screen (setCinematic): the UI is faded out and inert. */
+  private cinematic = false;
+  private readonly cineAnims: Animation[] = [];
   private toastQueue: { text: string; kind: ToastKind }[] = [];
   private toastsLive = 0;
   private readonly observer: ResizeObserver | null;
@@ -116,18 +119,51 @@ export class UiRoot implements Ui {
     this.open = open;
     this.regions.panel.classList.toggle('open', open);
     this.root.classList.toggle('panel-open', open);
-    this.camera.insetRightTarget = open ? PANEL_WIDTH : 0;
+    // During a cinematic the stage keeps the whole window; the inset returns with the UI.
+    this.camera.insetRightTarget = open && !this.cinematic ? PANEL_WIDTH : 0;
     this.dirty = true;
+  }
+
+  /**
+   * Cinematic mode (the zoom): the HUD, the panel, toasts and in-stage prompts fade out and go inert
+   * (no pointer, no focus), and the stage takes the whole window; false brings them back. Toasts
+   * raised meanwhile (the new tier's unlocks) wait and show once the UI is back. Idempotent.
+   */
+  setCinematic(on: boolean): void {
+    if (on === this.cinematic) return;
+    this.cinematic = on;
+    this.root.classList.toggle('ui-cinematic', on);
+    for (const a of this.cineAnims) a.cancel();
+    this.cineAnims.length = 0;
+    const els = [this.regions.hud, this.regions.panel, this.regions.toasts, this.stage];
+    for (const el of els) {
+      el.inert = on;
+      if (typeof el.animate === 'function') {
+        const a = el.animate(on ? [{ opacity: 1 }, { opacity: 0 }] : [{ opacity: 0 }, { opacity: 1 }], {
+          duration: on ? 420 : 650,
+          easing: on ? 'ease-in' : 'ease-out',
+          fill: on ? 'forwards' : 'none',
+        });
+        this.cineAnims.push(a);
+      } else {
+        el.style.opacity = on ? '0' : '';
+      }
+    }
+    if (on && document.activeElement instanceof HTMLElement && this.root.contains(document.activeElement)) document.activeElement.blur();
+    this.camera.insetRightTarget = this.open && !on ? PANEL_WIDTH : 0;
+    this.dirty = true;
+    if (!on) this.pumpToasts();
   }
 
   toast(text: string, kind: ToastKind = 'info'): void {
     if (!text) return;
     this.toastQueue.push({ text, kind });
     if (this.toastQueue.length > TOAST_QUEUE) this.toastQueue.shift();
-    this.pumpToasts();
+    if (!this.cinematic) this.pumpToasts();
   }
 
   private pumpToasts(): void {
+    if (this.cinematic) return;
     while (this.toastsLive < TOAST_MAX && this.toastQueue.length > 0) {
       const { text, kind } = this.toastQueue.shift()!;
       this.showToast(text, kind);
