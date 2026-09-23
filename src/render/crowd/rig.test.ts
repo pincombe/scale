@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Joints, Pose, lerpPose, solve } from './rig';
-import { ANIM_COUNT, SHEET_KINDS, animDuration, buildAnims, oneShotFrame } from './anims';
+import { SHEET_KINDS, animCount, animDuration, buildAnims, oneShotFrame } from './anims';
 
 describe('knight rig', () => {
   it('puts hands and feet on reachable targets', () => {
@@ -37,7 +37,7 @@ describe('knight animations', () => {
   it('defines every animation for every kind, with finite poses', () => {
     for (const kind of SHEET_KINDS) {
       const defs = buildAnims(kind);
-      expect(defs.length).toBe(ANIM_COUNT);
+      expect(defs.length).toBe(animCount(kind));
       const j = new Joints();
       for (const d of defs) {
         expect(d.poses.length).toBeGreaterThan(0);

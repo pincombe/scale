@@ -8,7 +8,7 @@ import { clamp01 } from '../../lib/math';
 import type { Palette } from '../palette';
 import type { View } from '../types';
 import { KNIGHT_HEIGHT } from '../world';
-import { drawShieldFace, type Heraldry } from './banner';
+import { ShieldArt, type Heraldry } from './banner';
 import { Joints, Pose, SHIELD_SCALE, bladeLength, copyPose, drawDetails, drawFigure, lerpPose, shieldPath, solve } from './rig';
 
 export const HERO_SCALE = 1.1;
@@ -71,6 +71,21 @@ const FORE_HIT_LOW = P({ hipX: 4, hipY: -41, lean: 0.42, head: 0.3, aFootX: 17, 
 const BACK_WIND = P({ hipX: 4, hipY: -44, lean: 0.25, head: 0.08, aFootX: 19, bFootX: -9, nHandX: 8, nHandY: -60, shield: 0.2, fHandX: 20, fHandY: -46, weapon: 0.9 });
 const BACK_HIT = P({ hipX: 3, hipY: -47, lean: -0.1, head: -0.2, aFootX: 17, bFootX: -10, nHandX: 12, nHandY: -64, shield: 0.0, fHandX: 12, fHandY: -96, weapon: -2.3 });
 
+// Rally (the ability): a flurry, four blows to a bar: chop, rising backhand, flat sweep, thrust.
+// Each swing is short and overlaps the next, so the blade never stops and the arcs chain into a
+// figure of eight rather than strobing.
+const FLURRY_SWING = 0.24;
+const FLURRY_U_WIND = 0.16;
+const FLURRY_U_SLASH = 0.46;
+/** Beat between blows (s): three quick, one held a touch longer. */
+const FLURRY_BEATS = [0.17, 0.17, 0.17, 0.25] as const;
+const SWEEP_WIND = P({ hipX: -2, hipY: -45, lean: -0.05, head: 0, aFootX: 14, bFootX: -11, nHandX: 12, nHandY: -60, shield: 0.1, fHandX: -8, fHandY: -70, weapon: -3.0 });
+const SWEEP_HIT = P({ hipX: 7, hipY: -44, lean: 0.3, head: 0.1, aFootX: 21, bFootX: -10, nHandX: 5, nHandY: -58, shield: 0.25, fHandX: 27, fHandY: -66, weapon: -0.1 });
+const THRUST_WIND = P({ hipX: -3, hipY: -45, lean: -0.02, head: 0.02, aFootX: 13, bFootX: -12, nHandX: 14, nHandY: -60, shield: 0.1, fHandX: -2, fHandY: -64, weapon: 0.05 });
+const THRUST_HIT = P({ hipX: 9, hipY: -42, lean: 0.42, head: 0.14, aFootX: 25, bFootX: -10, nHandX: 3, nHandY: -58, shield: 0.3, fHandX: 34, fHandY: -62, weapon: 0.02 });
+const FLURRY_WIND = [FORE_WIND, BACK_WIND, SWEEP_WIND, THRUST_WIND] as const;
+const FLURRY_HIT = [FORE_HIT, BACK_HIT, SWEEP_HIT, THRUST_HIT] as const;
+
 export class Hero {
   /** World placement (m): x is the formation anchor; the lunge is added on top. */
   x = -0.95;
@@ -90,6 +105,18 @@ export class Hero {
   private mode = Mode.Idle;
   private braceW = 0;
   private now = 0;
+  /** The current swing's length and its windup / slash fractions (clicks vs the Rally flurry). */
+  private swing = SWING;
+  private uWind = U_WIND;
+  private uSlash = U_SLASH;
+  /** 0 = a click's forehand/backhand (by dir); 1..4 = a flurry blow. */
+  private move = 0;
+  private flurryUntil = -100;
+  private flurryNext = -100;
+  private flurryIdx = 0;
+  /** Held raise (the rally pile: sword up, standing on the army), eased. */
+  private holdOn = false;
+  private holdW = 0;
 
   private readonly pose = new Pose();
   private readonly tmp = new Pose();
@@ -114,7 +141,7 @@ export class Hero {
 
   private buf: HTMLCanvasElement | null = null;
   private bctx: CanvasRenderingContext2D | null = null;
-  private shieldFace: HTMLCanvasElement | null = null;
+  private readonly shieldArt = new ShieldArt();
   private artPal: Palette | null = null;
   private artHer: Heraldry | null = null;
   private bufSmallT = 0;
@@ -149,6 +176,8 @@ export class Hero {
 
   /** A click landed: swing (alternating forehand / backhand when clicks come fast). */
   strike(now: number): void {
+    // Mid-flurry the blade is already busy on the beat: the click lands inside the flurry.
+    if (now < this.flurryUntil) return;
     const since = now - this.strikeT0;
     if (since < SWING * U_SLASH) {
       // Mid-smear: let this blow land, then chain the next one immediately.
@@ -158,13 +187,39 @@ export class Hero {
     this.start(now);
   }
 
-  private start(now: number): void {
+  private start(now: number, move = 0): void {
     const since = now - this.strikeT0;
-    this.dir = since < SWING + 0.3 ? -this.dir : 1;
+    this.dir = move > 0 ? (move === 2 ? -1 : 1) : since < SWING + 0.3 ? -this.dir : 1;
     this.poseAt(now, this.from);
     this.lungeFrom = this.lunge(now);
     this.strikeT0 = now;
     this.pendingStrike = -1;
+    this.move = move;
+    this.swing = move > 0 ? FLURRY_SWING : SWING;
+    this.uWind = move > 0 ? FLURRY_U_WIND : U_WIND;
+    this.uSlash = move > 0 ? FLURRY_U_SLASH : U_SLASH;
+  }
+
+  /**
+   * Rally's auto-strike arrived (~8/s): keep the flurry going. The blows follow their own steady
+   * beat (FLURRY_BEATS) rather than each event, so the rhythm reads as swordplay, not a strobe.
+   */
+  flurry(now: number): void {
+    if (now >= this.flurryUntil) {
+      this.flurryNext = now;
+      this.flurryIdx = 0;
+    }
+    this.flurryUntil = now + 0.32;
+  }
+
+  /** Whether a flurry is playing (the crowd adds the sparks on its blows). */
+  flurrying(now: number): boolean {
+    return now < this.flurryUntil;
+  }
+
+  /** Hold the sword high (rally pile) until released. */
+  hold(on: boolean): void {
+    this.holdOn = on;
   }
 
   cheer(at: number): void {
@@ -182,14 +237,20 @@ export class Hero {
     this.mode = Mode.Idle;
     this.braceW = 0;
     this.capeInit = false;
+    this.flurryUntil = -100;
+    this.holdOn = false;
+    this.holdW = 0;
+    this.move = 0;
+    this.swing = SWING;
   }
 
   /** World lunge (m) at time t. */
   private lunge(t: number): number {
-    const u = (t - this.strikeT0) / SWING;
-    if (u <= 0 || u >= 1) return 0;
-    const k = this.dir > 0 ? this.lungeM : this.lungeM * 0.6;
-    return u < U_SLASH ? this.lungeFrom + (k - this.lungeFrom) * smooth(u / U_SLASH) : k * (1 - smooth((u - U_SLASH) / (1 - U_SLASH)));
+    const u = (t - this.strikeT0) / this.swing;
+    if (u < 0 || u >= 1) return 0;
+    const us = this.uSlash;
+    const k = this.move > 0 ? this.lungeM * 0.45 : this.dir > 0 ? this.lungeM : this.lungeM * 0.6;
+    return u < us ? this.lungeFrom + (k - this.lungeFrom) * smooth(u / us) : k * (1 - smooth((u - us) / (1 - us)));
   }
 
   /** Hop height (m, negative = up) while cheering. */
@@ -215,19 +276,27 @@ export class Hero {
       const w = smooth(c / 0.18) * (1 - smooth((c - 1.4) / 0.4));
       lerpPose(out, out, CHEER, w);
     }
+    if (this.holdW > 0.001) {
+      lerpPose(out, out, CHEER, this.holdW);
+      out.fHandY += 2 * Math.sin(t * 6);
+      out.weapon += 0.05 * Math.sin(t * 6 + 1);
+    }
     return out;
   }
 
   /** Full pose at time t (base + swing). */
   poseAt(t: number, out: Pose): Pose {
     this.basePose(t, this.tmp);
-    const u = (t - this.strikeT0) / SWING;
-    if (u <= 0 || u >= 1) return copyPose(out, this.tmp);
-    const wind = this.dir > 0 ? FORE_WIND : BACK_WIND;
-    const hit = this.dir > 0 ? this.foreHit : BACK_HIT;
-    if (u < U_WIND) return lerpPose(out, this.from, wind, smooth(u / U_WIND));
-    if (u < U_SLASH) return lerpPose(out, wind, hit, outCubic((u - U_WIND) / (U_SLASH - U_WIND)));
-    return lerpPose(out, hit, this.tmp, smooth((u - U_SLASH) / (1 - U_SLASH)));
+    const u = (t - this.strikeT0) / this.swing;
+    if (u < 0 || u >= 1) return copyPose(out, this.tmp);
+    const m = this.move;
+    const wind = m > 0 ? FLURRY_WIND[m - 1]! : this.dir > 0 ? FORE_WIND : BACK_WIND;
+    const hit = m > 0 ? (m === 1 ? this.foreHit : FLURRY_HIT[m - 1]!) : this.dir > 0 ? this.foreHit : BACK_HIT;
+    const uw = this.uWind;
+    const us = this.uSlash;
+    if (u < uw) return lerpPose(out, this.from, wind, smooth(u / uw));
+    if (u < us) return lerpPose(out, wind, hit, outCubic((u - uw) / (us - uw)));
+    return lerpPose(out, hit, this.tmp, smooth((u - us) / (1 - us)));
   }
 
   /** Chest point in world meters. */
@@ -247,14 +316,21 @@ export class Hero {
   update(dt: number, now: number, realDt: number): void {
     this.now = now;
     if (this.pendingStrike >= 0 && now >= this.pendingStrike) this.start(now);
+    if (now < this.flurryUntil && now >= this.flurryNext) {
+      const i = this.flurryIdx % 4;
+      this.start(now, i + 1);
+      this.flurryNext = Math.max(now, this.flurryNext) + FLURRY_BEATS[i]!;
+      this.flurryIdx++;
+    }
     // Hit-stop / pause freezes the clock right after a click: freeze the hero AT contact (blade
     // through the target, smear drawn), never in the windup.
     if (dt === 0 && realDt > 0) {
-      const u = (now - this.strikeT0) / SWING;
-      if (u >= 0 && u < U_SLASH) this.strikeT0 = now - SWING * U_SLASH;
+      const u = (now - this.strikeT0) / this.swing;
+      if (u >= 0 && u < this.uSlash) this.strikeT0 = now - this.swing * this.uSlash;
     }
-    const target = this.mode === Mode.Brace ? 1 : 0;
+    const target = this.mode === Mode.Brace && !this.holdOn ? 1 : 0;
     this.braceW += (target - this.braceW) * (1 - Math.exp(-12 * dt));
+    this.holdW += ((this.holdOn ? 1 : 0) - this.holdW) * (1 - Math.exp(-9 * dt));
     this.poseAt(now, this.pose);
     solve(this.pose, this.j);
     if (dt > 0) this.simulate(Math.min(dt, 1 / 30), now);
@@ -347,26 +423,8 @@ export class Hero {
     }
     this.artPal = p;
     this.artHer = h;
-    // Shield face: the coat of arms in the kite, turned away from the sun (so in shade).
-    const s = 6;
-    const c = makeCanvas(30 * s, 54 * s);
-    const x = context2d(c);
-    x.setTransform(s, 0, 0, s, 15 * s, 23 * s);
-    const jj = this.aj;
-    jj.nHX = -2;
-    jj.nHY = -1;
-    shieldPath(x, jj, 0, SHIELD_SCALE * 0.9);
-    x.save();
-    x.clip();
-    x.setTransform(1, 0, 0, 1, 0, 0);
-    const k = SHIELD_SCALE * 0.9;
-    drawShieldFace(x, h, 15 * s, (23 + 4 * k) * s, 42 * k * s);
-    x.fillStyle = p.silhouette;
-    x.globalAlpha = 0.34;
-    x.fillRect(0, 0, c.width, c.height);
-    x.globalAlpha = 1;
-    x.restore();
-    this.shieldFace = c;
+    // Shield face: the coat of arms in the kite at the right level of detail (banner.ts ShieldArt).
+    this.shieldArt.update(h, p);
   }
 
   private drawCape(ctx: CanvasRenderingContext2D, ox: number, oy: number): void {
@@ -538,14 +596,14 @@ export class Hero {
     b.setTransform(pxu, 0, 0, pxu, e0, f0);
     drawDetails(b, 'hero', this.j, p.rim);
     // Coat of arms on the shield (inset so the shield keeps its rim).
-    if (this.shieldFace) {
+    {
       const j = this.j;
       const tilt = this.pose.shield;
       const cs = Math.cos(tilt);
       const sn = Math.sin(tilt);
       b.setTransform(pxu * cs, pxu * sn, -pxu * sn, pxu * cs, e0 + (j.nHX + 2) * pxu, f0 + (j.nHY + 1) * pxu);
       b.globalAlpha = 0.95;
-      b.drawImage(this.shieldFace, -15, -23, 30, 54);
+      this.shieldArt.draw(b, pxu, this.now);
       b.globalAlpha = 1;
     }
     b.globalCompositeOperation = 'source-over';
@@ -570,8 +628,8 @@ export class Hero {
   /** The sword smear: a crescent swept by the blade over the last ~0.1 s, additive. */
   private drawArc(ctx: CanvasRenderingContext2D): void {
     const t = this.now;
-    const s0 = this.strikeT0 + SWING * U_WIND;
-    const s1 = this.strikeT0 + SWING * U_SLASH;
+    const s0 = this.strikeT0 + this.swing * this.uWind;
+    const s1 = this.strikeT0 + this.swing * this.uSlash;
     if (t < s0 || t > s1 + ARC_LINGER) return;
     const fade = t > s1 ? 1 - (t - s1) / ARC_LINGER : 1;
     const band = this.arcBand!;

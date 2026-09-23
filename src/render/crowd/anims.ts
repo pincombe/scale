@@ -2,9 +2,10 @@
 // explicit key poses with per-frame hold durations (snappy anticipation -> smear -> follow-through
 // timing instead of even spacing). The baker (sheets.ts) turns every frame into a sprite.
 import { Pose, copyPose, lerpPose } from './rig';
+import { horseSaddle } from './horse';
 
-export type SheetKind = 'foot' | 'bearer' | 'archer';
-export const SHEET_KINDS: readonly SheetKind[] = ['foot', 'bearer', 'archer'];
+export type SheetKind = 'foot' | 'bearer' | 'archer' | 'lancer';
+export const SHEET_KINDS: readonly SheetKind[] = ['foot', 'bearer', 'archer', 'lancer'];
 
 // Animation ids (indices into AnimSet.anims).
 export const A_IDLE_A = 0;
@@ -23,6 +24,26 @@ export const A_FLEE = 10;
 /** Third idle: sword planted point-down (foot), arrow nocked low (archer), leaning on the pole (bearer). */
 export const A_IDLE_C = 11;
 export const ANIM_COUNT = 12;
+
+// Lancer animation ids (their own set: a horse has no bow, a footman no gallop).
+export const L_IDLE = 0;
+/** Head down, rider at ease. */
+export const L_IDLE_B = 1;
+/** Gallop toward the dragon (lance couched or raised: drawn live). */
+export const L_GALLOP = 2;
+/** Gallop back, facing left (baked mirrored so the rim light stays on the sun side). */
+export const L_BACK = 3;
+/** Rearing: the wheel-about after a strike, the cheer, the salute on arrival. */
+export const L_REAR = 4;
+/** The moment of impact: the rider rises in the stirrups, the horse at full stretch. */
+export const L_STRIKE = 5;
+export const LANCER_ANIM_COUNT = 6;
+export const GALLOP_FRAMES = 6;
+
+/** How many animations a sheet kind has. */
+export function animCount(kind: SheetKind): number {
+  return kind === 'lancer' ? LANCER_ANIM_COUNT : ANIM_COUNT;
+}
 
 export interface AnimDef {
   poses: Pose[];
@@ -264,8 +285,57 @@ function archer(): AnimDef[] {
   ];
 }
 
+const sad = { x: 0, y: 0, sx: 0, sy: 0, pitch: 0 };
+
+/**
+ * A mounted pose: the horse's fields, then the rider seated on the saddle (hips on the seat, feet in
+ * the stirrups), leaning `lean` beyond the horse's pitch. The near fist holds the reins behind the
+ * kite shield; the far fist is the lance grip at the hip (the lance itself is drawn live).
+ */
+function mount(o: Partial2, lean: number, reinsUp = 0, thrust = 0): Pose {
+  const p = P(null, o);
+  horseSaddle(p, sad);
+  p.hipX = sad.x;
+  p.hipY = sad.y;
+  p.lean = sad.pitch + lean;
+  p.head = -lean * 0.4;
+  const fwX = Math.cos(p.lean);
+  const fwY = Math.sin(p.lean);
+  const upX = Math.sin(p.lean);
+  const upY = -Math.cos(p.lean);
+  p.aFootX = sad.sx + 1;
+  p.aFootY = sad.sy;
+  p.bFootX = sad.sx - 4;
+  p.bFootY = sad.sy - 1.5;
+  p.nHandX = sad.x + fwX * (17 + 3 * reinsUp) + upX * (11 + 12 * reinsUp);
+  p.nHandY = sad.y + fwY * (17 + 3 * reinsUp) + upY * (11 + 12 * reinsUp);
+  p.shield = 0.08 + 0.1 * reinsUp;
+  p.fHandX = sad.x + fwX * (10 + thrust) + upX * 15;
+  p.fHandY = sad.y + fwY * (10 + thrust) + upY * 15;
+  p.weapon = 0;
+  return p;
+}
+
+function lancer(): AnimDef[] {
+  const gallop: Pose[] = [];
+  const back: Pose[] = [];
+  for (let i = 0; i < GALLOP_FRAMES; i++) {
+    const ph = i / GALLOP_FRAMES;
+    gallop.push(mount({ mGait: 1, mPhase: ph }, 0.2 + 0.04 * Math.sin(ph * Math.PI * 2 + 1)));
+    back.push(mount({ mGait: 1, mPhase: ph }, 0.14 + 0.04 * Math.sin(ph * Math.PI * 2 + 1)));
+  }
+  return [
+    { poses: [mount({ mGait: 0, mHead: -0.04 }, 0.02)], durs: [], loop: true, mirror: false },
+    { poses: [mount({ mGait: 0, mHead: 0.42 }, -0.04)], durs: [], loop: true, mirror: false },
+    { poses: gallop, durs: [], loop: true, mirror: false },
+    { poses: back, durs: [], loop: true, mirror: true },
+    { poses: [mount({ mRear: 1, mHead: -0.25 }, 0.72, 1)], durs: [], loop: true, mirror: false },
+    { poses: [mount({ mGait: 1, mPhase: 0.62 }, 0.42, 0, 9)], durs: [], loop: true, mirror: false },
+  ];
+}
+
 export function buildAnims(kind: SheetKind): AnimDef[] {
-  return kind === 'archer' ? archer() : foot(kind);
+  return kind === 'archer' ? archer() : kind === 'lancer' ? lancer() : foot(kind);
 }
 
 /** Total duration of a one-shot animation. */

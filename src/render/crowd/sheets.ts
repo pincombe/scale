@@ -11,7 +11,7 @@
 import { context2d, makeCanvas } from '../atlas';
 import { mixHex } from '../../lib/color';
 import type { Palette } from '../palette';
-import { A_BRACE, A_CHEER, A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_RAISE, A_STRIKE, SHEET_KINDS, buildAnims, type AnimDef, type SheetKind } from './anims';
+import { A_BRACE, A_CHEER, A_DOWN, A_FLEE, A_FLUNG, A_GETUP, A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_RAISE, A_STRIKE, L_BACK, L_GALLOP, L_IDLE, L_IDLE_B, L_REAR, L_STRIKE, SHEET_KINDS, buildAnims, type AnimDef, type SheetKind } from './anims';
 import { Joints, anchors, drawDetails, drawFigure, figureBounds, solve, type Anchors, type FigureKind, type Pose } from './rig';
 
 export const LOD_SCALE = [4.4, 2.2, 1.1, 0.55, 0.28] as const;
@@ -20,6 +20,9 @@ const FAR_LOD_SCALE = 1.15;
 export const LOD_COUNT = LOD_SCALE.length;
 /** Transparent border around each baked frame (device px). */
 const PAD = 2;
+/** Sprite memory (bytes) above which the next LOD isn't baked ahead, and the hard ceiling. */
+const LOOKAHEAD_BUDGET = 42 * 1048576;
+const MEMORY_CEILING = 58 * 1048576;
 
 export interface Frame {
   kind: SheetKind;
@@ -37,6 +40,13 @@ export interface Frame {
   dest: Float32Array;
   poseIndex: number;
   anim: number;
+  /**
+   * Pixel density at LOD 0 relative to LOD_SCALE (1 for most knight poses). A lancer is three
+   * knights' worth of pixels but stands in the 0.8-scale back rows, and the rare poses (flung,
+   * fleeing) are always in motion, so those bake lighter to keep sprite memory within budget; LOD 1
+   * a little lighter too, the smaller LODs at full density.
+   */
+  res: number;
 }
 
 export interface AnimSet {
@@ -65,6 +75,8 @@ export class KnightSheets {
   private readonly warm = new Array<number>(LOD_COUNT).fill(0);
   /** Whether any canvas is held per LOD, and when each LOD was last on screen (wall s). */
   private readonly held = new Uint8Array(LOD_COUNT);
+  /** Bytes held per LOD. */
+  private readonly lodBytes = new Float64Array(LOD_COUNT);
   private readonly lastUse = new Float64Array(LOD_COUNT);
   private scratch: HTMLCanvasElement | null = null;
   private sctx: CanvasRenderingContext2D | null = null;
@@ -108,6 +120,7 @@ export class KnightSheets {
             dest: new Float32Array(LOD_COUNT * 4),
             poseIndex: i,
             anim: a,
+            res: kind === 'lancer' ? LANCER_RES[a] ?? 0.7 : a === A_FLUNG || a === A_DOWN || a === A_GETUP || a === A_FLEE ? RARE_RES : 1,
           });
         }
       }
@@ -127,10 +140,32 @@ export class KnightSheets {
     this.lx = p.light.x;
     this.ly = p.light.y;
     if (!same) {
-      for (const f of this.frames) f.canv.fill(null);
-      this.warm.fill(0);
-      this.held.fill(0);
+      // A new tier's light: free every baked canvas now (zero-size first, so the backing stores go
+      // at once rather than at the next GC) and re-bake lazily in the new colors.
+      for (let l = 0; l < LOD_COUNT; l++) this.release(l);
     }
+  }
+
+  /** Free every canvas of one LOD now (zero-size first, so the backing store goes at once). */
+  private release(l: number): void {
+    for (const f of this.frames) {
+      const c = f.canv[l];
+      if (!c) continue;
+      this.lodBytes[l] = this.lodBytes[l]! - c.width * c.height * 4;
+      c.width = 0;
+      c.height = 0;
+      f.canv[l] = null;
+    }
+    this.lodBytes[l] = 0;
+    this.held[l] = 0;
+    this.warm[l] = 0;
+  }
+
+  /** Bytes held by baked canvases, all LODs (tracked, O(1)). */
+  get bytes(): number {
+    let n = 0;
+    for (let l = 0; l < LOD_COUNT; l++) n += this.lodBytes[l]!;
+    return n;
   }
 
   frameIndex(kind: number, anim: number, i: number): number {
@@ -158,16 +193,12 @@ export class KnightSheets {
   evict(t: number, idle: number): void {
     for (let l = 0; l < LOD_COUNT; l++) {
       if (!this.held[l] || t - this.lastUse[l]! < idle) continue;
-      for (const f of this.frames) {
-        const c = f.canv[l];
-        if (!c) continue;
-        // Zero-size first so the backing store is released now, not at the next GC.
-        c.width = 0;
-        c.height = 0;
-        f.canv[l] = null;
-      }
-      this.held[l] = 0;
-      this.warm[l] = 0;
+      this.release(l);
+    }
+    // Over the ceiling (a pull-back while every pose of the biggest LOD is held): let go of any
+    // LOD not on screen right now at once, rather than after the idle delay.
+    if (this.bytes > MEMORY_CEILING) {
+      for (let l = 0; l < LOD_COUNT; l++) if (this.held[l] && t - this.lastUse[l]! > 0.25) this.release(l);
     }
   }
 
@@ -176,21 +207,27 @@ export class KnightSheets {
    * camera pulls back) the next smaller one, so neither the first swing nor a zoom-out hitches.
    * Rare poses (flung, fleeing, getting up) bake on first use.
    */
-  prewarm(lod: number, kindsMask: number, budgetMs: number, lookahead: boolean): void {
+  prewarm(lod: number, kindsMask: number, budgetMs: number, lookahead: boolean, lookMask = kindsMask): void {
     const t0 = performance.now();
     if (!this.warmLod1(lod, kindsMask, t0, budgetMs)) return;
-    if (lookahead && lod + 1 < LOD_COUNT) this.warmLod1(lod + 1, kindsMask, t0, budgetMs);
+    // No lookahead when the LOD on screen already holds a lot (its rare poses baked): the next LOD
+    // then bakes on first use, and sprite memory stays within budget through the pull-back.
+    if (lookahead && lod + 1 < LOD_COUNT && this.bytes < LOOKAHEAD_BUDGET) this.warmLod1(lod + 1, lookMask, t0, budgetMs);
   }
 
   /** Returns true when this LOD is fully warm (for the kinds in the mask). */
   private warmLod1(lod: number, kindsMask: number, t0: number, budgetMs: number): boolean {
-    const total = WARM_ORDER.length * SHEET_KINDS.length;
+    const total = WARM_LEN * SHEET_KINDS.length;
     let cur = this.warm[lod]!;
     let complete = true;
     while (cur < total) {
       const k = cur % SHEET_KINDS.length;
-      const a = WARM_ORDER[(cur / SHEET_KINDS.length) | 0]!;
-      if (kindsMask & (1 << k)) {
+      const order = WARM_ORDER[k]!;
+      const wi = (cur / SHEET_KINDS.length) | 0;
+      const a = wi < order.length ? order[wi]! : -1;
+      if (a < 0) {
+        // This kind's list is shorter: nothing to bake at this step.
+      } else if (kindsMask & (1 << k)) {
         const set = this.sets[k]!;
         const n = set.defs[a]!.poses.length;
         for (let i = 0; i < n; i++) {
@@ -212,7 +249,7 @@ export class KnightSheets {
   }
 
   private bake(f: Frame, lod: number): HTMLCanvasElement {
-    const s = LOD_SCALE[lod]!;
+    const s = LOD_SCALE[lod]! * (lod === 0 ? f.res : lod === 1 ? Math.min(1, f.res + 0.2) : 1);
     const w = Math.ceil((f.x1 - f.x0) * s + PAD * 2);
     const h = Math.ceil((f.y1 - f.y0) * s + PAD * 2);
     // Paint into a shared scratch canvas at the conservative size, then crop to the pixels
@@ -273,6 +310,7 @@ export class KnightSheets {
     context2d(c).drawImage(this.scratch!, cx0, cy0, cw, ch, 0, 0, cw, ch);
 
     f.canv[lod] = c;
+    this.lodBytes[lod] = this.lodBytes[lod]! + cw * ch * 4;
     const o = lod * 4;
     f.dest[o] = f.x0 + (cx0 - PAD) / s;
     f.dest[o + 1] = f.y0 + (cy0 - PAD) / s;
@@ -296,5 +334,23 @@ export class KnightSheets {
   }
 }
 
-/** Frames baked ahead of need (everything the army does every minute); the rest bake on first use. */
-const WARM_ORDER = [A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_STRIKE, A_CHEER, A_BRACE, A_RAISE];
+/**
+ * LOD-0 density of the knights' rare poses (flung, down, getting up, fleeing): always in motion or
+ * sprawled in the dust, they bake lighter so a tier's worth of them fits the sprite budget.
+ */
+const RARE_RES = 0.72;
+
+/**
+ * Lancer LOD-0 density per animation (L_IDLE, L_IDLE_B, L_GALLOP, L_BACK, L_REAR, L_STRIKE). At the
+ * closest Mountain framing a back-row lancer needs ~4 px per figure unit; the charge frames bake at
+ * 3 (a 1.3x upscale on a hazed, moving silhouette), about 11 MB for the whole set.
+ */
+const LANCER_RES = [0.52, 0.52, 0.66, 0.5, 0.58, 0.66];
+
+/**
+ * Frames baked ahead of need per sheet kind (everything the army does every minute); the rest bake
+ * on first use. Lancers: standing, the charge, the ride back, the wheel-about and the impact.
+ */
+const KNIGHT_WARM = [A_IDLE_A, A_IDLE_B, A_IDLE_C, A_MARCH, A_STRIKE, A_CHEER, A_BRACE, A_RAISE];
+const WARM_ORDER: readonly (readonly number[])[] = SHEET_KINDS.map((k) => (k === 'lancer' ? [L_IDLE, L_GALLOP, L_BACK, L_REAR, L_STRIKE, L_IDLE_B] : KNIGHT_WARM));
+const WARM_LEN = Math.max(...WARM_ORDER.map((o) => o.length));

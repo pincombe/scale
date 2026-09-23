@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HERO_GAP, archerSlot, footSlot, heroStandOff, isBearer, shownCount, squadSize, SPRITE_CAP, ROWS, type Slot } from './formation';
+import { HERO_GAP, LANCE_ROW, archerSlot, champRoom, footSlot, heroStandOff, isBearer, lancerSlot, shownCount, squadSize, SPRITE_CAP, ROWS, ROW_SCALE, ROW_Y, type Slot } from './formation';
 
 const slot = (): Slot => ({ x: 0, row: 0, col: 0 });
 
@@ -74,6 +74,41 @@ describe('crowd formation', () => {
     }
     // Sprites shrink monotonically as squads grow.
     expect(shownCount(1000, squadSize(1000, 0))).toBeLessThanOrEqual(SPRITE_CAP);
+  });
+
+  it('forms lancers into a squadron behind everyone, with stable slots', () => {
+    const a = slot();
+    const b = slot();
+    let prev = 0;
+    for (let i = 0; i < 200; i++) {
+      lancerSlot(i, a);
+      lancerSlot(i, b);
+      expect(a).toEqual(b);
+      expect(a.row).toBeGreaterThanOrEqual(LANCE_ROW);
+      expect(a.row).toBeLessThan(ROW_Y.length);
+      // Behind the first footman columns: the horses never crowd the hero.
+      expect(a.x).toBeLessThan(-2);
+      if (i % 2 === 0) {
+        expect(a.x).toBeLessThan(prev + 0.3);
+        prev = a.x;
+      }
+    }
+    // The lancers' rows are the furthest back (highest, smallest).
+    expect(ROW_Y[LANCE_ROW]!).toBeLessThan(ROW_Y[ROWS - 1]!);
+    expect(ROW_SCALE[LANCE_ROW]!).toBeLessThan(ROW_SCALE[ROWS - 1]!);
+  });
+
+  it('counts a horse as two knights toward the sprite cap', () => {
+    expect(squadSize(100, 0, SPRITE_CAP, 100)).toBe(1);
+    const k = squadSize(200, 50, SPRITE_CAP, 100);
+    expect(k).toBeGreaterThan(1);
+    expect(shownCount(200, k) + shownCount(50, k) + 2 * shownCount(100, k)).toBeLessThanOrEqual(SPRITE_CAP);
+  });
+
+  it('makes room for champions', () => {
+    expect(champRoom(0)).toBe(0);
+    expect(champRoom(1)).toBeGreaterThan(1);
+    expect(champRoom(2)).toBeGreaterThan(champRoom(1));
   });
 
   it('stands the hero off further from bigger dragons, but not forever', () => {
