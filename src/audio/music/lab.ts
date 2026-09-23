@@ -4,9 +4,10 @@
 //     base: './', build: { outDir: '../../../.vite/wp26/lab', emptyOutDir: true, rollupOptions: { input: 'src/audio/music/lab.html' } } }))"
 // then open /lab/lab.html on that server. "Measure" renders every scenario offline and prints the
 // loudness / band table (window.__musicReport holds the rows); the scenario buttons play live.
-// Console: __musicLab.measure('', ['lute']) solos layers; __musicLab.clicks('zoom', ['choir']) hunts clicks.
+// Console: __musicLab.measure('', ['lute']) solos layers; __musicLab.clicks('zoom', ['choir']) hunts clicks;
+// __musicLab.heart() measures the boss heartbeat's margin against the music.
 import { Conductor } from './conductor';
-import { measureMusic, renderScenario, SCENARIOS, type MusicReport } from './measure';
+import { heartMargin, measureMusic, renderScenario, SCENARIOS, type HeartReport, type MusicReport, type Render, type RenderOpts, type Scenario } from './measure';
 import { LEVEL, MIX, WebPerformer, type Layer } from './performer';
 
 declare global {
@@ -15,6 +16,9 @@ declare global {
     __musicLab?: {
       measure: (only?: string, layers?: Layer[]) => Promise<MusicReport[]>;
       clicks: (scenario: string, layers?: Layer[]) => Promise<{ worst: number; at: number; peak: number }>;
+      heart: () => Promise<HeartReport[]>;
+      render: (sc: Scenario | string, opts?: RenderOpts) => Promise<Render>;
+      SCENARIOS: Scenario[];
       LEVEL: typeof LEVEL;
       MIX: typeof MIX;
     };
@@ -81,11 +85,11 @@ async function measure(only = '', layers?: Layer[]): Promise<MusicReport[]> {
   window.__musicReport = rows;
   const f = (x: number): string => x.toFixed(1).padStart(6);
   out.textContent =
-    'scenario                          M max ST med ST max    int   peak  band med band max  margin band%  nodes ms/tick\n' +
+    'scenario                          M max ST med ST max    int   peak  band med band max  margin band%  nodes ms/tick drums/s\n' +
     rows
       .map(
         (r) =>
-          `${r.name.padEnd(32)} ${f(r.momentaryMax)} ${f(r.shortMedian)} ${f(r.shortMax)} ${f(r.integrated)} ${f(r.peak)}    ${f(r.bandMedian)}   ${f(r.bandMax)}  ${f(r.clickMargin)} ${(r.bandShare * 100).toFixed(1).padStart(5)} ${String(r.nodes).padStart(6)}  ${r.tickMs.toFixed(3)}`,
+          `${r.name.padEnd(32)} ${f(r.momentaryMax)} ${f(r.shortMedian)} ${f(r.shortMax)} ${f(r.integrated)} ${f(r.peak)}    ${f(r.bandMedian)}   ${f(r.bandMax)}  ${f(r.clickMargin)} ${(r.bandShare * 100).toFixed(1).padStart(5)} ${String(r.nodes).padStart(6)}  ${r.tickMs.toFixed(3)} ${f(r.drums)}`,
       )
       .join('\n');
   return rows;
@@ -106,7 +110,7 @@ document.getElementById('stop')!.onclick = stop;
  */
 async function clicks(name: string, layers?: Layer[]): Promise<{ worst: number; at: number; peak: number }> {
   const sc = SCENARIOS.find((s) => s.name.includes(name))!;
-  const { l } = await renderScenario(sc, layers);
+  const { l } = await renderScenario(sc, { layers });
   let peak = 0;
   for (const x of l) peak = Math.max(peak, Math.abs(x));
   let worst = 0;
@@ -121,4 +125,12 @@ async function clicks(name: string, layers?: Layer[]): Promise<{ worst: number; 
   return { worst: worst / (peak || 1), at, peak };
 }
 
-window.__musicLab = { measure, clicks, LEVEL, MIX };
+window.__musicLab = {
+  measure,
+  clicks,
+  heart: heartMargin,
+  render: (sc, opts) => renderScenario(typeof sc === 'string' ? SCENARIOS.find((x) => x.name.includes(sc))! : sc, opts),
+  SCENARIOS,
+  LEVEL,
+  MIX,
+};

@@ -97,10 +97,23 @@ describe('Karplus-Strong strings', () => {
 
 describe('drums', () => {
   it('renders sane percussion buffers', () => {
-    for (const x of [renderDoum(), renderTak(), renderTimpani(), renderSub()]) {
+    for (const x of [renderDoum(), renderTak(), renderTimpani()]) {
       sane(x);
       expect(rms(x, x.length / BUF_RATE - 0.05, x.length / BUF_RATE)).toBeLessThan(rms(x, 0, 0.05) * 0.1);
     }
+  });
+
+  it('renders the flash sub as a tonal swell behind the SFX transient (no hit of its own)', () => {
+    const x = renderSub();
+    sane(x);
+    // Soft attack: the first 10 ms are far below the body at 0.1-0.3 s; then it decays away.
+    expect(rms(x, 0, 0.01)).toBeLessThan(rms(x, 0.1, 0.3) * 0.45);
+    expect(rms(x, x.length / BUF_RATE - 0.1, x.length / BUF_RATE)).toBeLessThan(rms(x, 0.1, 0.3) * 0.1);
+    // Tonal: a steady D1, one period ~ 1/36.7 s (zero crossings of the body agree within 2%).
+    const a = Math.floor(0.4 * BUF_RATE);
+    let cross = 0;
+    for (let i = a; i < a + BUF_RATE / 2; i++) if (x[i - 1]! < 0 && x[i]! >= 0) cross++;
+    expect(Math.abs(cross / 0.5 - 36.71) / 36.71).toBeLessThan(0.04);
   });
 
   it('builds the roll as a crescendo peaking at ROLL_END', () => {

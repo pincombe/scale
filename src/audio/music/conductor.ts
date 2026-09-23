@@ -1,11 +1,13 @@
 // The conductor (timing and form; no WebAudio, unit-tested against a fake performer). It keeps the
 // song position on the audio clock (never game time: hit-stop and slow-mo don't touch the music),
 // composes one section at a time, and streams its events to the performer LOOKAHEAD seconds
-// ahead. Changes of mood land on bar lines; the boss arrives on a timpani roll; the zoom's beats
-// drive a cue sequence (held breath, choir swell, sub hit, shimmer, the horn call).
+// ahead. Changes of mood land on bar lines; the boss arrives on a timpani roll and its drums climb
+// with the timer bar by bar, keeping the fx heartbeat's beats clear; the zoom's beats drive a cue
+// sequence (held breath, choir swell, a tonal sub under the SFX's flash, shimmer, and the horn
+// call answering the roar on the card).
 import { Rng } from '../../lib/rng';
 import { composeSection } from './composer';
-import { choirMargin, Form, gateMargin, type Entry } from './form';
+import { choirMargin, Form, gateMargin, quickRole, type Entry } from './form';
 import { F_ACCENT, F_BIG, F_SWELL, type HitKind, type MoodId, type NoteInst, type Role, type SEv, type Section } from './score';
 import * as T from './themes';
 import { voicing } from './theory';
@@ -14,8 +16,13 @@ import { voicing } from './theory';
 export const LOOKAHEAD = 0.2;
 /** Events later than this (a stalled page) are dropped, or clipped if long. */
 const LATE = 0.05;
-/** The music's level under the zoom's title card. */
-export const CARD_LEVEL = 0.72;
+/**
+ * The fx heartbeat's grid while a boss fights (render/fx/dread locks to it through index.ts): on
+ * beats 2 and 4 while calm, on every beat from this urgency (the timer's last ~4 s).
+ */
+export const HEART_URGENT = 0.6;
+/** A heartbeat grid point this far behind is still played (a dropped frame); further, it is skipped. */
+const HEART_LATE = 0.05;
 
 export type Vowel = 'oo' | 'oh' | 'ah';
 export type Beat = 'rally' | 'fusion' | 'flash' | 'pullback' | 'reveal' | 'roar' | 'card' | 'done';
@@ -29,8 +36,10 @@ export interface MusicInputs {
   energy: number;
   /** 0..1: the Wyrm Gauge nearly full. */
   tension: number;
-  /** 0..1: the boss timer running out (or the boss nearly dead). */
+  /** 0..1: the boss timer running out (or the boss nearly dead): the urgent layer. */
   urgency: number;
+  /** 0..1: the timer alone, the fx heartbeat's urgency (its grid and the hits it clears). */
+  heart?: number;
 }
 
 export interface Performer {
@@ -47,7 +56,22 @@ export interface Performer {
   openMid(t: number, open: boolean): void;
 }
 
-const ROLES: readonly Role[] = ['melody', 'counter', 'arp', 'pad', 'pulse', 'heart', 'echo', 'bass'];
+const ROLES: readonly Role[] = ['melody', 'counter', 'arp', 'pad', 'pulse', 'heart', 'echo', 'bass', 'urgent'];
+const BEATS: readonly Beat[] = ['rally', 'fusion', 'flash', 'pullback', 'reveal', 'roar', 'card', 'done'];
+
+/**
+ * Seconds from now to the beat after `b`, from the director's timeline: `beatTimes[next] - time`
+ * on the cinematic's own clock, so a beat delivered late (a hitch) shortens the gap and a swell
+ * still crests on the flash; without a clock (the debug sequence), the timeline's own gap.
+ * Undefined without times, or after 'done'.
+ */
+export function untilBeat(bt: Readonly<Record<Beat, number>> | undefined, time: number | undefined, b: Beat): number | undefined {
+  const i = BEATS.indexOf(b);
+  const nx = BEATS[i + 1];
+  if (!bt || i < 0 || !nx) return undefined;
+  return time !== undefined && time >= 0 ? bt[nx] - time : bt[nx] - bt[b];
+}
+
 const DRONE_LEVEL: Record<MoodId, number> = { meadow: 0.8, mountain: 1, boss: 0.9 };
 
 export function moodOfTier(tier: number): MoodId {
@@ -64,6 +88,8 @@ export class Conductor {
   /** For the debug watch. */
   readonly info = { mood: 'silent', label: '', bar: 0, bars: 0, chord: '', bpm: 0 };
   readonly stats = { emitted: 0, late: 0, sections: 0 };
+  /** Leave the boss's low hits off the heartbeat's beats (measurement switches it off to compare). */
+  clearHeart = true;
 
   private mood: MoodId = 'meadow';
   private form: Form | null = null;
@@ -134,7 +160,7 @@ export class Conductor {
 
   /** The gauge filled: the tier's music falls away under a roll, the boss music lands 1 s later. */
   bossSummon(now: number): void {
-    if (this.mode !== 'song' || this.mood === 'boss') return;
+    if (this.mode !== 'song' || this.fighting()) return;
     const t = now + 0.03;
     // Release first, then the roll (a release fades every voice alive when it is called), and the
     // switch itself releases nothing (fade -1).
@@ -160,6 +186,30 @@ export class Conductor {
     }
     if (this.mode !== 'song') return;
     this.schedule(this.mood === 'boss' ? this.nextBeat(now) : now + 0.05, 'boss', 'victory', 0.15, 0);
+  }
+
+  /** A boss song is playing or about to (not its victory or retreat). */
+  private fighting(): boolean {
+    if (this.switchAt >= 0) return this.sw.mood === 'boss' && this.sw.entry !== 'retreat' && this.sw.entry !== 'victory';
+    const k = this.sec?.kind;
+    return this.mood === 'boss' && k !== 'retreat' && k !== 'victory';
+  }
+
+  /**
+   * The next point of the heartbeat's grid after a lub at audio time `last` (at least half a step
+   * on), for the fx heartbeat's `urgency`: beats 2 and 4 while calm, every beat when urgent. A point
+   * already more than HEART_LATE behind `now` is skipped (the grid just turned finer), so a lub is
+   * never far off the beat. NaN when no boss music keeps time (the heartbeat then runs free).
+   */
+  heartDue(last: number, urgency: number, now = last): number {
+    const sec = this.sec;
+    if (this.mode !== 'song' || this.mood !== 'boss' || !sec || sec.kind === 'victory' || sec.kind === 'retreat') return NaN;
+    const beat = sec.meter.secPerStep * sec.meter.beatSteps;
+    const urgent = urgency >= HEART_URGENT;
+    const step = urgent ? beat : 2 * beat;
+    const origin = this.secStart + (urgent ? 0 : beat);
+    const earliest = Math.max(last + 0.5 * step, now - HEART_LATE);
+    return origin + Math.ceil((earliest - origin) / step) * step;
   }
 
   /** The boss got away: the drums fall back on the next bar, then the tier's music resumes. */
@@ -192,20 +242,20 @@ export class Conductor {
         p.fader(t, 1, 0.05);
         p.openMid(t, true);
         // The pile rises: an A sus4 swell sliding up a fourth into place, "oo" opening to "ah",
-        // cresting just as the flash lands; a timpani roll under it ends on the flash.
+        // cresting just as the flash lands; a timpani roll under it peaks a hair before the flash
+        // and clears, so the SFX's impact lands on an open low end.
         p.choir(t, T.ZOOM_SWELL, 0.95, d * 0.42, d * 0.9, 'oo', 5, 0.3);
         p.choir(t + 0.15, T.ZOOM_SWELL, 0.95, d * 0.42, d * 0.75, 'ah', 0, d);
-        p.play(cue('roll', 33, 0.75), t, d, 1);
+        p.play(cue('roll', 33, 0.7), t, Math.max(0.3, d - 0.12), 1);
         break;
       }
       case 'flash':
         this.enterCue(now, 'flash');
         p.fader(t, 1, 0.02);
-        p.play(cue('sub', 26, 0.6), t, 2.5, 1);
-        p.play(cue('timp', 38, 0.55, F_ACCENT), t, 3, 1);
-        p.play(cue('doum', 0, 0.6), t, 0.5, 1);
-        // The chord peaks and resolves: A sus4 -> D major.
-        p.choir(t, T.ZOOM_FLASH, 1.15, 0.02, 0.1, 'ah', 0, 0.1);
+        // The SFX owns the flash's transient (its thump and crack); the music's part is tonal: a
+        // sub D swelling in just behind it, and the choir's chord peaking, A sus4 -> D major.
+        p.play(cue('sub', 26, 0.7), t + 0.04, 2.5, 1);
+        p.choir(t, T.ZOOM_FLASH, 1.15, 0.03, 0.1, 'ah', 0, 0.1);
         p.choir(t + 0.3, T.ZOOM_FLASH, 0.85, 0.9, 0.1, 'ah');
         break;
       case 'pullback': {
@@ -220,27 +270,29 @@ export class Conductor {
       }
       case 'reveal': {
         this.enterCue(now, 'reveal');
-        const d = gap(0.6, 0.3, 2);
-        // The Mountain's minor: the choir darkens, the shimmer fades, a roll lands on the roar and
-        // low horns swell toward it.
+        const d = gap(0.9, 0.3, 2);
+        // The Mountain's minor: the choir darkens, the shimmer fades, low horns swell up to the
+        // roar and let go there (the SFX's rumble owns the ground, its roar the moment after).
         p.choir(t, T.ZOOM_REVEAL, 0.82, 0.3, 0.35, 'oh', 0, 0.6);
         p.shimmer(t, 0, 2.2);
-        p.play(cue('roll', 38, 0.8), t, d, 1);
-        p.play(cue('horn', 38, 0.55, F_SWELL), t, d + 0.5, 1);
-        p.play(cue('horn', 45, 0.5, F_SWELL), t, d + 0.5, 1);
+        p.play(cue('horn', 38, 0.45, F_SWELL), t, d, 1);
+        p.play(cue('horn', 45, 0.4, F_SWELL), t, d, 1);
         break;
       }
       case 'roar':
         if (this.mode !== 'cue') return;
         this.cueStage = 'roar';
-        // The horn call enters, huge; the choir sinks away beneath it.
-        p.choir(t + 0.5, T.ZOOM_REVEAL, 0.45, 1.2, 0.3, 'oh');
-        p.choir(t + 3.2, null, 0, 1.2, 0, 'oh');
-        this.startSong(moodOfTier(this.inp.tier), 'call', t + 0.25);
+        this.cueAt = now;
+        // The roar has the moment: the choir sinks beneath it.
+        p.choir(t, T.ZOOM_REVEAL, 0.35, 0.25, 0.3, 'oh');
         break;
       case 'card':
-        if (this.mode === 'cue') this.resumeAfterCue(now);
-        p.fader(t, CARD_LEVEL, 1.5);
+        if (this.mode !== 'cue') break;
+        // The Mountain's horn call answers the roar on the card, fortissimo; the choir fades under it.
+        p.fader(t, 1, 0.05);
+        p.choir(t + 0.4, T.ZOOM_REVEAL, 0.3, 1, 0.3, 'oh');
+        p.choir(t + 3, null, 0, 1.2, 0, 'oh');
+        this.startSong(moodOfTier(this.inp.tier), 'call', t + 0.05);
         break;
       case 'done':
         if (this.mode === 'cue') this.resumeAfterCue(now);
@@ -290,7 +342,7 @@ export class Conductor {
 
   private resetGates(mood: MoodId): void {
     for (const r of ROLES) {
-      this.on[r] = gateMargin(mood, r, this.inp.energy, this.inp.tension) >= 0;
+      this.on[r] = gateMargin(mood, r, this.inp.energy, this.inp.tension, this.inp.urgency) >= 0;
       this.fading[r] = 0;
       this.held[r] = 99;
     }
@@ -403,6 +455,7 @@ export class Conductor {
       urgency: this.inp.urgency,
       tier: this.inp.tier,
       big: step.big,
+      key: step.key,
     });
     this.boost *= 0.5;
     this.sec = sec;
@@ -423,8 +476,9 @@ export class Conductor {
     const t = this.inp.tension;
     for (const r of ROLES) {
       this.fading[r] = 0;
-      if (++this.held[r] < 2) continue;
-      const m = gateMargin(sec.mood, r, e, t);
+      // Layers hold at least 2 bars, except a boss's drums, which follow the timer bar by bar.
+      if (++this.held[r] < (quickRole(sec.mood, r) ? 1 : 2)) continue;
+      const m = gateMargin(sec.mood, r, e, t, this.inp.urgency);
       if (!this.on[r] && m >= 0) {
         this.on[r] = true;
         this.fading[r] = 1;
@@ -438,7 +492,7 @@ export class Conductor {
     // The Mountain's choir hum, voice-led from chord to chord.
     const want = sec.choir && choirMargin(sec.mood, e) >= (this.choirOn ? -0.08 : 0);
     if (want) {
-      const v = voicing(sec.chords[bar]![0]!, 4, 50, 69, this.choirPrev);
+      const v = voicing((sec.hum ?? sec.chords)[bar]![0]!, 4, 50, 69, this.choirPrev);
       this.perf.choir(at, v, 0.5 + 0.35 * e, this.choirOn ? 0.3 : 1.4, this.choirOn ? 0.4 : 0, 'oo');
       this.choirPrev = v;
       this.choirOn = true;
@@ -449,16 +503,26 @@ export class Conductor {
     }
     const info = this.info;
     info.mood = sec.mood;
-    info.label = sec.label;
+    info.label = sec.mood === 'boss' && this.on.urgent ? `${sec.label} · urgent` : sec.label;
     info.bar = bar + 1;
     info.bars = sec.bars;
     info.chord = sec.chords[bar]!.map((c) => c.name).join(' ');
     info.bpm = Math.round(60 / (sec.meter.secPerStep * sec.meter.beatSteps));
   }
 
+  /** Does step `at` of a boss bar carry the fx heartbeat (beats 2 and 4, or every beat when urgent)? */
+  private onHeart(at: number, sec: Section): boolean {
+    const s = at % sec.meter.stepsPerBar;
+    const b = sec.meter.beatSteps;
+    return (this.inp.heart ?? 0) >= HEART_URGENT ? s % b === 0 : s % (2 * b) === b;
+  }
+
   private emit(e: SEv, t: number, now: number, sec: Section): void {
     const f = this.fading[e.role];
     if (!this.on[e.role] && f !== -1) return;
+    // The boss's heartbeat (SFX, a thump under 190 Hz) gets its beats to itself: no doum or
+    // timpani under a lub.
+    if (this.clearHeart && sec.mood === 'boss' && this.inp.boss && (e.inst === 'doum' || e.inst === 'timp') && this.onHeart(e.at, sec)) return;
     const spb = sec.meter.stepsPerBar;
     const x = (e.at % spb) / spb;
     const g = f === 1 ? 0.35 + 0.65 * x : f === -1 ? 1 - 0.75 * x : 1;

@@ -283,19 +283,23 @@ export function renderTak(rate = BUF_RATE): Float32Array {
   return finish(out, rate, 0.9);
 }
 
-/** The zoom's sub-bass hit: a sine falling 90 -> 32 Hz, a low whump, saturated to be felt. */
+/**
+ * The zoom's sub at the flash: a tonal D1 (with its octave) swelling in behind the SFX's impact,
+ * which owns the transient; saturated just enough to be heard on laptop speakers.
+ */
 export function renderSub(rate = BUF_RATE): Float32Array {
-  const len = Math.ceil(rate * 2.8);
+  const secs = 3.2;
+  const len = Math.ceil(rate * secs);
   const out = new Float32Array(len);
-  let ph = 0;
+  const w1 = (2 * Math.PI * 36.71) / rate;
+  const w2 = w1 * 2;
   for (let i = 0; i < len; i++) {
     const t = i / rate;
-    const f = 32 + 58 * Math.exp(-t / 0.2);
-    ph += (2 * Math.PI * f) / rate;
-    const env = Math.min(1, t / 0.006) * Math.exp(-t / 0.75);
-    out[i] = Math.sin(ph) * env;
+    // Swell in behind the transient, ring out, and fade over the last 0.3 s (several periods).
+    const tail = Math.min(1, (secs - t) / 0.3);
+    const env = (1 - Math.exp(-t / 0.07)) * Math.exp(-t / 0.8) * tail;
+    out[i] = (Math.sin(w1 * i) + 0.5 * Math.sin(w2 * i)) * env;
   }
-  burst(out, rate, 0.9, 0.035, 0.1, 0x5b);
-  saturate(out, 1.8);
+  saturate(out, 1.5);
   return finish(out, rate, 0.9);
 }

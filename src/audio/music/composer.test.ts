@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Rng } from '../../lib/rng';
 import { cadenceFigure, composeSection, luteTones, ornament, realize } from './composer';
 import { Form, gateMargin } from './form';
-import { chordAt, F_BIG, F_PHRASE_END, type MoodId, type Section } from './score';
+import { chordAt, F_BIG, F_PHRASE_END, F_STAB, type MoodId, type Section } from './score';
 import * as T from './themes';
 import { inScale, noteName, parseChord, pc, type Scale } from './theory';
 
@@ -142,12 +142,20 @@ describe('composeSection', () => {
     expect(noteName(echo[echo.length - 1]!.midi)).toBe('D4');
   });
 
-  it('drives the boss harder as time runs out', () => {
-    const calm = compose('boss', 'ostinato', 0, 1, 0.5, 0, 0);
-    const urgent = compose('boss', 'ostinato', 0, 1, 0.5, 0, 0.9);
-    const hits = (s: Section): number => s.events.filter((e) => e.role === 'pulse').length;
-    expect(hits(urgent)).toBeGreaterThan(hits(calm) * 1.5);
-    expect(urgent.label).toContain('urgent');
+  it('composes an urgent layer under every boss bar (the conductor swaps it in as time runs out)', () => {
+    for (const kind of ['ostinato', 'melody', 'break']) {
+      const s = compose('boss', kind, 0, 1);
+      const drums = (role: string): number => s.events.filter((e) => e.role === role && (e.inst === 'doum' || e.inst === 'tak')).length;
+      expect(drums('urgent'), kind).toBeGreaterThan(drums('pulse') * 1.5);
+      if (kind === 'break') continue;
+      // Stabs land in every bar once urgent ('pad' on odd bars, 'urgent' on even ones).
+      for (let bar = 0; bar < s.bars; bar++) {
+        expect(s.events.some((e) => e.flags & F_STAB && Math.floor(e.at / 16) === bar && (e.role === 'pad' || e.role === 'urgent'))).toBe(true);
+      }
+    }
+    // In the melody the low horns join the tune at the octave as the timer runs out.
+    const m = compose('boss', 'melody', 0, 1);
+    expect(m.events.filter((e) => e.role === 'urgent' && e.inst === 'horn' && !(e.flags & F_STAB)).length).toBe(T.BOSS_THEME.melody.length);
   });
 
   it('resolves a won fight into D major', () => {
@@ -176,6 +184,71 @@ describe('cadences', () => {
       const s = compose('mountain', 'echoes', seed, seed);
       for (const e of s.events) if ((e.inst === 'horn' || e.inst === 'echo') && pc(e.midi) === 5) expect(e.midi).toBeLessThan(74);
     }
+  });
+});
+
+describe('the Mountain over a long stay', () => {
+  it('keeps resting, develops the call, climbs to E Dorian, and rarely repeats M (16 minutes at full energy)', () => {
+    const form = new Form('mountain', 'call');
+    const bar = 16 * T.MOUNTAIN_METER.secPerStep;
+    const labels: string[] = [];
+    let time = 0;
+    for (let n = 0; time < 960; n++) {
+      const st = form.next(0.95, 0, 0);
+      const sec = composeSection('mountain', st.kind, st.variant, { rng: new Rng(n + 1), energy: 0.95, tension: 0, urgency: 0, tier: 1, big: st.big, key: st.key });
+      labels.push(sec.label);
+      time += sec.bars * bar;
+    }
+    const count = (re: RegExp): number => labels.filter((l) => re.test(l)).length;
+    expect(count(/^interlude/)).toBeGreaterThanOrEqual(6);
+    expect(count(/^episode/)).toBeGreaterThanOrEqual(4);
+    expect(count(/^M( |$)/)).toBeLessThanOrEqual(7);
+    expect(count(/E Dorian/)).toBeGreaterThanOrEqual(8);
+    // The theme is never stated the same way twice in a row, and never back to back.
+    const ms = labels.filter((l) => /^M( |$)/.test(l));
+    for (let i = 1; i < ms.length; i++) expect(ms[i]).not.toBe(ms[i - 1]);
+    for (let i = 1; i < labels.length; i++) expect(labels[i]).not.toBe(labels[i - 1]);
+  });
+
+  it('voices the D laps\' sustained chords open (no F natural against the coins) and moves the E laps whole', () => {
+    for (const kind of ['M', 'M2', 'episode', 'echoes', 'interlude']) {
+      for (let v = 0; v < 4; v++) {
+        const d = composeSection('mountain', kind, v, { rng: new Rng(v + 3), energy: 0.9, tension: 0, urgency: 0, tier: 1, key: 0 });
+        for (const e of d.events) if ((e.role === 'pad' || e.role === 'counter') && e.midi > 47) expect(pc(e.midi), `${d.label} ${e.role} ${noteName(e.midi)}`).not.toBe(5);
+        for (const bar of d.hum ?? d.chords) for (const ch of bar) expect(ch.pcs).not.toContain(5);
+        const e = composeSection('mountain', kind, v, { rng: new Rng(v + 3), energy: 0.9, tension: 0, urgency: 0, tier: 1, key: 2 });
+        expect(e.label).toContain('E Dorian');
+        expect(e.drone).toEqual([40, 47]);
+        e.chords.forEach((bar, i) => bar.forEach((ch, j) => expect(ch.root).toBe(pc(d.chords[i]![j]!.root + 2))));
+        for (const x of e.events) if (x.role === 'melody' || x.role === 'echo') expect(inScale(x.midi, { tonic: 4, steps: T.MOUNTAIN_SCALE.steps }) || e.chords.some((b) => b.some((ch) => ch.pcs.includes(pc(x.midi))))).toBe(true);
+      }
+    }
+  });
+
+  it('develops the horn call in its episodes: the head sequenced up (or down), then its rising fifth', () => {
+    const s = composeSection('mountain', 'episode', 0, { rng: new Rng(1), energy: 0.5, tension: 0, urgency: 0, tier: 1, key: 0 });
+    // The top voice at each of the call's onsets (the low horns double bars 3-4 an octave down).
+    const top = (bar: number): string[] =>
+      [0, 4, 12, 14].map((at) => noteName(Math.max(...s.events.filter((e) => e.inst === 'horn' && e.role === 'melody' && e.at === bar * 16 + at).map((e) => e.midi))));
+    expect(top(0)).toEqual(['D4', 'A4', 'G4', 'F4']);
+    expect(top(1)).toEqual(['F4', 'C5', 'B4', 'A4']);
+    expect(top(2)).toEqual(['G4', 'D5', 'C5', 'B4']);
+    expect(top(3)).toEqual(['A4', 'E5', 'D5', 'C5']);
+    // Bars 5-6: the rising fifth, near horn then far horn.
+    expect(s.events.filter((e) => e.at >= 64 && e.at < 96 && (e.role === 'melody' || e.role === 'echo') && e.inst !== 'harp').map((e) => `${e.inst}:${noteName(e.midi)}`)).toEqual([
+      'horn:C4',
+      'horn:G4',
+      'echo:D4',
+      'echo:A4',
+    ]);
+    const last = s.events.filter((e) => e.role === 'melody' && e.inst === 'horn').pop()!;
+    expect(pc(last.midi)).toBe(2);
+  });
+});
+
+describe('the boss melody', () => {
+  it('turns down into the low horns for its last three bars (clear of the coins and clangs)', () => {
+    for (const n of T.BOSS_THEME.melody) if (n.at >= 80) expect(n.midi, noteName(n.midi)).toBeLessThanOrEqual(67);
   });
 });
 
@@ -222,7 +295,7 @@ describe('form', () => {
   it('opens the Mountain arrival with the call', () => {
     const f = new Form('mountain', 'call');
     const first = f.next(0.1, 0, 0);
-    expect(first).toEqual({ kind: 'M', variant: 0, big: true });
+    expect(first).toEqual({ kind: 'M', variant: 0, big: true, key: 0 });
     expect(f.next(0.1, 0, 0).kind).toBe('echoes');
   });
   it('gates roles by energy and tension', () => {

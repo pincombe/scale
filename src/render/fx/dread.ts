@@ -49,10 +49,30 @@ export function bossUrgency(timeLeft: number): number {
   return clamp01(1 - timeLeft / HEART_URGENT_FROM);
 }
 
-/** Seconds between beats at this urgency (eases in, so the last seconds race). */
-export function heartPeriod(urgency: number): number {
+/** Seconds between beats at this urgency when nothing else keeps time (eases in, so the last seconds race). */
+export function freeHeartPeriod(urgency: number): number {
   const u = clamp01(urgency);
   return lerp(HEART_PERIOD, HEART_PERIOD_URGENT, u * (0.55 + 0.45 * u));
+}
+
+/**
+ * The boss music's clock (audio/music registers it while it plays a boss): given the urgency, the
+ * seconds after the last lub at which the next is due, on the music's beat grid (2 beats while
+ * calm, then 1). A non-finite answer (no grid) leaves the heartbeat free-running.
+ */
+let heartLock: ((urgency: number) => number) | null = null;
+
+export function lockHeart(fn: ((urgency: number) => number) | null): void {
+  heartLock = fn;
+}
+
+/** Seconds between beats at this urgency: on the music's beat when it has one, else free. */
+export function heartPeriod(urgency: number): number {
+  if (heartLock) {
+    const p = heartLock(clamp01(urgency));
+    if (p > 0.1 && p < 3) return p;
+  }
+  return freeHeartPeriod(urgency);
 }
 
 /** Seconds from the "lub" to the "dub". */

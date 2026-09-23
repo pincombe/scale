@@ -9,23 +9,15 @@
 import type { Scene } from '../../app/scene';
 import { sel, type GameState } from '../../core';
 import { clamp, smoothstep } from '../../lib/math';
+import { bossUrgency, lockHeart } from '../../render/fx/dread';
+import { zoomTimeline } from '../../render/zoom/timeline';
 import type { MusicApi } from './api';
-import { Conductor, type Beat, type MusicInputs } from './conductor';
+import { Conductor, untilBeat, type Beat, type MusicInputs } from './conductor';
 import { WebPerformer } from './performer';
 
 const TICK_MS = 25;
-
-/** The zoom's beats at their nominal times (s): the debug sequence, until the director drives them. */
-const NOMINAL_BEATS: readonly (readonly [Beat, number])[] = [
-  ['rally', 0],
-  ['fusion', 1],
-  ['flash', 2.2],
-  ['pullback', 2.4],
-  ['reveal', 6.4],
-  ['roar', 7],
-  ['card', 7.6],
-  ['done', 9.5],
-];
+/** The heartbeat's lub is asked for this much early (the fx fires on the next frame after it). */
+const HEART_LEAD = 0.008;
 
 /** Army size and how far into the tier (the gauge): what the arrangement grows with. */
 function energyOf(s: GameState, gauge: number): number {
@@ -35,13 +27,11 @@ function energyOf(s: GameState, gauge: number): number {
   return clamp(0.08 + 0.62 * army + 0.3 * gauge, 0, 1);
 }
 
-/** 0..1 as the boss clock runs out or the boss nears death. */
-function urgencyOf(s: GameState): number {
-  const w = s.wyrm;
+/** 0..1 as the boss nears death (the music climbs toward a win too). */
+function bossFalling(s: GameState): number {
   const d = s.dragon;
-  const left = w && w.bossDur > 0 ? w.bossT / w.bossDur : 1;
   const hp = d.maxHp.gt(0) ? d.hp.div(d.maxHp).toNumber() : 1;
-  return Math.max(smoothstep(0.4, 0.1, left), smoothstep(0.45, 0.15, hp));
+  return smoothstep(0.3, 0.08, hp);
 }
 
 export function createMusic(scene: Scene): MusicApi {
@@ -57,6 +47,9 @@ class Music {
   private energy = -1;
   private lastT = 0;
   private urgencyAt = 0;
+  private falling = 0;
+  /** Audio time of the fx heartbeat's last lub (its grid locks to the boss music). */
+  private lastHeart = -Infinity;
   private prefetching = true;
   private ticks = 0;
   private enabled = true;
@@ -123,16 +116,20 @@ class Music {
     this.applyVolume(true);
     this.perf = new WebPerformer(ctx, audio.music, this.wetVol, noise);
     this.cond = new Conductor(this.perf, (Math.random() * 4294967296) >>> 0);
-    this.scene.zoom.onBeat((b) => this.cond?.beat(b, this.fresh(), this.untilNextBeat(b)));
+    const zoom = this.scene.zoom;
+    zoom.onBeat((b) => this.cond?.beat(b, this.fresh(), untilBeat(zoom.beatTimes, zoom.time, b)));
+    // The boss's heartbeat (render/fx) keeps time with the boss music: its lub lands on beats 2
+    // and 4, then on every beat, where the music leaves its low hits out; the low end dips under it.
+    this.scene.fx.onHeartbeat?.(() => {
+      const now = this.now();
+      this.lastHeart = now;
+      if (this.cond?.currentMood === 'boss') this.perf?.heartDip(now + 0.004);
+    });
+    lockHeart((u) => {
+      const due = this.cond ? this.cond.heartDue(this.lastHeart, u, this.now()) : NaN;
+      return Number.isFinite(due) ? due - this.lastHeart - HEART_LEAD : NaN;
+    });
     window.setInterval(() => this.tick(), TICK_MS);
-  }
-
-  /** Seconds from beat `b` to the next one, from the director's beatTimes (undefined without them). */
-  private untilNextBeat(b: Beat): number | undefined {
-    const bt = this.scene.zoom.beatTimes;
-    const i = NOMINAL_BEATS.findIndex(([x]) => x === b);
-    const nx = NOMINAL_BEATS[i + 1];
-    return bt && i >= 0 && nx ? bt[nx[0]] - bt[b] : undefined;
   }
 
   private applyVolume(immediate: boolean): void {
@@ -185,11 +182,16 @@ class Music {
     inp.energy = this.energyOv >= 0 ? this.energyOv : this.energy;
     // Tension rises through the last third of the gauge (0 once the boss is beaten).
     inp.tension = this.tensionOv >= 0 ? this.tensionOv : s.wyrm.cleared ? 0 : smoothstep(0.6, 1, gauge);
-    if (!boss) inp.urgency = 0;
-    else if (now - this.urgencyAt > 0.25 && this.bossOv === null) {
+    // The timer's last seconds, on the fx heartbeat's own curve (so the drums, the heartbeat and the
+    // clock race together); a boss near death lifts the urgent layer as well.
+    const timer = boss && this.bossOv === null ? bossUrgency(sel.bossTimeLeft(s)) : 0;
+    if (boss && this.bossOv === null && now - this.urgencyAt > 0.25) {
       this.urgencyAt = now;
-      inp.urgency = urgencyOf(s);
+      this.falling = bossFalling(s);
     }
+    inp.heart = timer;
+    inp.urgency = boss ? Math.max(timer, this.falling) : 0;
+    if (!boss) this.falling = 0;
   }
 
   private setEnabled(on: boolean): void {
@@ -200,7 +202,7 @@ class Music {
     else if (c.mode === 'off') c.start(this.now(), this.inp, 2);
   }
 
-  /** Debug: the zoom's beats at nominal times (optionally after a boss's fall). */
+  /** Debug: the zoom's beats on the director's own timeline (optionally after a boss's fall). */
   private playZoom(fall: boolean): void {
     const c = this.cond;
     if (!c) return;
@@ -208,14 +210,15 @@ class Music {
       this.bossOv = null;
       c.bossDefeated(this.now(), true);
     }
+    const tl = zoomTimeline(this.scene.settings.get('reduceMotion')).beats;
     const from = this.tierOv ?? this.scene.game.state.tier;
     const lead = fall ? 1.6 : 0;
-    for (const [b, at] of NOMINAL_BEATS) {
+    for (const b of Object.keys(tl) as Beat[]) {
       window.setTimeout(() => {
-        // The new tier is in state from the pull-back on.
-        if (b === 'pullback') this.tierOv = Math.min(1, from + 1);
-        this.cond?.beat(b, this.fresh());
-      }, (lead + at) * 1000);
+        // The new tier is in state from the flash (the switch) on.
+        if (b === 'flash') this.tierOv = Math.min(1, from + 1);
+        this.cond?.beat(b, this.fresh(), untilBeat(tl, -1, b));
+      }, (lead + tl[b]) * 1000);
     }
   }
 

@@ -1,6 +1,8 @@
-// The form (pure): which section plays next in each mood, and the energy gate that decides which
-// roles sound. Themes recur in a long cycle whose variants shift every lap, with rests
-// (interludes) that give way to development when the Wyrm Gauge is nearly full.
+// The form (pure): which section plays next in each mood, and the gate that decides which roles
+// sound. Themes recur in a long cycle whose variants shift every lap, with rests (interludes) kept
+// at any energy (they give way to development only when the Wyrm Gauge is nearly full). The
+// Mountain's laps alternate D Dorian and E Dorian (a whole step up: still D E F# A B, the SFX's
+// pentatonic, and no F natural at all), so a judge who stays there hears the climb.
 import type { MoodId, Role } from './score';
 
 export interface FormStep {
@@ -8,6 +10,8 @@ export interface FormStep {
   variant: number;
   /** The Mountain's arrival statement (the horn call, fortissimo). */
   big?: boolean;
+  /** Transposition in semitones (the Mountain's E Dorian laps: 2). */
+  key?: number;
 }
 
 const KIND: Record<string, string> = {
@@ -25,10 +29,10 @@ const KIND: Record<string, string> = {
 
 /** One lap of each mood's form: letter = section, digit = variant (shifted by the lap). */
 const CYCLE: Record<MoodId, readonly string[]> = {
-  // ~3.6 min per lap: A A' B E I | A(harp) B' E' I' A(low) | B E'' I
+  // ~3.4 min per lap: A A' B E I | A(harp) B' E' I' A(doubled) | B E'' I
   meadow: ['A0', 'A1', 'B0', 'E0', 'I0', 'A2', 'B1', 'E1', 'I1', 'A3', 'B2', 'E2', 'I0'],
-  // ~5 min per lap.
-  mountain: ['M0', 'C0', 'N0', 'I0', 'M1', 'C1', 'N1', 'I1', 'M2', 'C0', 'N2', 'I0'],
+  // ~5.1 min per lap; the theme M twice, its answer M2 three times, two developments, three rests.
+  mountain: ['M0', 'C0', 'N0', 'I0', 'E0', 'N1', 'C1', 'M1', 'I1', 'E1', 'N2', 'I0'],
   boss: ['O0', 'O1', 'L0', 'K0', 'L1', 'O0', 'O1', 'L0', 'K0', 'L1'],
 };
 
@@ -49,54 +53,50 @@ export class Form {
       entry === 'intro'
         ? 'intro'
         : entry === 'episode'
-          ? mood === 'mountain'
-            ? 'echoes'
-            : mood === 'boss'
-              ? 'ostinato'
-              : 'episode'
+          ? mood === 'boss'
+            ? 'ostinato'
+            : 'episode'
           : entry === 'call' || entry === 'theme'
             ? theme
             : entry;
     // 'call' is the Mountain's arrival: its theme opens with the horn call, fortissimo.
-    this.first = { kind, variant: 0, big: entry === 'call' && mood === 'mountain' };
+    this.first = { kind, variant: 0, big: entry === 'call' && mood === 'mountain', key: 0 };
     // After an entry that is the lap's first slot, the lap continues past it.
     if (entry === 'theme' || entry === 'call' || entry === 'ostinato') this.i = 0;
   }
 
   next(energy: number, tension: number, urgency: number): FormStep {
+    void energy;
     if (this.first) {
       const f = this.first;
       this.first = null;
       return f;
     }
     const cycle = CYCLE[this.mood];
-    for (let guard = 0; guard < cycle.length; guard++) {
-      this.i++;
-      if (this.i >= cycle.length) {
-        this.i = 0;
-        this.lap++;
-      }
-      const code = cycle[this.i]!;
-      let kind = KIND[code[0]!]!;
-      const variant = Number(code.slice(1)) + this.lap;
-      if (kind === 'interlude') {
-        // No resting when the boss is near, or when the army is roaring.
-        if (tension >= 0.45) kind = this.mood === 'mountain' ? 'echoes' : 'episode';
-        else if (energy >= 0.85) continue;
-      }
-      if (kind === 'break' && urgency >= 0.5) return { kind: 'melody', variant: 1 };
-      return { kind, variant };
+    this.i++;
+    if (this.i >= cycle.length) {
+      this.i = 0;
+      this.lap++;
     }
-    return { kind: KIND[cycle[0]![0]!]!, variant: this.lap };
+    const code = cycle[this.i]!;
+    let kind = KIND[code[0]!]!;
+    const variant = Number(code.slice(1)) + this.lap;
+    const key = this.mood === 'mountain' && this.lap % 2 === 1 ? 2 : 0;
+    // No resting when the boss is near: the rest becomes development.
+    if (kind === 'interlude' && tension >= 0.45) kind = 'episode';
+    if (kind === 'break' && urgency >= 0.5) return { kind: 'melody', variant: 1, key };
+    return { kind, variant, key };
   }
 }
 
 /**
  * The gate: how far the game is past the point where `role` joins, in `mood` (>= 0 on; the
  * conductor turns it off below -0.08, so it never flickers). Melody, echo and arp always play.
+ * In a boss fight the timer decides: the ordinary drums give way to the urgent layer.
  */
-export function gateMargin(mood: MoodId, role: Role, energy: number, tension: number): number {
-  if (mood === 'boss') return 1;
+export function gateMargin(mood: MoodId, role: Role, energy: number, tension: number, urgency = 0): number {
+  if (mood === 'boss') return role === 'urgent' ? urgency - 0.5 : role === 'pulse' ? 0.5 - urgency : 1;
+  if (role === 'urgent') return -1;
   const meadow = mood === 'meadow';
   switch (role) {
     case 'counter':
@@ -110,6 +110,11 @@ export function gateMargin(mood: MoodId, role: Role, energy: number, tension: nu
     default:
       return 1;
   }
+}
+
+/** Roles that change on the very next bar line (a boss's last seconds can't wait two bars). */
+export function quickRole(mood: MoodId, role: Role): boolean {
+  return mood === 'boss' && (role === 'urgent' || role === 'pulse');
 }
 
 /** The Mountain's choir hum joins at high energy. */

@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   bossUrgency,
+  freeHeartPeriod,
   HEART_DUB,
   HEART_PERIOD,
   HEART_PERIOD_URGENT,
   HEART_URGENT_FROM,
   heartPeriod,
   heartPulse,
+  lockHeart,
   pushEnvelope,
   PUSH_DUR,
   tremorDuration,
@@ -58,6 +60,23 @@ describe('dread curves', () => {
     expect(heartPeriod(0.5)).toBeGreaterThan(HEART_PERIOD_URGENT);
     // The dub fits inside the fastest beat.
     expect(HEART_DUB + 0.15).toBeLessThan(HEART_PERIOD_URGENT);
+  });
+
+  it('locks to the boss music when it keeps time, and runs free when it does not', () => {
+    try {
+      // The music answers with the seconds to its next grid point: the heartbeat takes it.
+      lockHeart((u) => (u > 0.5 ? 0.52 : 1.03));
+      expect(heartPeriod(0)).toBeCloseTo(1.03);
+      expect(heartPeriod(1)).toBeCloseTo(0.52);
+      // No grid (NaN) or a nonsense answer: the free curve, exactly as before.
+      lockHeart(() => NaN);
+      expect(heartPeriod(0)).toBe(HEART_PERIOD);
+      lockHeart(() => 40);
+      expect(heartPeriod(1)).toBeCloseTo(HEART_PERIOD_URGENT);
+    } finally {
+      lockHeart(null);
+    }
+    expect(heartPeriod(0.5)).toBe(freeHeartPeriod(0.5));
   });
 
   it('a beat is a lub then a softer dub, and fades before the next', () => {

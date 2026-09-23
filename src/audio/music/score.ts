@@ -9,8 +9,11 @@ export type MoodId = 'meadow' | 'mountain' | 'boss';
 export type NoteInst = 'lute' | 'harp' | 'flute' | 'horn' | 'echo';
 /** Pre-rendered percussion; `roll` is a crescendo that ends at `at + len`. */
 export type HitKind = 'doum' | 'tak' | 'timp' | 'roll' | 'sub';
-/** Arrangement roles: the energy gate turns roles on and off at bar lines. */
-export type Role = 'melody' | 'counter' | 'arp' | 'pad' | 'pulse' | 'heart' | 'echo' | 'bass';
+/**
+ * Arrangement roles: the gate turns roles on and off at bar lines (energy, tension, and in a boss
+ * fight the timer: 'pulse' gives way to 'urgent' as time runs out).
+ */
+export type Role = 'melody' | 'counter' | 'arp' | 'pad' | 'pulse' | 'heart' | 'echo' | 'bass' | 'urgent';
 
 // Articulation flags.
 /** Slurs into the next note (no release, a glide instead of a re-attack). */
@@ -63,6 +66,8 @@ export interface Section {
   drone: readonly number[] | null;
   /** The section wants the choir hum (the Mountain) when the energy allows. */
   choir: boolean;
+  /** Chords for the sustained hum when they differ from `chords` (open voicings, clear of the coins). */
+  hum?: Chord[][];
 }
 
 /** A parsed melody note. */

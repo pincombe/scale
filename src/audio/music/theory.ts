@@ -79,6 +79,8 @@ const QUALITY: Record<string, readonly number[]> = {
 
 export interface Chord {
   readonly name: string;
+  /** The symbol's quality suffix ('m', '7', 'sus4', ...), for renaming a transposed chord. */
+  readonly quality: string;
   /** Root pitch class. */
   readonly root: number;
   /** Bass pitch class (the root unless a slash chord). */
@@ -101,7 +103,15 @@ export function parseChord(sym: string): Chord {
   const root = parsePc(m[1]!);
   const pcs = q.map((i) => pc(root + i));
   const third = q.includes(4) ? pc(root + 4) : q.includes(3) ? pc(root + 3) : -1;
-  return { name: sym, root, bass: m[3] ? parsePc(m[3]) : root, pcs, third };
+  return { name: sym, quality: m[2]!, root, bass: m[3] ? parsePc(m[3]) : root, pcs, third };
+}
+
+/** The chord moved by `n` semitones (sharps in the name: E Dorian's F#m, C#dim...). */
+export function transposeChord(ch: Chord, n: number): Chord {
+  const root = pc(ch.root + n);
+  const bass = pc(ch.bass + n);
+  const name = NAMES[root] + ch.quality + (ch.bass !== ch.root ? '/' + NAMES[bass] : '');
+  return { name, quality: ch.quality, root, bass, pcs: ch.pcs.map((p) => pc(p + n)), third: ch.third < 0 ? -1 : pc(ch.third + n) };
 }
 
 export function isChordTone(m: number, ch: Chord): boolean {

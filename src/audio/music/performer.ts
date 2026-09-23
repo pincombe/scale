@@ -1,6 +1,6 @@
 // The performer: turns the conductor's events into WebAudio voices on a persistent mix graph.
 //
-//   voices -> layer bus (level, [low-pass], pan) --+--> dry sum -> duck -> SFX carve (-7 dB @ 2.2 kHz) -> fader -> out
+//   voices -> layer bus (level, [low-pass], pan) --+--> dry sum -> duck -> SFX carve (-7 dB @ 2.2 kHz) -> heart dip -> fader -> out
 //                                                  +--> send ---> wet sum -> duck -> fader -> wet (reverb send)
 //
 // Plucks and drums are pre-rendered buffers (dsp.ts; 2 nodes a note). Horns, the flute, the
@@ -45,6 +45,8 @@ export const LEVEL = {
 };
 
 const CARVE_DB = -7;
+/** How far the low shelf dips under each boss heartbeat (dB). */
+const HEART_DIP_DB = -7;
 const MAX_VOICES = 80;
 
 // ---- Buffer bank (renders are pure data, cached for the page; AudioBuffers per context) ----
@@ -172,6 +174,8 @@ export class WebPerformer implements Performer {
   private readonly duckD: GainNode;
   private readonly duckW: GainNode;
   private readonly carve: BiquadFilterNode;
+  /** A low shelf that dips under each boss heartbeat (the SFX's lub lives below 190 Hz). */
+  private readonly lows: BiquadFilterNode;
   private fv = { a: 0, b: 0, t0: 0, t1: 0 };
   private fl: FluteVoice | null = null;
   private dr: Voice | null = null;
@@ -207,9 +211,15 @@ export class WebPerformer implements Performer {
     this.carve.frequency.value = 2200;
     this.carve.Q.value = 0.7;
     this.carve.gain.value = CARVE_DB;
+    this.lows = ctx.createBiquadFilter();
+    n++;
+    this.lows.type = 'lowshelf';
+    this.lows.frequency.value = 200;
+    this.lows.gain.value = 0;
     drySum.connect(this.duckD);
     this.duckD.connect(this.carve);
-    this.carve.connect(this.faderD);
+    this.carve.connect(this.lows);
+    this.lows.connect(this.faderD);
     this.faderD.connect(dry);
     wetSum.connect(this.duckW);
     this.duckW.connect(this.faderW);
@@ -280,6 +290,13 @@ export class WebPerformer implements Performer {
       p.setTargetAtTime(to, t, 0.02);
       p.setTargetAtTime(1, t + seconds, 0.25);
     }
+  }
+
+  /** A boss heartbeat lands at `t`: the music's low end (drone, bass horns) steps aside for ~0.2 s. */
+  heartDip(t: number): void {
+    const g = this.lows.gain;
+    g.setTargetAtTime(HEART_DIP_DB, t, 0.012);
+    g.setTargetAtTime(0, t + 0.17, 0.08);
   }
 
   /** Muted or at zero volume: stop making voices (the conductor keeps time), and come back cleanly. */
@@ -436,7 +453,10 @@ export class WebPerformer implements Performer {
     const rate = pitched ? Math.pow(2, (ev.midi - 38) / 12) : 1;
     const level = ev.vel * gain * LEVEL[inst];
     if (inst !== 'roll') {
-      this.oneShot(inst, 'perc', t, rate, level);
+      const damp = (ev.flags & F_DAMP) !== 0;
+      const v = this.oneShot(inst, 'perc', t, rate, level, 0, damp ? t + dur + 0.35 : Infinity);
+      // A damped stroke: the hand on the head at the end of its length.
+      if (damp) v.env.setTargetAtTime(0, t + dur, 0.05);
       return;
     }
     // A roll is a crescendo that ends at t + dur: start inside the rendered roll so its peak lands there.

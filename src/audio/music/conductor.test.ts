@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Conductor, LOOKAHEAD, type Beat, type MusicInputs, type Performer, type Vowel } from './conductor';
+import { Conductor, HEART_URGENT, LOOKAHEAD, untilBeat, type Beat, type MusicInputs, type Performer, type Vowel } from './conductor';
+import { zoomTimeline } from '../../render/zoom/timeline';
 import { F_BIG, type SEv } from './score';
 
 interface Played {
@@ -223,16 +224,9 @@ describe('Conductor moods', () => {
 });
 
 describe('Conductor zoom cue', () => {
-  const BEATS: [Beat, number][] = [
-    ['rally', 0],
-    ['fusion', 1],
-    ['flash', 2.2],
-    ['pullback', 2.4],
-    ['reveal', 6.4],
-    ['roar', 7],
-    ['card', 7.6],
-    ['done', 9.5],
-  ];
+  // The director's own timeline (render/zoom/timeline.ts), so the checks exercise the real gaps.
+  const TL = zoomTimeline(false).beats;
+  const BEATS = (Object.keys(TL) as Beat[]).map((b) => [b, TL[b]] as [Beat, number]).sort((a, b) => a[1] - b[1]);
 
   function zoom(c: Conductor, f: Fake, t0: number, tierAfter = 1): number {
     let i = 0;
@@ -240,11 +234,11 @@ describe('Conductor zoom cue', () => {
     for (; t < t0 + 14; t += 0.025) {
       while (i < BEATS.length && t >= t0 + BEATS[i]![1]) {
         f.now = t;
-        c.beat(BEATS[i]![0], t);
+        c.beat(BEATS[i]![0], t, untilBeat(TL, t - t0, BEATS[i]![0]));
         i++;
       }
       f.now = t;
-      c.update(t, inputs({ tier: t >= t0 + 2.4 ? tierAfter : 0, energy: 0.1 }));
+      c.update(t, inputs({ tier: t >= t0 + TL.flash ? tierAfter : 0, energy: 0.1 }));
     }
     return t;
   }
@@ -257,22 +251,33 @@ describe('Conductor zoom cue', () => {
     // The rally: the fader drops to silence within a quarter second.
     const drop = f.faders.find((x) => x.t >= 20 && x.level === 0)!;
     expect(drop.dur).toBeLessThanOrEqual(0.25);
-    // Nothing of the song plays between the rally and the roar except the cue's own sounds, and
+    // Nothing of the song plays between the rally and the card except the cue's own sounds, and
     // none of those is cut short by a later release; the horn call isn't either.
-    const between = f.played.slice(n).filter((p) => p.t > 20.3 && p.t < 27);
+    const card = 20 + TL.card;
+    const between = f.played.slice(n).filter((p) => p.t > 20.3 && p.t < card);
     expect(between.every((p) => p.ev.role === 'melody')).toBe(true);
     for (const p of f.played.slice(n).filter((q) => q.t > 20.3)) expect(f.cutShort(p), `${p.ev.inst} at ${p.t}`).toBe(false);
-    // Fusion swell, flash sub hit, the choir resolving A sus4 -> D major -> ... -> D minor.
-    expect(f.played.some((p) => p.ev.inst === 'sub' && Math.abs(p.t - 22.23) < 0.04)).toBe(true);
+    // The flash: the SFX owns the transient, so the music adds only its tonal sub, a hair behind.
+    const flash = 20 + TL.flash;
+    const atFlash = f.played.slice(n).filter((p) => p.t > flash - 0.05 && p.t < flash + 0.3);
+    expect(atFlash.map((p) => p.ev.inst)).toEqual(['sub']);
+    expect(atFlash[0]!.t).toBeGreaterThan(flash + 0.03);
+    // The fusion roll peaks and clears before the flash; no roll at the reveal (the SFX's rumble).
+    const rolls = f.played.slice(n).filter((p) => p.ev.inst === 'roll');
+    expect(rolls).toHaveLength(1);
+    expect(rolls[0]!.t + rolls[0]!.dur).toBeLessThan(flash - 0.05);
+    // The choir: A sus4 -> D major -> ... -> D minor, and it sinks under the roar.
     const chords = f.choirs.filter((x) => x.midis).map((x) => x.midis!.join());
     expect(chords[0]).toBe('45,52,57,62,64');
     expect(chords).toContain('45,50,57,62,66');
     expect(chords).toContain('50,57,62,65,69');
-    // The roar starts the Mountain with the call, fortissimo; the card and done restore the level.
+    const roar = 20 + TL.roar;
+    expect(f.choirs.some((x) => Math.abs(x.t - roar) < 0.06 && x.level < 0.4)).toBe(true);
+    // The card brings the Mountain in with the call, fortissimo (after the roar has had its moment).
     expect(c.currentMood).toBe('mountain');
-    const call = f.played.filter((p) => p.ev.flags & F_BIG && p.t > 27);
+    const call = f.played.filter((p) => p.ev.flags & F_BIG && p.t > roar);
     expect(call.length).toBeGreaterThanOrEqual(8);
-    expect(call[0]!.t).toBeGreaterThan(27.2);
+    expect(call[0]!.t).toBeGreaterThanOrEqual(card);
     expect(f.faders[f.faders.length - 1]!.level).toBe(1);
     expect(f.shimmers.some((s) => s.level > 0)).toBe(true);
     expect(f.shimmers[f.shimmers.length - 1]!.level).toBe(0);
@@ -284,7 +289,8 @@ describe('Conductor zoom cue', () => {
     c.beat('rally', 5);
     c.beat('fusion', 6, 2);
     const roll = f.played.filter((p) => p.ev.inst === 'roll').pop()!;
-    expect(roll.t + roll.dur).toBeCloseTo(8.03, 6);
+    // The roll crests 0.12 s before the flash (8.03) and clears for the SFX's impact.
+    expect(roll.t + roll.dur).toBeCloseTo(7.91, 6);
     c.beat('flash', 8);
     c.beat('pullback', 8.2, 6);
     // The flash's own decay call is at 8.33; the pull-back's chord changes split its 6 s in thirds.
@@ -293,8 +299,23 @@ describe('Conductor zoom cue', () => {
     expect(changes[0]!.t).toBeCloseTo(10.23, 6);
     expect(changes[1]!.t).toBeCloseTo(12.23, 6);
     c.beat('reveal', 14.2, 1);
-    const roll2 = f.played.filter((p) => p.ev.inst === 'roll').pop()!;
-    expect(roll2.t + roll2.dur).toBeCloseTo(15.23, 6);
+    // The low horns swell up to the roar (at 15.23) and let go there.
+    const horns = f.played.filter((p) => p.ev.inst === 'horn' && p.t > 14);
+    expect(horns.length).toBe(2);
+    for (const h of horns) expect(h.t + h.dur).toBeCloseTo(15.23, 6);
+  });
+
+  it('reads the gap to the next beat from the cinematic clock (a late beat keeps the flash)', () => {
+    const tl = zoomTimeline(false).beats;
+    // On time: the fusion's swell has fusion->flash to go.
+    expect(untilBeat(tl, tl.fusion, 'fusion')).toBeCloseTo(tl.flash - tl.fusion, 9);
+    // A hitch delivered the beat 0.3 s late: the swell shortens so it still crests on the flash.
+    expect(untilBeat(tl, tl.fusion + 0.3, 'fusion')).toBeCloseTo(tl.flash - tl.fusion - 0.3, 9);
+    // No zoom clock (the debug sequence): the timeline's own gap.
+    expect(untilBeat(tl, -1, 'reveal')).toBeCloseTo(tl.roar - tl.reveal, 9);
+    expect(untilBeat(tl, undefined, 'pullback')).toBeCloseTo(tl.reveal - tl.pullback, 9);
+    expect(untilBeat(undefined, 3, 'flash')).toBeUndefined();
+    expect(untilBeat(tl, 12, 'done')).toBeUndefined();
   });
 
   it('marks the first boss\'s fall with one chord, then waits for the rally', () => {
@@ -325,6 +346,95 @@ describe('Conductor zoom cue', () => {
     expect(c.mode).toBe('song');
     expect(c.currentMood).toBe('mountain');
     expect(f.faders[f.faders.length - 1]!.level).toBe(1);
+  });
+});
+
+describe('Conductor boss fight', () => {
+  const BEAT = 60 / 116;
+  const BAR = 4 * BEAT;
+
+  function fight(seed: number): { c: Conductor; f: Fake; origin: number } {
+    const { c, f } = begin(seed);
+    run(c, f, 0, 3, inputs());
+    c.bossSummon(3);
+    // The boss song's first downbeat: the summon + its 1 s roll.
+    return { c, f, origin: 4.03 };
+  }
+
+  const drumRate = (f: Fake, from: number, to: number): number =>
+    f.played.filter((p) => (p.ev.inst === 'doum' || p.ev.inst === 'tak') && p.t >= from && p.t < to).length / (to - from);
+
+  it('climbs with the timer even in the middle of the long melody: the urgent layer lands on the next bar line', () => {
+    const { c, f, origin } = fight(20);
+    // Two ostinati (8 bars), then the 8-bar melody from origin + 8 bars.
+    const melodyAt = origin + 8 * BAR;
+    const flip = melodyAt + 1.5 * BAR;
+    run(c, f, 3, flip, inputs({ boss: true }));
+    expect(c.info.label).toBe('melody');
+    const n = f.played.length;
+    run(c, f, flip, melodyAt + 8 * BAR - 0.3, inputs({ boss: true, urgency: 0.9, heart: 0.9 }));
+    expect(c.info.label).toBe('melody · urgent');
+    const after = f.played.slice(n);
+    const first = after.find((p) => p.ev.role === 'urgent')!;
+    const nextBar = melodyAt + 2 * BAR;
+    expect(first.t - first.ev.dt).toBeCloseTo(nextBar, 6);
+    // The ordinary drums stop within a bar; the drive in the last seconds is far busier than before.
+    expect(after.filter((p) => p.ev.role === 'pulse' && p.t > nextBar + BAR + 0.01).length).toBe(0);
+    // (the melody's own calm bar against its urgent bars: the heartbeat takes the beats in both)
+    expect(drumRate(f, nextBar + BAR, melodyAt + 8 * BAR - 0.4)).toBeGreaterThan(1.8 * drumRate(f, melodyAt, melodyAt + BAR));
+  });
+
+  it('keeps the heartbeat on its beat (beats 2 and 4, then every beat) and clears the low hits under it', () => {
+    const { c, f, origin } = fight(21);
+    run(c, f, 3, 14, inputs({ boss: true }));
+    for (const last of [9, 9.4, 10.03, 12.2]) {
+      const calm = c.heartDue(last, 0);
+      const k = (calm - origin - BEAT) / (2 * BEAT);
+      expect(Math.abs(k - Math.round(k))).toBeLessThan(1e-6);
+      expect(calm - last).toBeGreaterThanOrEqual(BEAT - 1e-9);
+      expect(calm - last).toBeLessThanOrEqual(3 * BEAT + 1e-9);
+      const urgent = c.heartDue(last, HEART_URGENT);
+      const j = (urgent - origin) / BEAT;
+      expect(Math.abs(j - Math.round(j))).toBeLessThan(1e-6);
+      expect(urgent - last).toBeGreaterThanOrEqual(BEAT / 2 - 1e-9);
+    }
+    // Turning urgent just after an every-beat point that the calm grid passed over: that point is
+    // skipped, never played late; the lub goes to the next beat.
+    const calmLub = origin + BEAT + 2 * BEAT * 4;
+    const now = calmLub + BEAT + 0.08;
+    const next = c.heartDue(calmLub, 0.9, now);
+    expect(next).toBeGreaterThan(now - 0.05);
+    expect(next).toBeCloseTo(calmLub + 2 * BEAT, 6);
+    // A dropped frame (30 ms) still plays its lub.
+    expect(c.heartDue(calmLub, 0, calmLub + 2 * BEAT + 0.03)).toBeCloseTo(calmLub + 2 * BEAT, 6);
+    // No doum or timpani on beats 2 and 4 while the calm heartbeat owns them.
+    const low = f.played.filter((p) => p.t >= origin && (p.ev.inst === 'doum' || p.ev.inst === 'timp'));
+    expect(low.length).toBeGreaterThan(10);
+    for (const p of low) expect([4, 12]).not.toContain(p.ev.at % 16);
+    // Urgent: every beat is the heartbeat's.
+    const n = f.played.length;
+    run(c, f, 14, 20, inputs({ boss: true, urgency: 0.9, heart: 0.9 }));
+    for (const p of f.played.slice(n)) if (p.ev.inst === 'doum' || p.ev.inst === 'timp') expect(p.ev.at % 4).not.toBe(0);
+    // No boss music keeping time: the heartbeat runs free.
+    const { c: c2 } = begin(22);
+    expect(Number.isNaN(c2.heartDue(1, 0))).toBe(true);
+  });
+
+  it('brings a boss summoned during the retreat back properly: the roll, then the ostinato', () => {
+    const { c, f } = fight(23);
+    run(c, f, 3, 12, inputs({ boss: true }));
+    c.bossEscaped(12);
+    run(c, f, 12, 15, inputs());
+    expect(c.info.label).toBe('retreat');
+    const n = f.played.length;
+    c.bossSummon(15);
+    expect(f.played[n]!.ev.inst).toBe('roll');
+    run(c, f, 15, 19, inputs({ boss: true }));
+    expect(c.info.label).toMatch(/^ostinato/);
+    // Summoned again while it fights: nothing happens.
+    const m = f.played.length;
+    c.bossSummon(19);
+    expect(f.played.length).toBe(m);
   });
 });
 

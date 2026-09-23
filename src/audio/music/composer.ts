@@ -8,6 +8,7 @@ import {
   chordAt,
   F_ACCENT,
   F_BIG,
+  F_DAMP,
   F_LEGATO,
   F_PHRASE_END,
   F_STAB,
@@ -21,7 +22,7 @@ import {
   type SEv,
   type Section,
 } from './score';
-import { chordTones, inScale, isChordTone, parseChord, pc, scaleStep, voicing, type Chord, type Scale } from './theory';
+import { chordTones, inScale, isChordTone, parseChord, pc, scaleStep, transposeChord, voicing, type Chord, type Scale } from './theory';
 import * as T from './themes';
 
 export interface ComposeCtx {
@@ -35,6 +36,8 @@ export interface ComposeCtx {
   tier: number;
   /** The Mountain's first theme after the zoom: the horn call, fortissimo. */
   big?: boolean;
+  /** Transposition in semitones (the Mountain's E Dorian laps: 2). */
+  key?: number;
 }
 
 /** Builds sections into a reusable event list. */
@@ -466,10 +469,37 @@ function fitCall(frag: readonly MNote[], ch: Chord, scale: Scale): number {
   return best;
 }
 
+/**
+ * A sustained-voicing copy of a chord with its F natural (a semitone under the coins' F#) moved to
+ * E: Dm becomes Dsus2 (open), F becomes A minor over the F in the bass (Fmaj7 without its root).
+ * Melodies keep their F; the pads, the choir hum and the harp's arpeggios use these.
+ */
+export function openChord(ch: Chord): Chord {
+  if (!ch.pcs.includes(5)) return ch;
+  const pcs = [...new Set(ch.pcs.map((p) => (p === 5 ? 4 : p)))];
+  if (ch.root === 5) return { ...ch, pcs, root: 9, third: 0 };
+  return { ...ch, pcs, third: ch.third === 5 ? -1 : ch.third };
+}
+
+const PITCHED = new Set<string>(['lute', 'harp', 'flute', 'horn', 'echo', 'timp', 'roll']);
+
+/** Move a composed section to another key (the Mountain's E Dorian laps): pitches, chords, drone. */
+function transpose(sec: Section, n: number): Section {
+  if (!n) return sec;
+  for (const e of sec.events) if (PITCHED.has(e.inst)) e.midi += n;
+  sec.chords = sec.chords.map((bar) => bar.map((c) => transposeChord(c, n)));
+  if (sec.hum) sec.hum = sec.hum.map((bar) => bar.map((c) => transposeChord(c, n)));
+  if (sec.drone) sec.drone = sec.drone.map((m) => m + n);
+  sec.label += ` · ${transposeChord(parseChord('D'), n).name} Dorian`;
+  return sec;
+}
+
 function mountainBed(b: Builder, chords: Chord[][], ctx: ComposeCtx, harp: boolean): void {
   const e = ctx.energy;
-  b.pads(chords, 0, 'horn', 45, 62, 3, 0.26 + 0.1 * e, 'pad');
-  // Bass: the chord's bass under the drone when it moves off D.
+  // In the D laps the sustained voices stay open (no F natural against the coins); E Dorian has none.
+  const held = ctx.key ? chords : chords.map((bar) => bar.map(openChord));
+  b.pads(held, 0, 'horn', 45, 62, 3, 0.26 + 0.1 * e, 'pad');
+  // Bass: the chord's bass under the drone when it moves off D (an F down here is only the root).
   for (let bar = 0; bar < chords.length; bar++) {
     const ch = chords[bar]![0]!;
     if (ch.bass !== 2) b.add(bar * 16, 16, 'horn', pcFloor(ch.bass, 36), 0.26, 'bass', F_SWELL);
@@ -477,25 +507,35 @@ function mountainBed(b: Builder, chords: Chord[][], ctx: ComposeCtx, harp: boole
     if (bar % 4 === 0) b.add(bar * 16, 8, 'timp', 38, 0.36 + 0.16 * e, 'heart');
     if (bar % 4 === 3) b.add(bar * 16 + 8, 8, 'roll', 38, 0.3 + 0.14 * e + 0.2 * ctx.tension, 'heart');
   }
-  if (harp) b.harpArp(chords, 0, 0.26 + 0.1 * e);
+  if (harp) b.harpArp(held, 0, 0.26 + 0.1 * e);
+}
+
+/** The hum's chords: open in the D laps. */
+function humOf(chords: Chord[][], ctx: ComposeCtx): Chord[][] | undefined {
+  return ctx.key ? undefined : chords.map((bar) => bar.map(openChord));
 }
 
 function mountain(kind: string, v: number, ctx: ComposeCtx): Section {
   const b = new Builder(T.MOUNTAIN_METER, ctx.rng);
   const drone = T.MOUNTAIN_DRONE;
   const vel = 0.6 + 0.18 * ctx.energy;
+  const done = (label: string, chords: Chord[][], choir: boolean): Section => {
+    const sec = section('mountain', kind, label, chords, b, drone, choir);
+    sec.hum = humOf(chords, ctx);
+    return transpose(sec, ctx.key ?? 0);
+  };
   if (kind === 'intro') {
     const chords = T.MOUNTAIN_INTERLUDE.slice(0, 2);
     b.line(T.MOUNTAIN_CALLS[0]!, 4, 'echo', 'echo', 0.5);
     b.add(24, 8, 'roll', 38, 0.34, 'melody');
-    return section('mountain', kind, 'intro', chords, b, drone);
+    return done('intro', chords, false);
   }
   if (kind === 'interlude') {
     const chords = T.MOUNTAIN_INTERLUDE;
-    b.pads(chords, 0, 'horn', 50, 65, 3, 0.2, 'pad');
+    b.pads(ctx.key ? chords : chords.map((bar) => bar.map(openChord)), 0, 'horn', 50, 65, 3, 0.2, 'pad');
     b.add(56, 8, 'roll', 38, 0.28, 'melody');
     for (let i = 0; i < 3; i++) b.add(i * 16 + 8, 12, 'harp', [81, 79, 76][i]!, 0.22, 'melody', 0, b.j(8));
-    return section('mountain', kind, 'interlude', chords, b, drone, true);
+    return done('interlude', chords, true);
   }
   if (kind === 'echoes') {
     const chords = T.MOUNTAIN_ECHO_CHORDS[v % T.MOUNTAIN_ECHO_CHORDS.length]!;
@@ -511,11 +551,42 @@ function mountain(kind: string, v: number, ctx: ComposeCtx): Section {
     }
     // The last echo carries the call's own ending home: E-C-D.
     b.line([{ at: 0, len: 4, midi: 64 }, { at: 4, len: 4, midi: 60 }, { at: 8, len: 8, midi: 62 }], 112, 'echo', 'echo', vel * 0.62);
-    return section('mountain', kind, `echoes ${(v % 2) + 1}`, chords, b, drone);
+    return done(`echoes ${(v % 2) + 1}`, chords, false);
   }
-  const th = kind === 'M2' ? T.MOUNTAIN_M2 : T.MOUNTAIN_M;
-  const recipe = v % 3;
-  mountainBed(b, th.chords, ctx, kind === 'M2' || recipe === 2);
+  if (kind === 'episode') {
+    // Development: the call's head (root, up a fifth, down by steps) sequenced over each chord,
+    // climbing or sinking with the progression, the horns doubling at the octave as it builds;
+    // then its rising fifth alone, passed from the near horn to the far one; a cadence; home.
+    const chords = T.MOUNTAIN_EPISODES[v % T.MOUNTAIN_EPISODES.length]!;
+    const S = T.MOUNTAIN_SCALE;
+    mountainBed(b, chords, ctx, true);
+    let r = 62;
+    for (let bar = 0; bar < 4; bar++) {
+      if (bar > 0) r = place(chords[bar]![0]!.root, r, 0);
+      const notes = [r, scaleStep(r, S, 4), scaleStep(r, S, 3), scaleStep(r, S, 2)];
+      const line = [0, 4, 12, 14].map((at, i) => ({ at, len: [4, 8, 2, 2][i]!, midi: notes[i]! }));
+      const v2 = vel * (0.9 + 0.05 * bar);
+      b.line(line, bar * 16, 'horn', 'melody', v2);
+      if (bar >= 2) b.line(line, bar * 16, 'horn', 'melody', v2 * 0.55, -12);
+    }
+    for (let bar = 4; bar < 6; bar++) {
+      const f = place(chords[bar]![0]!.root, 62, 0);
+      const line = [
+        { at: 0, len: 4, midi: f },
+        { at: 4, len: 12, midi: scaleStep(f, S, 4) },
+      ];
+      b.line(line, bar * 16, bar === 4 ? 'horn' : 'echo', bar === 4 ? 'melody' : 'echo', bar === 4 ? vel : vel * 0.65);
+    }
+    const fig = cadenceFigure(chords[6]!, 62, S, 16);
+    b.line(fig.map((m, i) => ({ at: i * 4, len: 4, midi: m })), 96, 'horn', 'melody', vel * 0.95);
+    b.line([{ at: 0, len: 16, midi: 62 }], 112, 'horn', 'melody', vel);
+    b.line([{ at: 0, len: 16, midi: 50 }], 112, 'horn', 'melody', vel * 0.5);
+    return done(`episode ${(v % 2) + 1}`, chords, true);
+  }
+  // Themes: M (plain, echoed, octaves, reharmonized) and its answer M2 (plain, echoed, octaves).
+  const recipe = kind === 'M2' ? v % 3 : v % 4;
+  const th = kind === 'M2' ? T.MOUNTAIN_M2 : recipe === 3 ? T.MOUNTAIN_M_REHARM : T.MOUNTAIN_M;
+  mountainBed(b, th.chords, ctx, kind === 'M2' || recipe >= 2);
   let label = kind;
   if (ctx.big && kind === 'M') {
     // The horn call, fortissimo in octaves, the timpani under its first note.
@@ -526,10 +597,11 @@ function mountain(kind: string, v: number, ctx: ComposeCtx): Section {
     b.add(16, 8, 'timp', 33, 0.65, 'melody');
     b.line(th.melody.filter((n) => n.at >= 32), 0, 'horn', 'melody', vel);
     label = 'M (the call)';
-  } else if (recipe === 1 && kind === 'M') {
-    // Call and response inside the theme: the far horn takes bars 5-6.
-    b.line(th.melody.filter((n) => n.at < 64 || n.at >= 96), 0, 'horn', 'melody', vel);
-    b.line(th.melody.filter((n) => n.at >= 64 && n.at < 96), 0, 'echo', 'melody', vel * 0.7);
+  } else if (recipe === 1) {
+    // Call and response inside the theme: the far horn takes a phrase (M: bars 5-6; M2: 3-4, 7-8).
+    const far = (at: number): boolean => (kind === 'M' ? at >= 64 && at < 96 : at % 64 >= 32);
+    b.line(th.melody.filter((n) => !far(n.at)), 0, 'horn', 'melody', vel);
+    b.line(th.melody.filter((n) => far(n.at)), 0, 'echo', 'melody', vel * 0.7);
     label += ' (echoed)';
   } else if (recipe === 2) {
     b.line(th.melody, 0, 'horn', 'melody', vel);
@@ -537,34 +609,38 @@ function mountain(kind: string, v: number, ctx: ComposeCtx): Section {
     label += ' (octaves)';
   } else {
     b.line(th.melody, 0, 'horn', 'melody', vel);
+    if (recipe === 3) label += ' (reharmonized)';
   }
-  return section('mountain', kind, label, th.chords, b, drone, kind === 'M2');
+  return done(label, th.chords, kind === 'M2' || recipe === 3);
 }
 
+/**
+ * The boss bed. Every bar carries two drum layers: the ordinary 3+3+2 drive ('pulse') and the
+ * urgent one, every 16th alive ('urgent'), with the stabs on every bar and the timpani on each
+ * accent; the conductor swaps them at the next bar line when the timer's last seconds come.
+ */
 function bossBed(b: Builder, chords: Chord[][], ctx: ComposeCtx, v: number): void {
-  const urgent = ctx.urgency >= 0.5;
-  const pattern = T.DRUM_BOSS[urgent ? 2 : v % 2]!;
   const plucked: NoteInst = ctx.tier >= 1 ? 'harp' : 'lute';
   for (let bar = 0; bar < chords.length; bar++) {
     const t0 = bar * 16;
     const ch = chords[bar]![0]!;
-    b.drums(pattern, t0, 1, 0.74 + 0.16 * ctx.urgency);
-    b.add(t0, 8, 'timp', pcFloor(ch.root, 33), 0.7, 'heart', F_ACCENT);
-    if (v % 2 === 1 || urgent) {
-      b.add(t0 + 6, 6, 'timp', pcFloor(ch.pcs[2] ?? ch.root, 38), 0.44, 'heart');
-      b.add(t0 + 12, 4, 'timp', pcFloor(ch.root, 33), 0.5, 'heart');
-    }
+    b.drums(T.DRUM_BOSS[v % 2]!, t0, 1, 0.74, 'pulse');
+    b.drums(T.DRUM_BOSS[2]!, t0, 1, 0.84, 'urgent');
+    // Timpani strokes are damped (as a timpanist would) before the heartbeat's next lub.
+    b.add(t0, 3, 'timp', pcFloor(ch.root, 33), 0.7, 'heart', F_ACCENT | F_DAMP);
+    const accents: Role = v % 2 === 1 ? 'heart' : 'urgent';
+    b.add(t0 + 6, 3, 'timp', pcFloor(ch.pcs[2] ?? ch.root, 38), 0.46, accents, F_DAMP);
+    b.add(t0 + 12, 3, 'timp', pcFloor(ch.root, 33), 0.52, accents, F_DAMP);
     // Ostinato in 8ths: root, fifth below, root, third... and a scale step above the third.
     const root = pcFloor(ch.root, 52);
     const fifthBelow = root - 5 - (isChordTone(root - 5, ch) ? 0 : 1);
     const third = root + 1 + pc((ch.third >= 0 ? ch.third : ch.pcs[1]!) - root - 1);
     const pattern8 = [root, fifthBelow, root, third, root, fifthBelow, root, scaleStep(third, T.BOSS_SCALE, 1)];
     for (let i = 0; i < 8; i++) b.add(t0 + i * 2, 2, plucked, pattern8[i]!, i === 0 ? 0.62 : 0.44, 'arp', i === 0 ? F_ACCENT : 0, b.j(3));
-    // Horn stabs on the 3+3+2 accents (every other bar; every bar when time runs short).
-    if (bar % 2 === 1 || urgent) {
-      const vc = voicing(ch, 3, 59, 71);
-      for (const at of [0, 6, 12]) for (const m of vc) b.add(t0 + at, 2, 'horn', m, 0.5 + 0.1 * ctx.urgency, 'pad', F_STAB, b.j(3));
-    }
+    // Horn stabs on the 3+3+2 accents: every other bar, and every bar once time runs short.
+    const vc = voicing(ch, 3, 59, 71);
+    const stabs: Role = bar % 2 === 1 ? 'pad' : 'urgent';
+    for (const at of [0, 6, 12]) for (const m of vc) b.add(t0 + at, 2, 'horn', m, stabs === 'pad' ? 0.5 : 0.56, stabs, F_STAB, b.j(3));
     b.add(t0, 16, 'horn', pcFloor(ch.root, 40), 0.36, 'bass');
   }
 }
@@ -583,23 +659,23 @@ function boss(kind: string, v: number, ctx: ComposeCtx): Section {
     [50, 57, 62, 66, 69].forEach((m, i) => b.add(4, 16, 'lute', m, 0.45, 'melody', 0, i * 0.022));
     // The glissando an octave below the zoom's: after a later boss the clicks go on.
     T.ZOOM_GLISS.forEach((m, i) => b.add(6 + i * 0.5, 8, 'harp', m - 12, 0.32, 'melody', 0, 0));
-    const s = section('boss', kind, 'victory', chords, b, null);
-    return s;
+    return section('boss', kind, 'victory', chords, b, null);
   }
   if (kind === 'retreat') {
     // It got away: the drums fall back, the harmony hangs unresolved (G, then F# sus).
     const chords = [[T.BOSS_LOOP[2]![0]!], [T.BOSS_LOOP[7]![0]!]];
-    b.add(0, 1, 'doum', 0, 0.55, 'pulse');
-    b.add(8, 1, 'doum', 0, 0.36, 'pulse');
-    b.add(16, 1, 'doum', 0, 0.24, 'pulse');
+    b.add(0, 1, 'doum', 0, 0.55, 'melody');
+    b.add(8, 1, 'doum', 0, 0.36, 'melody');
+    b.add(16, 1, 'doum', 0, 0.24, 'melody');
     b.pads(chords, 0, 'horn', 50, 66, 3, 0.32, 'pad');
     return section('boss', kind, 'retreat', chords, b, drone);
   }
   if (kind === 'break') {
     const chords = T.BOSS_LOOP.slice(0, 2);
-    b.drums('D.....D.....D.t.', 0, 1, 0.66);
-    b.drums('D.tD.tD.t.ttDttt', 16, 1, 0.72);
-    b.add(0, 8, 'timp', 35, 0.66, 'heart');
+    b.drums('D.....D.....D.t.', 0, 1, 0.66, 'pulse');
+    b.drums('D.tD.tD.t.ttDttt', 16, 1, 0.72, 'pulse');
+    b.drums(T.DRUM_BOSS[2]!, 0, 2, 0.84, 'urgent');
+    b.add(0, 3, 'timp', 35, 0.66, 'heart', F_DAMP);
     b.add(24, 8, 'roll', 35, 0.6, 'heart');
     b.add(0, 32, 'horn', 47, 0.36, 'bass');
     return section('boss', kind, 'break', chords, b, drone);
@@ -607,15 +683,16 @@ function boss(kind: string, v: number, ctx: ComposeCtx): Section {
   if (kind === 'melody') {
     const chords = T.BOSS_THEME.chords;
     bossBed(b, chords, ctx, v);
-    const vel = 0.72 + 0.12 * ctx.urgency;
+    const vel = 0.72;
     b.line(T.BOSS_THEME.melody, 0, 'horn', 'melody', vel);
-    if (v % 2 === 1 || ctx.urgency >= 0.5) b.line(T.BOSS_THEME.melody, 0, 'horn', 'melody', vel * 0.6, -12);
+    // The low horns double the tune: always in the second statement, and as the timer runs out.
+    b.line(T.BOSS_THEME.melody, 0, 'horn', v % 2 === 1 ? 'melody' : 'urgent', vel * 0.6, -12);
     return section('boss', kind, v % 2 ? 'melody (octaves)' : 'melody', chords, b, drone, ctx.tier >= 1);
   }
   // Ostinato: the loop's first or second half.
   const chords = T.BOSS_LOOP.slice((v % 2) * 4, (v % 2) * 4 + 4);
   bossBed(b, chords, ctx, v);
-  return section('boss', 'ostinato', ctx.urgency >= 0.5 ? 'ostinato (urgent)' : 'ostinato', chords, b, drone);
+  return section('boss', 'ostinato', 'ostinato', chords, b, drone);
 }
 
 /** Every meter by mood (the conductor's grid). */

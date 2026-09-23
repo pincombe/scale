@@ -76,6 +76,20 @@ export const MOUNTAIN_M = theme(
   MOUNTAIN_METER,
 );
 
+/** The Mountain theme reharmonized (the same tune, darker and moving every half bar): a later lap's M. */
+export const MOUNTAIN_M_REHARM = theme(
+  'Dm C,G Em,Am Em G,Dm Am,Dm C,F Dm',
+  'D4:4 A4:8 G4:2 F4:2 | E4:6 C4:2 D4:8 | G4:4 E4:2 G4:2 C5:8 | B4:6 A4:2 G4:8 | ' +
+    'D4:4 A4:8 G4:2 F4:2 | C5:6 A4:2 F4:8 | G4:4 B4:4 A4:4 E4:4 | D4:16',
+  MOUNTAIN_METER,
+);
+
+/**
+ * Development: the horn call's head (root, up a fifth, down by steps) sequenced over each bar's
+ * chord, climbing (the first) or sinking (the second), then fragmented to its rising fifth.
+ */
+export const MOUNTAIN_EPISODES = [parseBars('Dm F G Am C Dm Am,G Dm'), parseBars('Dm C Am G F C G Dm')];
+
 /** The answering period: higher and more lyrical. */
 export const MOUNTAIN_M2 = theme(
   'F C G Dm F C G Dm',
@@ -100,10 +114,11 @@ export const MOUNTAIN_DRONE = [38, 45] as const; // D2 A2
 export const BOSS_METER: Meter = { stepsPerBar: 16, secPerStep: 60 / 116 / 4, beatSteps: 4 };
 export const BOSS_SCALE: Scale = { tonic: B, steps: MODES.aeolian };
 
+// Bars 6-8 turn down into the low horns: up there (D5-G5, C#5) they sat on the coins and clangs.
 export const BOSS_THEME = theme(
   'Bm Bm G A Bm Bm Em F#sus4',
   'F#4:6 D4:2 F#4:4 B4:4 | D5:6 C#5:2 B4:8 | B4:6 A4:2 G4:4 D4:4 | E4:6 F#4:2 A4:8 | ' +
-    'F#4:6 D4:2 F#4:4 B4:4 | D5:6 E5:2 F#5:8 | G5:4 F#5:4 E5:4 B4:4 | C#5:8 B4:8',
+    'F#4:6 D4:2 F#4:4 B4:4 | D4:6 E4:2 F#4:8 | G4:4 F#4:4 E4:4 B3:4 | C#4:8 B3:8',
   BOSS_METER,
 );
 export const BOSS_LOOP = parseBars('Bm Bm G A Bm Bm Em F#sus4');
